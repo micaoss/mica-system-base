@@ -44,9 +44,7 @@ RUN set -eu; \
 
 FROM ${MICA_BUILD_IMAGE} AS pack
 ARG MICA_DEB_ARCH
-ARG MICA_DEB_VERSION
 ARG MICA_DEB_SOURCE_REPO
-ARG MICA_DEB_SOURCE_COMMIT
 ARG SOURCE_DATE_EPOCH
 ARG MICA_SOURCE_BUSYBOX_VERSION
 ARG MICA_SOURCE_BUSYBOX_URL
@@ -65,8 +63,8 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
         echo ' release archive above, sha256'; \
         echo " ${MICA_SOURCE_BUSYBOX_SHA256},"; \
         echo ' statically, over its make defconfig with the settings in'; \
-        echo " debs/mica-busybox/config of https://github.com/micaoss/${MICA_DEB_SOURCE_REPO}"; \
-        echo " at commit ${MICA_DEB_SOURCE_COMMIT}."; \
+        echo " debs/mica-busybox/config of https://github.com/micaoss/${MICA_DEB_SOURCE_REPO},"; \
+        echo " sha256 $(sha256sum /in/debs/mica-busybox/config | cut -d' ' -f1)."; \
         echo ' That archive and that configuration are its complete corresponding source.'; \
         echo ' The part authored by Mica OS is the packaging and this file.'; \
         echo ''; \

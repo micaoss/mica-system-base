@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-15 11:00 [progress]
+
+Packages are locked by their own version (mica:docs/decisions/2026-09-15-package-versions.md):
+each `debs/<package>/control` declares `Version` and `Source-Date-Epoch`
+(mica-busybox 1.38.0-mica1, mica-systemd-boot 257.13-mica1, mica-ca-trust
+20250419-mica1, mica-system 1.0.0-1). No package carries a commit or a release:
+`Mica-Source-Commit` is gone and the copyright texts cite the sha256 of the
+configuration and patch. Pool manifests name only the repository and the
+architecture, and each layer records `mica.inputs`. The gate and the release
+compare every package with the latest release: the same version must keep its
+inputs and rebuild to the published bytes; a lower version is refused.
+
 ## 2026-09-15 02:20 [progress]
 
 The first version of mica-system-base: the board-independent base system of

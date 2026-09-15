@@ -14,7 +14,7 @@ pushes and pull requests and publishes nothing):
 
 | Tag | Content |
 | --- | --- |
-| `pool.<arch>.20260914-0130` | this repository's packages for amd64 or arm64, one layer per `.deb` |
+| `pool.<arch>.20260914-0130` | this repository's packages for amd64 or arm64, one layer per `.deb` titled with its file name and annotated `mica.inputs`; the manifest names only the repository and the architecture, so an unchanged pool is the same digest under the next release's tag |
 | `rootfs.20260914-0130` | the base root, an OCI image index for `linux/amd64` and `linux/arm64` |
 
 The GitHub Release carries exactly two assets, never replaced, in the release
@@ -104,6 +104,17 @@ pinned Debian archives, keyed on the files that pin them and saved only by pushe
 to main; the packages always build without a cache and every archive is
 verified against its pin. Locally, a foreign architecture builds under the
 BuildKit builder's emulation.
+
+Packages are locked by their own version (mica:docs/decisions/2026-09-15-package-versions.md).
+Each `debs/<package>/control` declares its `Version` and, beside it,
+`Source-Date-Epoch`, the SOURCE_DATE_EPOCH of that version; a release never
+changes either, and no package carries a commit or a release. A packaging-only
+change bumps the Debian revision, an upstream change the upstream part; both
+bump the epoch. `bun src/publish.ts gate` (CI) and the release compare every
+package with the latest release: the same version must record the same
+`mica.inputs` (the sha256 over its files, the packer, its lock rows and its
+architecture; build-env images excluded) and rebuild to the published bytes,
+which the release then reuses; a lower version is refused.
 
 A package is added by creating `debs/<package>/` with a `control` template and a
 `Dockerfile` whose first line declares `# mica-deb: arches=all|amd64,arm64

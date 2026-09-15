@@ -1,10 +1,11 @@
-// The version this checkout builds and whether it is a release.
+// The release this checkout builds and whether it is one.
 //
 // A release version is the UTC minute of the release, YYYYMMDD-HHMM, and is the
 // git tag GitHub creates for it. A clean checkout whose HEAD carries exactly one
-// such tag is that release: its label is the tag and its packages are
-// <tag>-1. Any other checkout builds <commit UTC minute>~git<commit12> (with
-// .dirty for uncommitted changes), which sorts before a release of that commit.
+// such tag is that release and its label is the tag. Any other checkout is
+// labelled <commit UTC minute>~git<commit12> (with .dirty for uncommitted
+// changes). The label names the root and the published artifacts; packages carry
+// their own declared versions (src/debs/pack.ts).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fail } from './errors.ts'
@@ -17,7 +18,6 @@ export interface Release {
   committed: string
   epoch: string
   released: boolean
-  packageVersion: string
 }
 
 function git(repo: string, ...args: string[]): string {
@@ -25,9 +25,6 @@ function git(repo: string, ...args: string[]): string {
 }
 
 const RELEASE_TAG = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/
-
-// The package versions releaseOf gives: <release>-1 or <commit minute>~git<commit12>[.dirty]-1.
-export const PACKAGE_VERSION = /^\d{8}-\d{4}(?:~git[0-9a-f]{12}(?:\.dirty)?)?-1$/
 
 function minute(date: Date): string {
   return date.toISOString().replace(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}).*$/, '$1$2$3-$4$5')
@@ -54,7 +51,6 @@ export function releaseOf(repo: string): Release {
     committed: git(repo, 'show', '-s', '--format=%cI', commit),
     epoch,
     released,
-    packageVersion: `${label}-1`,
   }
 }
 

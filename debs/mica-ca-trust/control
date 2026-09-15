@@ -1,5 +1,6 @@
 Package: mica-ca-trust
-Version: @VERSION@
+Version: 20250419-mica1
+Source-Date-Epoch: 1789430400
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin

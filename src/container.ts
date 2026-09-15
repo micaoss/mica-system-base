@@ -441,13 +441,6 @@ async function main(options: Options): Promise<number> {
   })
 }
 
-// The package version (<YYYYMMDD-HHMM>-1 for a release, <commit minute>~git<commit12>[.dirty]-1
-// otherwise), the provenance commit, and every package mtime at its committer date.
-export function provenance(): { version: string, repository: string, commit: string, epoch: string } {
-  const release = releaseOf(REPO)
-  return { version: release.packageVersion, repository: release.repository, commit: release.commit, epoch: release.epoch }
-}
-
 // The base root of one architecture: the lock's base and system families and
 // this repository's base packages from its pool, in one mmdebstrap run, held to
 // the base invariants (src/rootfs.ts).
@@ -563,7 +556,6 @@ async function debs(argv: string[]): Promise<number> {
   checkCacheScope(cacheDir)
   if (!existsSync(cacheDir))
     fail(`cache is missing: ${cacheDir}; run: bun src/container.ts cache --arch amd64 --all && bun src/container.ts cache --arch arm64 --all`)
-  const { version, repository, commit, epoch } = provenance()
   if (!only.length)
     rmSync(arch ? join(out, arch) : out, { recursive: true, force: true })
   const native = hostArch()
@@ -575,7 +567,7 @@ async function debs(argv: string[]): Promise<number> {
     image: environmentReference(native),
     cImage: arch => environment().c[arch],
     native,
-    provenance: { MICA_DEB_VERSION: version, MICA_DEB_SOURCE_REPO: repository, MICA_DEB_SOURCE_COMMIT: commit, SOURCE_DATE_EPOCH: epoch },
+    repository: releaseOf(REPO).repository,
   }, only, arch)
   console.log(`debs: ${built.join(', ')}`)
   return 0

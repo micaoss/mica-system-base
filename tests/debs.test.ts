@@ -3,16 +3,17 @@ import type { PackRequest } from '../src/debs/pack.ts'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
-import { buildPlan, declared } from '../src/debs/docker.ts'
+import { buildPlan, declared, inputsHash } from '../src/debs/docker.ts'
 import { selectBuild, selectRuntime, selectSource } from '../src/lock.ts'
-import { controlFields, pack, renderControl } from '../src/debs/pack.ts'
+import { controlFields, declaration, pack, renderControl } from '../src/debs/pack.ts'
 import { REPO, run, sha256, workdir } from './fixture.ts'
 
 const work = workdir('debs')
 afterAll(() => rmSync(work, { recursive: true, force: true }))
 
 const TEMPLATE = `Package: fixture
-Version: @VERSION@
+Version: 1.2.3-mica1
+Source-Date-Epoch: 1789000000
 Architecture: @ARCH@
 Maintainer: Test <test@example.invalid>
 Section: admin
@@ -21,10 +22,8 @@ Depends: \${shlibs:Depends}
 Description: packer fixture
  Prose may quote \${shlibs:Depends} without it being substituted.
 `
-const PROVENANCE = { version: '20260914-0130~git0123456789ab-1', repository: 'mica-system-base', commit: '0123456789abcdef0123456789abcdef01234567', epoch: 1789000000 }
-
 function request(overrides: Partial<PackRequest> = {}): PackRequest {
-  return { stage: '', control: 'control', arch: 'all', out: work, provenance: PROVENANCE, substitutions: { 'shlibs:Depends': 'libc6 (>= 2.38)' }, ...overrides }
+  return { stage: '', control: 'control', arch: 'all', out: work, repository: 'mica-system-base', substitutions: { 'shlibs:Depends': 'libc6 (>= 2.38)' }, ...overrides }
 }
 
 function refusal(action: () => unknown): string {
@@ -38,20 +37,26 @@ function refusal(action: () => unknown): string {
 }
 
 describe('the control file', () => {
-  test('carries the substitution, the computed size and the provenance', () => {
+  test('carries the declared version, the substitution, the computed size and the repository, and no epoch or commit', () => {
     const fields = controlFields(renderControl(TEMPLATE, request(), 12))
-    expect(fields.get('Version')).toBe(PROVENANCE.version)
+    expect(fields.get('Version')).toBe('1.2.3-mica1')
     expect(fields.get('Architecture')).toBe('all')
     expect(fields.get('Depends')).toBe('libc6 (>= 2.38)')
     expect(fields.get('Installed-Size')).toBe('12')
     expect(fields.get('Mica-Source-Repo')).toBe('mica-system-base')
-    expect(fields.get('Mica-Source-Commit')).toBe(PROVENANCE.commit)
+    expect(fields.has('Mica-Source-Commit')).toBe(false)
+    expect(fields.has('Source-Date-Epoch')).toBe(false)
+    expect(declaration(TEMPLATE, 'control')).toEqual({ version: '1.2.3-mica1', epoch: 1789000000 })
   })
 
   test('refuses what the packer owns and what it cannot fill', () => {
     expect(refusal(() => renderControl(`${TEMPLATE}Installed-Size: 1\n`, request(), 1))).toContain('Installed-Size')
-    expect(refusal(() => renderControl(TEMPLATE.replace('@VERSION@', '1.0'), request(), 1))).toContain('@VERSION@')
-    expect(refusal(() => renderControl(TEMPLATE, request({ provenance: { ...PROVENANCE, commit: 'abc' } }), 1))).toContain('40-hex')
+    expect(refusal(() => renderControl(`${TEMPLATE}Mica-Source-Commit: ${'a'.repeat(40)}\n`, request(), 1))).toContain('Mica-Source-Commit')
+    // A version is the package's own: no release placeholder, snapshot or dirty stamp.
+    for (const version of ['@VERSION@', '20260914-0130~git0123456789ab-1', '1.0+git0123456789ab-1', '1.0.dirty-1'])
+      expect(refusal(() => renderControl(TEMPLATE.replace('1.2.3-mica1', version), request(), 1))).toContain('not a Debian version of its own')
+    expect(refusal(() => renderControl(TEMPLATE.replace('Source-Date-Epoch: 1789000000\n', ''), request(), 1))).toContain('Source-Date-Epoch')
+    expect(refusal(() => renderControl(TEMPLATE.replace('1789000000', 'now'), request(), 1))).toContain('Source-Date-Epoch')
     expect(refusal(() => renderControl(TEMPLATE, request({ substitutions: { 'shlibs:Depends': '' } }), 1))).toContain('empty')
     expect(refusal(() => renderControl(TEMPLATE, request({ substitutions: {} }), 1))).toContain('unexpanded substitution in Depends')
   })
@@ -120,7 +125,8 @@ describe('the package definitions', () => {
     expect(packages.map(entry => entry.name)).toEqual(['mica-busybox', 'mica-ca-trust', 'mica-system', 'mica-systemd-boot'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
-    expect(packages.find(entry => entry.name === 'mica-busybox')).toEqual({ name: 'mica-busybox', arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'] })
+    expect(packages.find(entry => entry.name === 'mica-busybox')).toEqual({ name: 'mica-busybox', arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'], version: '1.38.0-mica1', epoch: 1789430400 })
+    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.0-1', 'mica-systemd-boot': '257.13-mica1' })
   })
 
   // systemd-boot is compiled from the source of the systemd the lock pins, with the patch that
@@ -158,6 +164,42 @@ describe('the package definitions', () => {
     expect(readFileSync(join(REPO, 'debs/mica-busybox/control'), 'utf8')).not.toMatch(/^Depends:/m)
     expect(existsSync(join(REPO, 'debs/mica-busybox/inputs'))).toBe(false)
   })
+})
+
+// mica.inputs covers what determines a package's bytes and nothing else.
+test('the inputs hash follows a package\'s own files, the packer, its lock rows and the architecture', () => {
+  const copy = join(work, 'inputs')
+  const git = run(['git', '-c', 'safe.directory=*', '-C', REPO, 'ls-files'])
+  for (const path of git.output.split('\n').filter(Boolean)) {
+    mkdirSync(join(copy, path, '..'), { recursive: true })
+    const source = join(REPO, path)
+    if (lstatSync(source).isSymbolicLink())
+      symlinkSync(readlinkSync(source), join(copy, path))
+    else
+      writeFileSync(join(copy, path), readFileSync(source), { mode: lstatSync(source).mode })
+  }
+  const hash = (name: string, arch: 'amd64' | 'arm64' | 'all'): string => inputsHash(copy, declared(copy).find(entry => entry.name === name)!, arch)
+  const before = { system: hash('mica-system', 'all'), boot: hash('mica-systemd-boot', 'amd64'), bootArm: hash('mica-systemd-boot', 'arm64'), busybox: hash('mica-busybox', 'amd64'), trust: hash('mica-ca-trust', 'all') }
+  expect(before.boot).not.toBe(before.bootArm)
+  const append = (path: string, text: string): void => writeFileSync(join(copy, path), readFileSync(join(copy, path), 'utf8') + text)
+  // Another package's files, the build-env lock and repository metadata are not inputs.
+  append('debs/mica-busybox/config', '# changed\n')
+  append('locks/mica-build-env.lock', '# changed\n')
+  append('README.md', 'changed\n')
+  expect([hash('mica-system', 'all'), hash('mica-systemd-boot', 'amd64'), hash('mica-ca-trust', 'all')]).toEqual([before.system, before.boot, before.trust])
+  expect(hash('mica-busybox', 'amd64')).not.toBe(before.busybox)
+  // The payload, the packer, a pinned row and the declared version are.
+  append('payload/usr/lib/mica/mica-shadow-reconcile', '# changed\n')
+  expect(hash('mica-system', 'all')).not.toBe(before.system)
+  expect(hash('mica-systemd-boot', 'amd64')).toBe(before.boot)
+  append('src/debs/pack.ts', '// changed\n')
+  expect(hash('mica-ca-trust', 'all')).not.toBe(before.trust)
+  const packed = hash('mica-systemd-boot', 'arm64')
+  writeFileSync(join(copy, 'locks/upstream.lock'), readFileSync(join(copy, 'locks/upstream.lock'), 'utf8').replace(/^(source\tsource\.systemd\tall\t\S+\t)[0-9a-f]{64}/m, `$1${'0'.repeat(64)}`))
+  const boot = hash('mica-systemd-boot', 'arm64')
+  expect(boot).not.toBe(packed)
+  writeFileSync(join(copy, 'debs/mica-systemd-boot/control'), readFileSync(join(copy, 'debs/mica-systemd-boot/control'), 'utf8').replace('257.13-mica1', '257.13-mica2'))
+  expect(hash('mica-systemd-boot', 'arm64')).not.toBe(boot)
 })
 
 describe('the Mica names', () => {

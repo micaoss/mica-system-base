@@ -4,7 +4,8 @@ import type { ReleaseAssets, RootfsBuild } from '../src/publish.ts'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { assertPools, dryRunLock, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
+import { declared, inputsHash } from '../src/debs/docker.ts'
+import { assertPools, assertVersions, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
 import { Registry, sha256 } from '../src/registry.ts'
 import { parseLock } from '../src/release-lock.ts'
 import { issue, releaseOf } from '../src/release.ts'
@@ -82,11 +83,11 @@ describe('publication', () => {
   }
   const client = (port = server.port): Registry => new Registry(`127.0.0.1:${port}/testorg`, 'test', 'test-token', true)
 
-  function deb(name: string, arch: string, pools: string[], source = commit, description = 'fixture'): void {
+  function deb(name: string, arch: string, pools: string[], source = 'mica-system-base', description = 'fixture'): void {
     const tree = join(work, 'tree', `${name}-${arch}`)
     rmSync(tree, { recursive: true, force: true })
     mkdirSync(join(tree, 'DEBIAN'), { recursive: true })
-    writeFileSync(join(tree, 'DEBIAN/control'), `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: Mica OS <hi@micaos.dev>\nDescription: ${description}\nMica-Source-Repo: mica-system-base\nMica-Source-Commit: ${source}\n`)
+    writeFileSync(join(tree, 'DEBIAN/control'), `Package: ${name}\nVersion: ${version}\nArchitecture: ${arch}\nMaintainer: Mica OS <hi@micaos.dev>\nDescription: ${description}\nMica-Source-Repo: ${source}\n`)
     for (const pool of pools) {
       mkdirSync(join(out, 'debs', pool, 'pool'), { recursive: true })
       const built = run(['dpkg-deb', '--build', '--root-owner-group', tree, join(out, 'debs', pool, 'pool', `${name}_${version}_${arch}.deb`)], { SOURCE_DATE_EPOCH: '1757800000' })
@@ -100,7 +101,7 @@ describe('publication', () => {
     for (const [name, arches] of [['fixture-data', 'all'], ['fixture-tool', 'amd64,arm64']] as const) {
       mkdirSync(join(repo, 'debs', name), { recursive: true })
       writeFileSync(join(repo, 'debs', name, 'Dockerfile'), `# mica-deb: arches=${arches}\n`)
-      writeFileSync(join(repo, 'debs', name, 'control'), `Package: ${name}\n`)
+      writeFileSync(join(repo, 'debs', name, 'control'), `Package: ${name}\nVersion: 1.0-1\nSource-Date-Epoch: 1757800000\n`)
     }
     writeFileSync(join(repo, 'package.json'), '{ "name": "mica-system-base" }\n')
     writeFileSync(join(repo, 'sources.json'), readFileSync(join(REPO, 'sources.json')))
@@ -113,7 +114,7 @@ describe('publication', () => {
     git('commit', '-q', '-m', 'fixture')
     git('tag', '20260914-0130')
     commit = git('rev-parse', 'HEAD')
-    version = '20260914-0130-1'
+    version = '1.0-1'
     deb('fixture-data', 'all', ['amd64', 'arm64'])
     deb('fixture-tool', 'amd64', ['amd64'])
     deb('fixture-tool', 'arm64', ['arm64'])
@@ -123,13 +124,56 @@ describe('publication', () => {
     rmSync(work, { recursive: true, force: true })
   })
 
+  test('a pool names no release: its manifest carries the repository, the architecture and each package\'s inputs', () => {
+    const release = releaseOf(repo)
+    const pools = assertPools(repo, out, release)
+    const { manifest, layers } = poolManifest(repo, release, 'arm64', join(out, 'debs', 'arm64', 'pool'), pools.get('arm64')!)
+    expect((JSON.parse(text(manifest)) as { annotations: Record<string, string> }).annotations).toEqual({ 'mica.source-repo': 'mica-system-base', 'mica.arch': 'arm64' })
+    const data = declared(repo).find(entry => entry.name === 'fixture-data')!
+    expect(layers.map(layer => layer.annotations)).toEqual([
+      { 'org.opencontainers.image.title': `fixture-data_${version}_all.deb`, 'mica.inputs': inputsHash(repo, data, 'all') },
+      { 'org.opencontainers.image.title': `fixture-tool_${version}_arm64.deb`, 'mica.inputs': inputsHash(repo, declared(repo).find(entry => entry.name === 'fixture-tool')!, 'arm64') },
+    ])
+    // Another release label gives the same manifest.
+    expect(sha256(poolManifest(repo, { ...release, label: '20261001-0000', commit: 'f'.repeat(40) }, 'arm64', join(out, 'debs', 'arm64', 'pool'), pools.get('arm64')!).manifest)).toBe(sha256(manifest))
+  })
+
+  test('a package is locked by its version against the latest release', async () => {
+    const release = releaseOf(repo)
+    const pools = assertPools(repo, out, release)
+    const published = (arch: 'amd64' | 'arm64'): { name: string, version: string, digest: string, inputs: string }[] => poolManifest(repo, release, arch, join(out, 'debs', arch, 'pool'), pools.get(arch)!).layers.map(layer => ({
+      name: layer.annotations['org.opencontainers.image.title']!.split('_')[0]!,
+      version,
+      digest: layer.digest,
+      inputs: layer.annotations['mica.inputs']!,
+    }))
+    const prior = (change: (entry: { name: string, version: string, digest: string, inputs: string }) => object = entry => entry): { label: string, pools: Map<'amd64' | 'arm64', { name: string, version: string, digest: string, inputs: string }[]> } =>
+      ({ label: '20260901-0000', pools: new Map((['amd64', 'arm64'] as const).map(arch => [arch, published(arch).map(entry => ({ ...entry, ...change(entry) }))])) })
+    expect(assertVersions(repo, out, release, undefined)).toContain(`amd64 fixture-tool ${version}: new`)
+    expect(assertVersions(repo, out, release, prior())).toContain(`arm64 fixture-data ${version}: reused from 20260901-0000, byte-identical`)
+    expect(assertVersions(repo, out, release, prior(() => ({ version: '0.9-1' })))).toContain(`amd64 fixture-tool ${version}: built, above 0.9-1 of 20260901-0000`)
+    expect(() => assertVersions(repo, out, release, prior(() => ({ version: '1.1-1' })))).toThrow('is not higher than 1.1-1')
+    expect(() => assertVersions(repo, out, release, prior(() => ({ inputs: 'e'.repeat(64) })))).toThrow('inputs of fixture-data changed without a version bump')
+    expect(() => assertVersions(repo, out, release, prior(() => ({ digest: `sha256:${'e'.repeat(64)}` })))).toThrow('bump its version')
+
+    // The prior release is read as a consumer reads it: its lock, SHA256SUMS and pools.
+    const later = { ...release, label: '20260914-0200' }
+    const earlier = assets()
+    await expect(priorRelease(later, client(), earlier)).resolves.toBeUndefined()
+    earlier.files.set('20260914-0130/mica-system-base.lock', new TextEncoder().encode('# mica-lock v1\n'))
+    await expect(priorRelease(later, client(), earlier)).rejects.toThrow('does not serve a mica-system-base.lock its SHA256SUMS lists')
+    // A release from before version-locked packages records no inputs: nothing is compared.
+    expect(assertVersions(repo, out, release, { label: '20260901-0000', pools: new Map(), predates: true })).toContain(`amd64 fixture-tool ${version}: built; release 20260901-0000 predates version-locked packages`)
+  })
+
   test('the pools are pushed once per architecture and recognised when present', async () => {
-    const first = await publishPool(repo, out, client())
-    expect(first).toHaveLength(2)
-    expect(first[0]).toContain('testorg/mica-system-base:pool.amd64.20260914-0130 (pushed')
-    expect(first[1]).toContain('(pushed')
-    const again = await publishPool(repo, out, client())
-    expect(again.every(line => line.includes('(present'))).toBe(true)
+    // With no earlier release every package is new; then each pool is pushed.
+    const first = await publishPool(repo, out, client(), assets())
+    expect(first.slice(0, 4)).toEqual(['amd64', 'amd64', 'arm64', 'arm64'].map((arch, index) => `${arch} fixture-${index % 2 ? 'tool' : 'data'} ${version}: new`))
+    expect(first[4]).toContain('testorg/mica-system-base:pool.amd64.20260914-0130 (pushed')
+    expect(first[5]).toContain('(pushed')
+    const again = await publishPool(repo, out, client(), assets())
+    expect(again.slice(4).every(line => line.includes('(present'))).toBe(true)
   })
 
   // One attempt's roots: a real tar layer per architecture whose /etc/issue names
@@ -247,6 +291,7 @@ describe('publication', () => {
       files,
       uploads,
       early,
+      releases: async () => [...new Set([...files.keys()].map(key => key.split('/')[0]!))],
       list: async tag => [...files.keys()].filter(key => key.startsWith(`${tag}/`)).map(key => key.slice(tag.length + 1)),
       download: async (tag, name) => {
         if (!files.has(`${tag}/${name}`))
@@ -290,6 +335,16 @@ describe('publication', () => {
     expect(text(release.files.get('20260914-0130/mica-system-base.lock')!)).toBe(lock)
     expect(text(release.files.get('20260914-0130/SHA256SUMS')!)).toBe(`${sha256(new TextEncoder().encode(lock))}  mica-system-base.lock\n`)
     expect(parseLock(lock, 'mica-system-base.lock').release).toBe('20260914-0130')
+
+    // The next release reads this one's packages back and reuses them.
+    const prior = await priorRelease({ ...releaseOf(repo), label: '20260914-0200' }, client(), release)
+    expect(prior?.label).toBe('20260914-0130')
+    expect(assertVersions(repo, out, releaseOf(repo), prior)).toEqual([
+      `amd64 fixture-data ${version}: reused from 20260914-0130, byte-identical`,
+      `amd64 fixture-tool ${version}: reused from 20260914-0130, byte-identical`,
+      `arm64 fixture-data ${version}: reused from 20260914-0130, byte-identical`,
+      `arm64 fixture-tool ${version}: reused from 20260914-0130, byte-identical`,
+    ])
 
     // A later attempt finds the same assets and uploads nothing; an interrupted one finishes.
     expect(await publishLock(repo, client(), release)).toEqual(['mica-system-base.lock (present)', 'SHA256SUMS (present)'])
@@ -357,13 +412,13 @@ describe('publication', () => {
 
   test('a tag holding other bytes is never re-pointed', async () => {
     server.put('testorg/mica-system-base', 'pool.amd64.20260914-0130', '{"schemaVersion":2}')
-    await expect(publishPool(repo, out, client())).rejects.toThrow('never re-pointed')
+    await expect(publishPool(repo, out, client(), assets())).rejects.toThrow('never re-pointed')
   })
 
   test('a package that cannot be read anonymously fails the publication', async () => {
     const hidden = registry({ private: true })
     try {
-      await expect(publishPool(repo, out, client(hidden.port))).rejects.toThrow('cannot be pulled anonymously')
+      await expect(publishPool(repo, out, client(hidden.port), assets())).rejects.toThrow('cannot be pulled anonymously')
     }
     finally {
       hidden.stop()
@@ -393,21 +448,21 @@ describe('publication', () => {
     expect(() => readLayers(layers)).toThrow('diff-id')
   })
 
-  test('an archive of another commit, a missing archive, a dirty or untagged checkout are refused', async () => {
+  test('an archive of another repository, a missing archive, a dirty or untagged checkout are refused', async () => {
     const fresh = registry()
     try {
-      deb('fixture-tool', 'arm64', ['arm64'], 'f'.repeat(40))
-      await expect(publishPool(repo, out, client(fresh.port))).rejects.toThrow('was not built from')
+      deb('fixture-tool', 'arm64', ['arm64'], 'mica-other')
+      await expect(publishPool(repo, out, client(fresh.port), assets())).rejects.toThrow('was not built from')
       deb('fixture-tool', 'arm64', ['arm64'])
       rmSync(join(out, 'debs', 'arm64', 'pool', `fixture-data_${version}_all.deb`))
-      await expect(publishPool(repo, out, client(fresh.port))).rejects.toThrow('the 20260914-0130 arm64 pool is')
+      await expect(publishPool(repo, out, client(fresh.port), assets())).rejects.toThrow('the arm64 pool is')
       deb('fixture-data', 'all', ['arm64'])
       writeFileSync(join(repo, 'NOTES'), 'uncommitted\n')
-      await expect(publishPool(repo, out, client(fresh.port))).rejects.toThrow('is not a release')
+      await expect(publishPool(repo, out, client(fresh.port), assets())).rejects.toThrow('is not a release')
       writeFileSync(join(repo, 'NOTES'), 'after the release\n')
       git('add', 'NOTES')
       git('commit', '-q', '-m', 'after the release')
-      await expect(publishPool(repo, out, client(fresh.port))).rejects.toThrow('is not a release')
+      await expect(publishPool(repo, out, client(fresh.port), assets())).rejects.toThrow('is not a release')
     }
     finally {
       fresh.stop()

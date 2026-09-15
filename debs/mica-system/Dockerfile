@@ -5,9 +5,7 @@
 ARG MICA_BUILD_IMAGE
 FROM ${MICA_BUILD_IMAGE} AS pack
 ARG MICA_DEB_ARCH
-ARG MICA_DEB_VERSION
 ARG MICA_DEB_SOURCE_REPO
-ARG MICA_DEB_SOURCE_COMMIT
 ARG SOURCE_DATE_EPOCH
 # Files at git's modes (0755 executable, 0644 otherwise, 0755 directories),
 # whatever the checkout's umask. The empty directories are mountpoints git

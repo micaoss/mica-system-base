@@ -3,13 +3,14 @@
 //   bun /tooling/debs/pack-cli.ts --stage DIR --control FILE --out DIR
 //       [--postinst FILE] [--substitute NAME=VALUE]...
 //
-// The architecture and the provenance come from the build arguments every
-// package Dockerfile declares: MICA_DEB_ARCH, MICA_DEB_VERSION,
-// MICA_DEB_SOURCE_REPO, MICA_DEB_SOURCE_COMMIT and SOURCE_DATE_EPOCH.
+// The architecture, the repository and the epoch come from the build arguments
+// every package Dockerfile declares: MICA_DEB_ARCH, MICA_DEB_SOURCE_REPO and
+// SOURCE_DATE_EPOCH, which must be the epoch the control template declares; the
+// version is the template's own.
 import type { PackRequest } from './pack.ts'
+import { readFileSync } from 'node:fs'
 import { fail, report } from '../errors.ts'
-import { PACKAGE_VERSION } from '../release.ts'
-import { pack } from './pack.ts'
+import { declaration, pack } from './pack.ts'
 
 async function main(argv: string[]): Promise<void> {
   const values = new Map<string, string>()
@@ -35,20 +36,19 @@ async function main(argv: string[]): Promise<void> {
   const arch = env.MICA_DEB_ARCH ?? ''
   if (!['amd64', 'arm64', 'all'].includes(arch))
     fail(`MICA_DEB_ARCH='${arch}' is not amd64, arm64 or all`)
-  if (!PACKAGE_VERSION.test(env.MICA_DEB_VERSION ?? ''))
-    fail(`MICA_DEB_VERSION='${env.MICA_DEB_VERSION ?? ''}' is not <YYYYMMDD-HHMM>-1 or <YYYYMMDD-HHMM>~git<commit12>[.dirty]-1`)
-  if (!/^\d+$/.test(env.SOURCE_DATE_EPOCH ?? ''))
-    fail('SOURCE_DATE_EPOCH is unset or not a whole number of seconds; there is no "now" default')
   for (const required of ['--stage', '--control', '--out']) {
     if (!values.get(required))
       fail(`${required} is required`)
   }
+  const { epoch } = declaration(readFileSync(values.get('--control')!, 'utf8'), values.get('--control')!)
+  if (env.SOURCE_DATE_EPOCH !== String(epoch))
+    fail(`SOURCE_DATE_EPOCH='${env.SOURCE_DATE_EPOCH ?? ''}' is not the ${epoch} ${values.get('--control')} declares`)
   const request: PackRequest = {
     stage: values.get('--stage')!,
     control: values.get('--control')!,
     arch: arch as PackRequest['arch'],
     out: values.get('--out')!,
-    provenance: { version: env.MICA_DEB_VERSION!, repository: env.MICA_DEB_SOURCE_REPO ?? '', commit: env.MICA_DEB_SOURCE_COMMIT ?? '', epoch: Number(env.SOURCE_DATE_EPOCH) },
+    repository: env.MICA_DEB_SOURCE_REPO ?? '',
     substitutions,
   }
   const postinst = values.get('--postinst')

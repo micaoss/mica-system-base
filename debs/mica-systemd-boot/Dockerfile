@@ -55,9 +55,7 @@ RUN --mount=type=bind,from=cache,target=/cache \
 
 FROM ${MICA_BUILD_IMAGE} AS pack
 ARG MICA_DEB_ARCH
-ARG MICA_DEB_VERSION
 ARG MICA_DEB_SOURCE_REPO
-ARG MICA_DEB_SOURCE_COMMIT
 ARG SOURCE_DATE_EPOCH
 ARG MICA_SOURCE_SYSTEMD_VERSION
 ARG MICA_SOURCE_SYSTEMD_URL
@@ -77,7 +75,7 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
         echo ' archive above, sha256'; \
         echo " ${MICA_SOURCE_SYSTEMD_SHA256},"; \
         echo ' with debs/mica-systemd-boot/persistence.patch of'; \
-        echo " https://github.com/micaoss/${MICA_DEB_SOURCE_REPO} at commit ${MICA_DEB_SOURCE_COMMIT}."; \
+        echo " https://github.com/micaoss/${MICA_DEB_SOURCE_REPO}, sha256 $(sha256sum /in/debs/mica-systemd-boot/persistence.patch | cut -d' ' -f1)."; \
         echo ' That archive and that patch are its complete corresponding source.'; \
         echo ' The part authored by Mica OS is the patch, the packaging and this file.'; \
         echo ''; \

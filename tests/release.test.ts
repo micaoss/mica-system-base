@@ -2,7 +2,7 @@
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'bun:test'
-import { ISSUE, issue, PACKAGE_VERSION, releaseOf } from '../src/release.ts'
+import { ISSUE, issue, releaseOf } from '../src/release.ts'
 import { run, workdir } from './fixture.ts'
 
 const work = workdir('release')
@@ -25,7 +25,7 @@ test('a clean checkout whose HEAD carries one YYYYMMDD-HHMM tag is that release;
 
   // A snapshot is named by its commit's UTC minute.
   const snapshot = releaseOf(work)
-  expect(snapshot).toMatchObject({ released: false, label: `20260914-0102~git${c12}`, packageVersion: `20260914-0102~git${c12}-1`, commit })
+  expect(snapshot).toMatchObject({ released: false, label: `20260914-0102~git${c12}`, commit })
 
   // Tags that are not release versions do not make a release.
   git('tag', 'v0.0.1')
@@ -33,21 +33,11 @@ test('a clean checkout whose HEAD carries one YYYYMMDD-HHMM tag is that release;
   expect(releaseOf(work).released).toBe(false)
 
   git('tag', '20260914-0130')
-  expect(releaseOf(work)).toMatchObject({ released: true, label: '20260914-0130', packageVersion: '20260914-0130-1', commit })
+  expect(releaseOf(work)).toMatchObject({ released: true, label: '20260914-0130', commit })
 
   writeFileSync(join(work, 'NOTES'), 'uncommitted\n')
-  expect(releaseOf(work)).toMatchObject({ released: false, packageVersion: `20260914-0102~git${c12}.dirty-1` })
+  expect(releaseOf(work)).toMatchObject({ released: false, label: `20260914-0102~git${c12}.dirty` })
   rmSync(join(work, 'NOTES'))
-
-  // The packer accepts exactly these versions.
-  for (const version of ['20260914-0130-1', `20260914-0102~git${c12}-1`, `20260914-0102~git${c12}.dirty-1`])
-    expect(PACKAGE_VERSION.test(version)).toBe(true)
-  for (const version of ['0.0.1-1', `0.0.1~git${c12}-1`, '20260914-0130', '20260914-0130-2', `20260914-0102+git${c12}-1`])
-    expect(PACKAGE_VERSION.test(version)).toBe(false)
-
-  // Snapshots sort before the release of their commit, releases by time.
-  for (const [lower, higher] of [[`20260914-0102~git${c12}-1`, '20260914-0102-1'], ['20260914-0130-1', '20260914-0131-1'], ['20260914-2359-1', '20260915-0000-1']] as const)
-    expect(run(['dpkg', '--compare-versions', lower, 'lt', higher]).code).toBe(0)
 
   // One commit is one release; an impossible time is not a release version.
   git('tag', '20260915-0900')

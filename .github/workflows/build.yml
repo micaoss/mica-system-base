@@ -129,5 +129,9 @@ jobs:
           pattern: base-*
           path: _out
           merge-multiple: true
-      - name: Both pools as one build
+      # Reads the latest release's lock and pools; refuses a package whose inputs or
+      # bytes changed without a version bump.
+      - name: Both pools as one build, each package against the latest release
         run: bun src/publish.ts gate
+        env:
+          GH_TOKEN: ${{ github.token }}
