@@ -1,5 +1,5 @@
 // The release lock readers against the spec's vectors (tests/vectors, a copy of
-// mica:docs/design/release-lock/vectors at mica ffbea5d): every lock, upstream
+// mica:docs/design/release-lock/vectors at mica 19fbdce): every lock, upstream
 // and pins vector gives the result and rule expected.tsv lists. The repos
 // vectors are the offline source cache's (tools/repos.sh), which this
 // repository does not have yet.

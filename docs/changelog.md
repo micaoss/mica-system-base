@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-15 11:30 [progress]
+
+The release lock readers follow mica main 19fbdce: scoped releases and pins
+(`<scope>/<release>`, `SCOPE=`) for mica-boards and mica-build, board component
+rows, and mica-build's input, product, bundle and asset rows, with their
+refusal rules. `tests/vectors` is refreshed to that commit and every vector
+passes.
+
 ## 2026-09-15 11:00 [progress]
 
 Packages are locked by their own version (mica:docs/decisions/2026-09-15-package-versions.md):

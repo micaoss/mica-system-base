@@ -8,4 +8,4 @@ source	bun	arm64	1.4.2	444444444444444444444444444444444444444444444444444444444
 source	podman	all	5.8.6	5555555555555555555555555555555555555555555555555555555555555555	https://github.com/containers/podman/archive/refs/tags/v5.8.6.tar.gz
 git	linux	https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git	v6.12.107	0123456789abcdef0123456789abcdef01234567
 git	u-boot	https://source.denx.de/u-boot/u-boot.git	v2025.01	89abcdef0123456789abcdef0123456789abcdef
-pool	amd64	ghcr.io/micaoss/mica-build-env:pool.amd64.x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+pool	amd64	ghcr.io/micaoss/mica-build-env:pool.amd64.20260914-2042@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

@@ -95,13 +95,13 @@ test('no tracked file outside locks/ names a third-party image', () => {
 })
 
 test('the release assets are downloaded from the pinned release', () => {
-  expect(buildEnvAsset({ repository: 'mica-build-env', release: '20260914-2353', sha256sums: 'f'.repeat(64) }, 'SHA256SUMS'))
+  expect(buildEnvAsset({ repository: 'mica-build-env', scope: '', release: '20260914-2353', sha256sums: 'f'.repeat(64) }, 'SHA256SUMS'))
     .toBe('https://github.com/micaoss/mica-build-env/releases/download/20260914-2353/SHA256SUMS')
 })
 
 test('the committed lock must be the one file the pinned SHA256SUMS lists', () => {
   const sums = bytes(`${hash(bytes(LOCK))}  mica-build-env.lock\n`)
-  const pin = { repository: 'mica-build-env', release: '20260914-2353', sha256sums: hash(sums) }
+  const pin = { repository: 'mica-build-env', scope: '', release: '20260914-2353', sha256sums: hash(sums) }
   expect(() => assertBuildEnvRelease(pin, sums, bytes(LOCK))).not.toThrow()
   expect(() => assertBuildEnvRelease({ ...pin, sha256sums: 'f'.repeat(64) }, sums, bytes(LOCK))).toThrow('SHA256SUMS')
   expect(() => assertBuildEnvRelease(pin, sums, bytes(LOCK.replace('1'.repeat(64), '8'.repeat(64))))).toThrow('mica-build-env.lock')
