@@ -1,0 +1,28 @@
+#!/bin/sh
+# Create the DATA/state leaves and seed hostname and random-seed; existing
+# content is kept.
+set -eu
+state=/mnt/data/state
+[ -d "$state" ] && [ ! -L "$state" ] || exit 1
+ensure_dir() {
+    [ ! -L "$state/$1" ] || { echo "mica-seed-state: symbolic state leaf $1" >&2; exit 1; }
+    mkdir -p "$state/$1"
+    chmod "$2" "$state/$1"
+}
+# 0711 on mica: networkd traverses it to its key store.
+ensure_dir mica 0711
+for name in ssh bluetooth wpa_supplicant hostapd; do ensure_dir "$name" 0700; done
+for name in systemd-units quadlet; do ensure_dir "$name" 0755; done
+for name in wpa_supplicant hostapd; do
+    if [ -d "/etc/$name" ]; then cp -an "/etc/$name/." "$state/$name/"; fi
+done
+for name in hostname random-seed; do
+    [ ! -L "$state/$name" ] || { echo "mica-seed-state: symbolic state file $name" >&2; exit 1; }
+    if [ ! -e "$state/$name" ]; then
+        if [ "$name" = hostname ]; then cp -a /etc/hostname "$state/$name";
+        else (umask 077; : >"$state/$name"); fi
+    fi
+    [ -f "$state/$name" ] || exit 1
+done
+chmod 0600 "$state/random-seed"
+sync -f "$state"

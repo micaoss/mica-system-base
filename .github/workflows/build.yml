@@ -1,0 +1,133 @@
+name: build
+# Called by ci.yml and release.yml: the checks, then for amd64 and arm64, each on
+# its native runner, the pinned archives, the packages, the base root and its
+# layer, kept as the artifacts base-<arch>; then the two pools checked as one
+# build. One build time, chosen once, goes into both roots. Nothing is emulated.
+# Caches only save downloads: the Bun install cache and the pinned Debian
+# archives, each keyed exactly on the files that pin them, restored by every run
+# and saved only by pushes to main, so a pull request never writes what a
+# release reads. The packages are always built with no cache, and every archive
+# is verified against its pin, so a release is the same without the caches.
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      build-time: ${{ steps.time.outputs.value }}
+    steps:
+      - id: time
+        name: One build time for both roots
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Restore the Bun install cache
+        id: bun-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock', 'package.json') }}
+      - name: Dependencies
+        run: bun install --frozen-lockfile
+      - name: Save the Bun install cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
+      - name: locks/mica-build-env.lock against its pinned release
+        run: bun src/container.ts environment
+      - name: Lint, typecheck and tests
+        run: bun run check
+  base:
+    needs: [plan, check]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      MICA_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Restore the Bun install cache
+        id: bun-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock', 'package.json') }}
+      - name: Dependencies
+        run: bun install --frozen-lockfile
+      - name: Save the Bun install cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
+      - name: locks/mica-build-env.lock against its pinned release
+        run: bun src/container.ts environment
+      # The archives are named by the sha256 the committed pins record, and the cache
+      # step verifies every one of them whether it came from the cache or the mirror.
+      - name: Restore the pinned archives
+        id: archives-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: _out/debian-base/debs
+          key: debian-archives-${{ matrix.arch }}-${{ hashFiles('sources.json', 'locks/upstream.lock', 'debs/*/build-sources.json') }}
+      - name: Pinned archives
+        run: bun src/container.ts cache --arch ${{ matrix.arch }} --all
+      - name: Save the pinned archives
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.archives-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: _out/debian-base/debs
+          key: ${{ steps.archives-cache.outputs.cache-primary-key }}
+      - name: Every locked package, the upstream ones included, bootstraps together
+        run: bun src/container.ts test-bootstrap --arch ${{ matrix.arch }}
+      - name: Packages
+        run: bun src/container.ts debs --arch ${{ matrix.arch }}
+      - name: Base root
+        run: bun src/container.ts rootfs --arch ${{ matrix.arch }}
+      - name: Root layer
+        run: bun src/publish.ts layer --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: base-${{ matrix.arch }}
+          path: |
+            _out/debs/${{ matrix.arch }}/pool/*.deb
+            _out/layers/${{ matrix.arch }}/
+          if-no-files-found: error
+  gate:
+    needs: base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: base-*
+          path: _out
+          merge-multiple: true
+      - name: Both pools as one build
+        run: bun src/publish.ts gate

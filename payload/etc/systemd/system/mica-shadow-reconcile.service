@@ -1,0 +1,13 @@
+[Unit]
+Description=Build /etc/shadow in RAM from the accounts the image ships
+Documentation=file:/usr/lib/mica/mica-shadow-reconcile
+# Before everything that reads /etc/shadow (dropbear, logind) or writes it (micad).
+Before=micad.service dropbear.service systemd-logind.service systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-shadow-reconcile
+
+[Install]
+WantedBy=multi-user.target

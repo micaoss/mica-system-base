@@ -1,0 +1,4 @@
+{
+  "image": "localhost/mica-system-base-env",
+  "bun": "1.4.2"
+}

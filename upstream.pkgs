@@ -1,0 +1,25 @@
+# The Debian packages later stages install on the base root: board, radio and
+# engine packages the lock pins so every consumer takes the same archives.
+# `bun src/container.ts pin-inputs` pins their closure beyond the lock in
+# locks/upstream.lock, selected in packages.tsv as upstream-<root> for the roots
+# that need it; they are never installed into the base root and are published as
+# the upstream rows of the release's mica-system-base.lock.
+# mica-podman
+libatomic1
+libglib2.0-0t64
+libjson-c5
+libsubid5
+# radio (Wi-Fi, Wi-Fi AP, Bluetooth)
+bluez
+hostapd
+iw
+libasound2t64
+libdw1t64
+libnl-route-3-200
+libpcsclite1
+libreadline8t64
+readline-common
+rfkill
+wpasupplicant
+# board audio
+alsa-utils

@@ -1,0 +1,22 @@
+[Unit]
+Description=SSH server (dropbear)
+Documentation=file:/usr/lib/mica/mica-dropbear-prestart
+# Disabled in the image (50-mica-dropbear.preset). micad enables and starts it at
+# runtime scope after writing /run/mica/dropbear.env; it runs only after the
+# shadow file is built.
+Requires=mica-shadow-reconcile.service
+After=network.target mica-seed-state.service mica-shadow-reconcile.service
+RequiresMountsFor=/mnt/data/state
+
+[Service]
+# One line from micad: DROPBEAR_ARGS="-p <addr>:<port> ... [-s] [-w]" (-s: no
+# password logins, -w: no root login). Required: no file, no start.
+EnvironmentFile=/run/mica/dropbear.env
+ExecStartPre=/usr/lib/mica/mica-dropbear-prestart
+ExecStart=/usr/sbin/dropbear -F -E -r /mnt/data/state/ssh/dropbear_ed25519_host_key $DROPBEAR_ARGS
+# micad restarts the unit for new arguments; established sessions survive it.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

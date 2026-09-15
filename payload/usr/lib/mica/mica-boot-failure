@@ -1,0 +1,15 @@
+#!/bin/sh
+# Shared DATA failure needs recovery; changing root deployments cannot repair it.
+set -eu
+if ! systemctl is-active --quiet mica-data-layout.service || [ -e /run/mica/shared-data-failure ]; then
+    echo 'mica-boot-failure: shared DATA unavailable; recovery required' >&2
+    systemctl --no-block poweroff
+    exit 0
+fi
+if ! timeout 30 mica-deploy fail-boot; then
+    echo 'mica-boot-failure: cannot persist fallback selection; recovery required' >&2
+    systemctl --no-block poweroff
+    exit 0
+fi
+echo 'mica-boot-failure: health gate failed; rebooting for bounded fallback' >&2
+systemctl --no-block reboot

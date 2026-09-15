@@ -1,0 +1,88 @@
+#!/bin/sh
+# Refuse a root in which dropbear.service or nftables.service is enabled, and
+# create the operator account mica (uid and gid 1000).
+#
+# Enablement is payload: this script links nothing and removes nothing. The
+# presets 50-mica-dropbear.preset and 50-mica-nftables.preset keep both units
+# disabled; the checks below turn a link that arrived anyway into a failed
+# build. useradd, groupadd and chage come from passwd, in Depends.
+set -e
+
+case "$1" in
+configure) ;;
+abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+*) echo "error: postinst called with unknown argument '$1'" >&2; exit 1 ;;
+esac
+
+# micad enables dropbear.service at runtime scope after writing its arguments.
+DROPBEAR_LINK=/etc/systemd/system/multi-user.target.wants/dropbear.service
+[ ! -e "${DROPBEAR_LINK}" ] && [ ! -L "${DROPBEAR_LINK}" ] ||
+    { echo "error: ${DROPBEAR_LINK} exists, so dropbear.service would start at boot. SSH is disabled in the image and micad enables it at runtime; mica-system ships /usr/lib/systemd/system-preset/50-mica-dropbear.preset to keep it disabled, and something enabled it anyway" >&2; exit 1; }
+echo "dropbear.service left DISABLED in the image (micad owns the lifecycle)"
+
+# nftables.service runs `nft -f /etc/nftables.conf`, which begins with
+# `flush ruleset`: enabled, it would clear the container network's rules at boot.
+NFT_LINK=/etc/systemd/system/sysinit.target.wants/nftables.service
+[ ! -e "${NFT_LINK}" ] ||
+    { echo "error: ${NFT_LINK} exists, so nftables.service would run at boot and its ExecStart 'nft -f /etc/nftables.conf' begins with 'flush ruleset' -- it would clear the container network's rules on every boot. mica-system ships /usr/lib/systemd/system-preset/50-mica-nftables.preset to keep the unit disabled; something enabled it anyway" >&2; exit 1; }
+echo "nftables.service left DISABLED in the image (the tool ships; no ruleset is loaded at boot)"
+
+NAME=mica
+ID=1000
+HOME_DIR=/home/mica
+LOGIN_SHELL=/bin/bash
+COMMENT="mica operator"
+
+test -x "${LOGIN_SHELL}" ||
+    { echo "error: ${LOGIN_SHELL} is not installed, so it cannot be the ${NAME} login shell" >&2; exit 1; }
+
+# The ids are fixed because /home/mica lives on DATA and outlives every root. The
+# account already in place is accepted on a reinstall; the name or the id held by
+# anything else is refused.
+group="$(awk -F: -v n="${NAME}" -v g="${ID}" '$1 == n || $3 == g' /etc/group)"
+if [ -z "${group}" ]; then
+    groupadd --gid "${ID}" "${NAME}"
+else
+    case "${group}" in
+    "${NAME}:x:${ID}:"*) ;;
+    *) echo "error: gid ${ID} or the group name ${NAME} is held by something else: ${group}" >&2; exit 1 ;;
+    esac
+fi
+
+# --no-create-home: /home is the mountpoint of home.mount; mica-seed-home creates
+# /home/mica on DATA.
+passwd_entry="$(awk -F: -v n="${NAME}" -v u="${ID}" '$1 == n || $3 == u' /etc/passwd)"
+if [ -z "${passwd_entry}" ]; then
+    useradd --uid "${ID}" --gid "${ID}" --no-create-home --home-dir "${HOME_DIR}" \
+            --shell "${LOGIN_SHELL}" --comment "${COMMENT}" "${NAME}"
+else
+    case "${passwd_entry}" in
+    "${NAME}:x:${ID}:${ID}:"*":${HOME_DIR}:${LOGIN_SHELL}") ;;
+    *) echo "error: uid ${ID} or the name ${NAME} is held by another account: ${passwd_entry}" >&2; exit 1 ;;
+    esac
+fi
+
+# A fixed last-change date keeps the root independent of the build date.
+chage -d 2020-01-01 "${NAME}"
+
+entry="$(awk -F: -v n="${NAME}" '$1 == n' /etc/passwd)"
+case "${entry}" in
+"${NAME}:x:${ID}:${ID}:"*":${HOME_DIR}:${LOGIN_SHELL}") ;;
+*) echo "error: the ${NAME} passwd entry is not the pinned one: ${entry}" >&2; exit 1 ;;
+esac
+
+# No sudo and no supplementary groups: micad authorises root and mica from one
+# key list, and the web UI is the administration surface.
+extra="$(awk -F: -v n="${NAME}" '$1 != n && $4 ~ "(^|,)" n "(,|$)" { print $1 }' /etc/group | tr '\n' ' ')"
+[ -z "${extra}" ] ||
+    { echo "error: ${NAME} is a member of supplementary group(s): ${extra}; this package grants none, and no sudo" >&2; exit 1; }
+
+# Locked, never empty (an empty field accepts no password) and never a hash (a
+# hash in an image is shared by every device).
+mh="$(awk -F: -v n="${NAME}" '$1 == n { print $2; exit }' /etc/shadow)"
+case "${mh}" in
+"") echo "error: the ${NAME} entry in /etc/shadow has an EMPTY password field, which means PASSWORDLESS login: pam_unix accepts any password, including none. Empty is not a locked marker" >&2; exit 1 ;;
+'!'* | '*'*) ;;
+*) echo "error: the ${NAME} entry in /etc/shadow carries a usable password hash. A signed rootfs is byte-identical on every device, so any hash inside one is a fleet-wide shared secret" >&2; exit 1 ;;
+esac
+echo "${NAME} operator account: ${entry}, no supplementary groups, shadow field '${mh}'"

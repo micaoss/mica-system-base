@@ -1,0 +1,221 @@
+#!/bin/sh
+# Mica OS health gate: confirm the booted deployment (PENDING_CONFIRM ->
+# CONFIRMED) once this slot can still be reached and updated.
+#
+# The members named by `require=` in /etc/mica/health.conf must pass; everything
+# else observed here (failed units, /var usage) is reported to micad and never
+# fatal. On failure, mica-boot-failure.service decides between reboot and
+# poweroff.
+
+CONF=${MICA_HEALTH_CONF:-/etc/mica/health.conf}
+
+log() { echo "mica-health: $*"; }
+fail() { echo "mica-health: FAIL $*" >&2; exit 1; }
+
+# First value of `key=` in the conf, empty when the conf or the key is absent.
+conf_get() { [ -r "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | head -n1; }
+# Every value of `key=` in the conf, one per line.
+conf_all() { [ -r "$CONF" ] && sed -n "s/^$1=//p" "$CONF"; }
+
+PROBE_TIMEOUT=$(conf_get probe-timeout-sec)
+: "${PROBE_TIMEOUT:=10}"
+
+# Run a probe under the configured timeout.
+run() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$PROBE_TIMEOUT" "$@"
+    else
+        "$@"
+    fi
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+# list-unit-files can exit 0 with no output for an absent unit: test the output.
+unit_present() { [ -n "$(run systemctl list-unit-files --no-legend "$1" 2>/dev/null)" ]; }
+
+# Report health.<component> to micad; best effort, never fatal.
+report_health() {
+    have busctl || return 0
+    run busctl --system --quiet call com.mica.micad /com/mica/micad \
+        com.mica.micad1 ReportHealth sss "$1" "$2" "$3" >/dev/null 2>&1 ||
+        log "note: could not report $1 health to micad"
+}
+
+# The running deployment, as mica-deploy identifies it.
+have mica-deploy || fail "mica-deploy is not installed"
+have systemctl || fail "systemctl is not available"
+BOOTED=$(run mica-deploy booted 2>&1) || fail "deployment status failed: $BOOTED"
+printf '%s\n' "$BOOTED" | grep -qx '[0-9a-f]\{64\}' || fail "cannot parse deployment identity"
+log "booted deployment: $BOOTED"
+
+# --- the required set -------------------------------------------------------
+#
+# No default: an empty set would mean "always mark good", and an unknown member
+# would shrink the set silently, so both refuse. A required member that cannot
+# be probed refuses too.
+REQUIRED=$(conf_all require)
+[ -n "$REQUIRED" ] || fail "no \`require=\` line in $CONF, so this gate has no criterion" \
+    "to confirm the booted slot against. An empty required set means \"always mark good\";" \
+    "refusing rather than confirming a slot nothing was checked on."
+for member in $REQUIRED; do
+    case "$member" in
+    boot-settled | micad | apid) ;;
+    *)
+        fail "$CONF requires \`$member\`, which this gate does not implement." \
+            "The members are: boot-settled, micad, apid. Ignoring an unrecognised name" \
+            "would shrink the required set silently."
+        ;;
+    esac
+done
+requires() {
+    for m in $REQUIRED; do
+        [ "$m" = "$1" ] && return 0
+    done
+    return 1
+}
+log "required set: $(printf '%s ' $REQUIRED)"
+
+# --- required member: boot-settled -----------------------------------------
+#
+# Did the boot transaction finish? This gate is itself a job of that
+# transaction, so is-system-running stays `starting` while it runs; when the
+# only running job left is this gate, the boot counts as settled. `degraded`
+# passes (failed units are reported below); `maintenance` fails.
+SETTLE=$(conf_get settle-sec)
+: "${SETTLE:=60}"
+SELF_UNIT=mica-health.service
+
+# Running jobs other than this gate; `waiting` jobs are only blocked on ordering.
+other_running_jobs() {
+    run systemctl list-jobs --no-legend --plain 2>/dev/null |
+        awk -v self="$SELF_UNIT" '$4 == "running" && $2 != self {print $2}' |
+        tr '\n' ' '
+}
+
+# Settle before probing, whether or not boot-settled is required.
+waited=0
+while :; do
+    sysstate=$(run systemctl is-system-running 2>/dev/null)
+    case "$sysstate" in
+    initializing | starting) ;;
+    *) break ;;
+    esac
+    # Only this gate is running: waiting longer cannot change the answer.
+    others=$(other_running_jobs)
+    [ -z "$others" ] && break
+    [ "$waited" -ge "$SETTLE" ] && break
+    sleep 1
+    waited=$((waited + 1))
+done
+log "systemd is-system-running = ${sysstate:-unknown} (settled after ${waited}s)"
+
+# Empty when the boot transaction finished, otherwise the reason it did not.
+case "$sysstate" in
+running | degraded)
+    settled_why=
+    ;;
+initializing | starting)
+    others=$(other_running_jobs)
+    if [ -n "$others" ]; then
+        settled_why="systemd is still ${sysstate} after ${waited}s with jobs running that are not this gate: ${others}"
+    else
+        settled_why=
+    fi
+    ;;
+*)
+    settled_why="systemd is-system-running = ${sysstate:-unknown}"
+    ;;
+esac
+
+if requires boot-settled; then
+    [ -z "$settled_why" ] || fail "required member boot-settled: $settled_why"
+    log "required member boot-settled: OK (${sysstate:-unknown})"
+else
+    log "member boot-settled not required${settled_why:+ - would have failed: $settled_why}"
+fi
+
+# --- report: failed units (never fatal) ------------------------------------
+#
+# One journal line per unit and one health.units entry; micad does not let a
+# degraded report block a reboot.
+failed=$(run systemctl list-units --state=failed --no-legend --plain --full 2>/dev/null |
+    awk '{print $1}')
+failed_count=0
+failed_names=
+for unit in $failed; do
+    failed_count=$((failed_count + 1))
+    log "note: failed unit: $unit"
+    # micad caps the detail at 1024 bytes; the journal keeps the full list.
+    [ "$failed_count" -le 10 ] && failed_names="${failed_names:+$failed_names }$unit"
+done
+if [ "$failed_count" = 0 ]; then
+    log "no failed units"
+    report_health units ok "no failed units"
+else
+    detail="$failed_count failed: $failed_names"
+    [ "$failed_count" -gt 10 ] && detail="$detail (+$((failed_count - 10)) more)"
+    log "$failed_count failed unit(s) - REPORTED, not fatal: $failed_names"
+    report_health units degraded "$detail"
+fi
+
+# --- required member: micad -------------------------------------------------
+#
+# micad answers com.mica.micad1.GetState on the system bus: without it no update
+# can be installed.
+if requires micad; then
+    have busctl ||
+        fail "required member micad: busctl is not in this image, so the gate cannot" \
+            "establish that micad answers. Ship busctl or drop \`require=micad\` from $CONF."
+    unit_present micad.service ||
+        fail "required member micad: micad.service is not installed in this image." \
+            "$CONF requires something this image does not ship."
+    run busctl --system --quiet call com.mica.micad /com/mica/micad \
+        com.mica.micad1 GetState s "" >/dev/null 2>&1 ||
+        fail "required member micad: micad did not answer com.mica.micad1.GetState on the" \
+            "system bus, so no update can be installed by any route."
+    log "required member micad: OK"
+fi
+
+# --- required member: apid -------------------------------------------------
+#
+# `mica-apid --healthcheck` requests https://127.0.0.1/healthz. apid is the
+# network route in when SSH is off (the prod default).
+if requires apid; then
+    unit_present apid.service ||
+        fail "required member apid: apid.service is not installed in this image." \
+            "$CONF requires something this image does not ship."
+    have mica-apid ||
+        fail "required member apid: no mica-apid binary in this image, so the gate" \
+            "cannot establish that apid answers. A SKIP here would confirm a slot with no" \
+            "remote route into it."
+    run mica-apid --healthcheck >/dev/null ||
+        fail "required member apid: apid did not answer https://127.0.0.1/healthz"
+    log "required member apid: OK"
+fi
+
+# --- report: /var pressure (never fatal) -----------------------------------
+THRESHOLD=$(conf_get var-threshold-pct)
+: "${THRESHOLD:=85}"
+used=$(df -P /var 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+case "$used" in
+'' | *[!0-9]*)
+    log "/var usage unknown - not reported"
+    ;;
+*)
+    if [ "$used" -ge "$THRESHOLD" ]; then
+        log "/var at ${used}% (threshold ${THRESHOLD}%) - reported as degraded, NOT fatal"
+        report_health var degraded "/var at ${used}% of capacity (threshold ${THRESHOLD}%)"
+    else
+        log "/var at ${used}% (threshold ${THRESHOLD}%)"
+        report_health var ok "/var at ${used}% of capacity"
+    fi
+    ;;
+esac
+
+# --- confirm ---------------------------------------------------------------
+if run mica-deploy confirm >/dev/null 2>&1; then
+    log "booted slot $BOOTED marked good (PENDING_CONFIRM -> CONFIRMED)"
+else
+    fail "deployment confirmation failed for $BOOTED"
+fi
+exit 0

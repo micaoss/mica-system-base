@@ -1,0 +1,86 @@
+#!/bin/sh
+# Create the DATA namespaces (state, meta, cache, tmp, var, mica, srv, containers)
+# and their project quotas.
+set -eu
+
+DATA_ROOT=${MICA_DATA_ROOT:-/mnt/data}
+SYSTEM_ROOT=${DATA_ROOT}/mica
+USER_ROOT=${DATA_ROOT}/srv
+CONTAINER_ROOT=${DATA_ROOT}/containers
+
+die() {
+    echo "mica-data-layout: $*" >&2
+    exit 1
+}
+
+[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] \
+    || die "$DATA_ROOT is not a real directory"
+
+# A read-only or full DATA stops here rather than writing anywhere else.
+ensure_dir() {
+    path=$1
+    mode=$2
+    [ ! -L "$path" ] || die "$path must not be a symbolic link"
+    if [ -e "$path" ]; then
+        [ -d "$path" ] || die "$path exists but is not a directory"
+    else
+        mkdir -m "$mode" "$path" || die "cannot create $path"
+    fi
+    chown 0:0 "$path"
+    chmod "$mode" "$path"
+}
+
+ensure_dir "$DATA_ROOT/state" 0700
+ensure_dir "$DATA_ROOT/meta" 0700
+ensure_dir "$DATA_ROOT/cache" 0755
+ensure_dir "$DATA_ROOT/tmp" 1777
+ensure_dir "$DATA_ROOT/var" 0755
+ensure_dir "$SYSTEM_ROOT" 0755
+ensure_dir "$USER_ROOT" 0755
+ensure_dir "$CONTAINER_ROOT" 0711
+
+# Projects: 100 system and user data, 101 disposable data (one eighth of DATA,
+# 32..256 MiB and 2048..16384 inodes), 102 containers.
+set -- $(stat -f -c '%b %S %c' "$DATA_ROOT")
+variable_kib=$(( $1 * $2 / 1024 / 8 ))
+[ "$variable_kib" -ge 32768 ] || variable_kib=32768
+[ "$variable_kib" -le 262144 ] || variable_kib=262144
+variable_inodes=$(( $3 / 8 ))
+[ "$variable_inodes" -ge 2048 ] || variable_inodes=2048
+[ "$variable_inodes" -le 16384 ] || variable_inodes=16384
+chattr -p 100 +P "$SYSTEM_ROOT" "$USER_ROOT"
+chattr -p 101 +P "$DATA_ROOT/cache" "$DATA_ROOT/tmp" "$DATA_ROOT/var"
+chattr -p 102 +P "$CONTAINER_ROOT"
+setquota -P 100 0 0 0 0 "$DATA_ROOT"
+setquota -P 101 0 "$variable_kib" 0 "$variable_inodes" "$DATA_ROOT"
+setquota -P 102 0 0 0 0 "$DATA_ROOT"
+PROBE=${SYSTEM_ROOT}/.writable-probe.$$
+trap 'rm -f "$PROBE"' EXIT HUP INT TERM
+( umask 077; set -C; : >"$PROBE" ) || die "$SYSTEM_ROOT is not writable"
+sync -f "$PROBE"
+rm -f "$PROBE"
+
+ensure_dir "$SYSTEM_ROOT/ui" 0755
+# Diagnostics are served through the authenticated management API.
+ensure_dir "$SYSTEM_ROOT/diagnostics" 0700
+# 0700: configuration holds credentials (Wi-Fi keys); micad writes each document
+# 0600.
+ensure_dir "$SYSTEM_ROOT/config" 0700
+ensure_dir "$SYSTEM_ROOT/containers" 0711
+ensure_dir "$CONTAINER_ROOT/networks" 0755
+ensure_dir "$CONTAINER_ROOT/tmp" 0700
+ensure_dir "$SYSTEM_ROOT/home" 0755
+ensure_dir "$SYSTEM_ROOT/root" 0700
+ensure_dir "$SYSTEM_ROOT/apps" 0755
+ensure_dir "$SYSTEM_ROOT/updates" 0755
+ensure_dir "$SYSTEM_ROOT/updates/downloads" 0755
+ensure_dir "$SYSTEM_ROOT/updates/verified" 0755
+ensure_dir "$SYSTEM_ROOT/updates/staging" 0755
+
+sync -f "$SYSTEM_ROOT"
+sync -f "$USER_ROOT"
+sync -f "$CONTAINER_ROOT"
+sync -f "$DATA_ROOT"
+trap - EXIT HUP INT TERM
+
+echo "mica-data-layout: /mica backing tree ready at $SYSTEM_ROOT"

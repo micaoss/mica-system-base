@@ -1,0 +1,7 @@
+[Unit]
+Description=Recover after deployment health failure
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/mica/mica-boot-failure

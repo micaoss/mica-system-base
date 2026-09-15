@@ -1,0 +1,16 @@
+#!/bin/sh
+# Seed the writable var tree once, after DATA project quotas are established.
+set -eu
+data=${MICA_DATA_ROOT:-/mnt/data}
+template=${MICA_VAR_TEMPLATE:-/var}
+var=$data/var
+[ -d "$data" ] && [ ! -L "$data" ] || exit 1
+[ -d "$var" ] && [ ! -L "$var" ] || exit 1
+[ ! -L "$var/.mica-initialized" ] || exit 1
+if [ ! -f "$var/.mica-initialized" ]; then
+    # A first-boot interruption may leave part of the template copied already.
+    cp -an "$template/." "$var/"
+    sync -f "$var"
+    (umask 077; : >"$var/.mica-initialized")
+    sync -f "$var"
+fi

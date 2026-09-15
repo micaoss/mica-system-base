@@ -1,0 +1,9 @@
+# The BusyBox configuration: the release's `make defconfig`, then these settings.
+# A line is `CONFIG_<NAME>=<value>` or `# CONFIG_<NAME> is not set`; the build
+# refuses a setting that `make oldconfig` does not keep.
+
+# Static, so /usr/bin/busybox runs with none of the root's libraries.
+CONFIG_STATIC=y
+
+# tc does not compile against current kernel headers, which no longer define CBQ.
+# CONFIG_TC is not set

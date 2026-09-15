@@ -1,0 +1,24 @@
+#!/bin/sh
+# Create /mica/root on DATA, the source of root.mount, before that bind runs.
+# The first run seeds .bashrc and .profile from the image's /root; an existing
+# directory keeps its files. Owner 0:0 and mode 0700 are re-asserted every run.
+set -eu
+
+# Before root.mount, /root is still the image's copy.
+FACTORY_ROOT=/root
+
+if [ -d /mica/root ]; then
+    echo "root: /mica/root already present, contents left untouched"
+else
+    mkdir /mica/root
+    for f in .bashrc .profile; do
+        [ -f "${FACTORY_ROOT}/${f}" ] || continue
+        cp -p "${FACTORY_ROOT}/${f}" "/mica/root/${f}"
+    done
+    echo "root: created /mica/root, seeded .bashrc/.profile from ${FACTORY_ROOT}"
+fi
+
+chown 0:0 /mica/root
+chmod 0700 /mica/root
+
+sync

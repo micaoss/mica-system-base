@@ -1,0 +1,24 @@
+{
+  "name": "mica-system-base",
+  "type": "module",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "node_modules/typescript7/bin/tsc --noEmit",
+    "test": "bun src/container.ts test",
+    "test:bootstrap": "bun src/container.ts test-bootstrap --arch amd64",
+    "test:bootstrap:arm64": "bun src/container.ts test-bootstrap --arch arm64",
+    "pins:check": "bun src/container.ts pin-inputs --check",
+    "check": "bun run lint && bun run typecheck && bun run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@types/bun": "1.4.2",
+    "eslint": "10.10.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-eslint": "8.70.0",
+    "typescript7": "npm:typescript@7.0.2"
+  }
+}

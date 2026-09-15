@@ -1,0 +1,100 @@
+#!/bin/sh
+# Stage an offline provisioning document where micad reads it; micad validates
+# and applies it. Sources, in order: the boot medium's ESP (by partition label),
+# then an attached removable block device. The document is one fixed file,
+# mica-provisioning.toml, at the filesystem root. Media are mounted read-only
+# and never written; a source that cannot be read is skipped, and the boot never
+# fails here.
+set -eu
+
+STAGING_ROOT=${MICA_PROVISIONING_ROOT:-/run/mica/provisioning}
+DOCUMENT=mica-provisioning.toml
+# Boards without an ESP rely on removable media.
+BOOT_PARTLABEL=esp
+# The medium is operator-supplied: nothing runs off it and nothing writes to it.
+MOUNT_OPTIONS="ro,nosuid,nodev,noexec"
+
+log() {
+    echo "mica-provisioning-import: $*"
+}
+
+release() {
+    for name in boot media; do
+        dir=${STAGING_ROOT}/${name}
+        [ -d "$dir" ] || continue
+        umount "$dir" 2>/dev/null || :
+        rmdir "$dir" 2>/dev/null || :
+    done
+    rmdir "$STAGING_ROOT" 2>/dev/null || :
+}
+
+if [ "${1:-}" = "--release" ]; then
+    release
+    log "staged media released"
+    exit 0
+fi
+
+# 0700: a document may carry passwords and Wi-Fi keys, and vfat shows every
+# file world-readable.
+mkdir -p "${STAGING_ROOT%/*}"
+mkdir -p "$STAGING_ROOT"
+chmod 0700 "$STAGING_ROOT"
+
+# Mount a device read-only and keep it only if the document is a regular file
+# (not a link, directory or device node).
+try_source() {
+    source=$1
+    device=$2
+    dir=${STAGING_ROOT}/${source}
+    [ -b "$device" ] || return 1
+    mkdir -p "$dir"
+    if ! mount -o "$MOUNT_OPTIONS" "$device" "$dir" 2>/dev/null; then
+        rmdir "$dir" 2>/dev/null || :
+        return 1
+    fi
+    if [ -f "${dir}/${DOCUMENT}" ] && [ ! -L "${dir}/${DOCUMENT}" ]; then
+        log "staged a ${source} document from ${device} at ${dir}/${DOCUMENT}"
+        return 0
+    fi
+    umount "$dir" 2>/dev/null || :
+    rmdir "$dir" 2>/dev/null || :
+    return 1
+}
+
+staged=
+
+if try_source boot "/dev/disk/by-partlabel/${BOOT_PARTLABEL}"; then
+    staged=boot
+fi
+
+# Removable media only when the boot medium had no document. The kernel's
+# `removable` flag excludes the internal disk; size 0 is an empty card slot.
+if [ -z "$staged" ]; then
+    for disk in /sys/block/*; do
+        [ -r "${disk}/removable" ] || continue
+        [ "$(cat "${disk}/removable" 2>/dev/null || echo 0)" = "1" ] || continue
+        [ "$(cat "${disk}/size" 2>/dev/null || echo 0)" != "0" ] || continue
+        name=${disk##*/}
+        # Partitions first, then the bare device (a medium without a partition table).
+        candidates=
+        for part in "${disk}/${name}"*; do
+            [ -d "$part" ] || continue
+            candidates="${candidates} /dev/${part##*/}"
+        done
+        candidates="${candidates} /dev/${name}"
+        for device in $candidates; do
+            if try_source media "$device"; then
+                staged=media
+                break
+            fi
+        done
+        [ -z "$staged" ] || break
+    done
+fi
+
+if [ -z "$staged" ]; then
+    log "no provisioning document on the boot medium or on removable media"
+else
+    log "${staged} document staged; micad validates and applies it"
+fi
+exit 0

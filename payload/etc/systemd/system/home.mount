@@ -1,0 +1,15 @@
+[Unit]
+Description=Persistent home directory from the DATA partition
+# /mica/home is created by mica-seed-home before this bind.
+Requires=mica-seed-home.service
+After=mica-seed-home.service
+RequiresMountsFor=/mica
+
+[Mount]
+What=/mica/home
+Where=/home
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

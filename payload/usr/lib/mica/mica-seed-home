@@ -1,0 +1,22 @@
+#!/bin/sh
+# Create /mica/home and /mica/home/mica on DATA, the source of home.mount,
+# before that bind runs. An existing home is left as it is. The owner is the
+# fixed uid and gid 1000 of the mica account, which outlives every image.
+set -eu
+
+MICA_UID=1000
+MICA_GID=1000
+
+mkdir -p /mica/home
+chmod 0755 /mica/home
+
+if [ -d /mica/home/mica ]; then
+    echo "home: /mica/home/mica already present, left untouched"
+else
+    mkdir /mica/home/mica
+    chown "${MICA_UID}:${MICA_GID}" /mica/home/mica
+    chmod 0700 /mica/home/mica
+    echo "home: created /mica/home/mica owned ${MICA_UID}:${MICA_GID} mode 0700"
+fi
+
+sync

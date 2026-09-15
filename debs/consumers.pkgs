@@ -1,0 +1,10 @@
+# Local packages a selection may name. A family here may select packages in
+# packages.tsv; an entry that selects none is still selectable and installs
+# nothing by itself. Unknown names are refused.
+mica-busybox
+mica-ca-trust
+mica-system
+mica-systemd-boot
+# The Debian packages of upstream.pkgs, pinned for later stages and never in the
+# base root: a row is tagged upstream-<root> for each root it is pinned for.
+upstream-*

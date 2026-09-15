@@ -1,0 +1,59 @@
+name: release
+# A published GitHub release YYYYMMDD-HHMM (cut with `gh release create
+# <YYYYMMDD-HHMM> --target <commit of main>`, which creates the tag) builds that
+# tag through build.yml, both architectures on their native runners, then
+# publishes the gated pools and the two root layers as one index to
+# ghcr.io/micaoss/mica-system-base: pool.<arch>.<YYYYMMDD-HHMM> and
+# rootfs.<YYYYMMDD-HHMM>, and attaches mica-system-base.lock (those artifacts,
+# the packages and the Debian pins for later stages) and SHA256SUMS, and nothing
+# else, to the release: a consumer commits the lock unchanged as
+# locks/mica-system-base.lock with its pin locks/pins/mica-system-base.pin. Re-running the
+# workflow finishes an interrupted publication: an existing rootfs tag keeps its
+# first build time and is verified, not rebuilt, and an existing asset must hold
+# the same bytes.
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # packages: the OCI pool and rootfs; contents: the release's mica-system-base.lock and SHA256SUMS.
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: base-*
+          path: _out
+          merge-multiple: true
+      - name: Publish the pools
+        run: bun src/publish.ts pool
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MICA_REGISTRY_USER: ${{ github.actor }}
+      - name: Publish the root
+        run: bun src/publish.ts rootfs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MICA_REGISTRY_USER: ${{ github.actor }}
+      - name: Attach mica-system-base.lock and SHA256SUMS to the release
+        run: bun src/publish.ts lock
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MICA_REGISTRY_USER: ${{ github.actor }}

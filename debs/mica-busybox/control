@@ -1,0 +1,11 @@
+Package: mica-busybox
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Description: BusyBox binary for diagnostics, without applet links
+ One file, /usr/bin/busybox: the upstream BusyBox release compiled statically
+ for this architecture, so it runs with none of the root's libraries. Applets
+ are reached by name (`busybox sh`, `busybox ip`); no applet link is installed,
+ so the GNU tools remain the command set and nothing in PATH changes.

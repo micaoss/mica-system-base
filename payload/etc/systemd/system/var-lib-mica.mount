@@ -1,0 +1,16 @@
+[Unit]
+Description=micad persistent state from DATA/state
+# Keep management state outside the bounded general var project.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+Before=micad.service apid.service
+
+[Mount]
+What=/mnt/data/state/mica
+Where=/var/lib/mica
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

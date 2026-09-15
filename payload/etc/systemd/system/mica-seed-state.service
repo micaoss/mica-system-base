@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare persistent DATA state and host identity
+Documentation=file:/usr/lib/mica/mica-seed-state
+DefaultDependencies=no
+Requires=mica-data-layout.service
+After=mica-data-layout.service
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-seed-state
+
+[Install]
+WantedBy=local-fs.target

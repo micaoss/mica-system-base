@@ -1,0 +1,15 @@
+[Unit]
+Description=Load persistent systemd units after DATA binds
+After=micad.service local-fs.target usr-local-lib-systemd-system.mount etc-containers-systemd.mount
+Before=multi-user.target
+Requires=micad.service usr-local-lib-systemd-system.mount
+ConditionDirectoryNotEmpty=|/mnt/data/state/systemd-units
+ConditionDirectoryNotEmpty=|/mnt/data/state/quadlet
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl daemon-reload
+ExecStart=/usr/bin/systemctl --no-block start multi-user.target
+
+[Install]
+WantedBy=multi-user.target

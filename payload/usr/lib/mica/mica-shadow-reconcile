@@ -1,0 +1,50 @@
+#!/bin/sh
+# Build /etc/shadow in RAM (/run/mica/shadow) from the image's factory copy at
+# every boot, every entry locked. The only operator password is a transient
+# root password set through micad; it lives in this file and is gone at the
+# next boot. If this script does not run there is no shadow file, and password
+# logins fail closed. An account in /etc/passwd with no factory entry gets a
+# locked entry.
+set -eu
+
+SHADOW="${1:-/run/mica/shadow}"
+PASSWD="${MICA_SHADOW_PASSWD:-/etc/passwd}"
+FACTORY="${MICA_SHADOW_FACTORY:-/usr/share/factory/etc/shadow}"
+
+[ -f "$PASSWD" ] || { echo "no $PASSWD to reconcile against" >&2; exit 1; }
+[ -f "$FACTORY" ] || { echo "no $FACTORY to build from" >&2; exit 1; }
+
+dir="$(dirname "$SHADOW")"
+mkdir -p "$dir"
+chmod 0755 "$dir"
+
+lock_entry() {
+    echo "$1" | awk -F: -v OFS=: '{ if ($2 !~ /^[!*]/) $2 = "!"; print }'
+}
+
+tmp="${SHADOW}.build.$$"
+trap 'rm -f "$tmp"' EXIT INT TERM
+
+: >"$tmp"
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    lock_entry "$line" >>"$tmp"
+done <"$FACTORY"
+
+# Accounts in /etc/passwd without an entry get one, locked.
+added=0
+while IFS=: read -r user _rest; do
+    [ -n "$user" ] || continue
+    if ! awk -F: -v u="$user" '$1 == u { found = 1 } END { exit !found }' "$tmp"; then
+        printf '%s:!:20000:0:99999:7:::\n' "$user" >>"$tmp"
+        added=$((added + 1))
+        echo "shadow: added locked entry for '$user'"
+    fi
+done <"$PASSWD"
+
+chgrp shadow "$tmp" 2>/dev/null || true
+chmod 0640 "$tmp"
+mv -f "$tmp" "$SHADOW"
+trap - EXIT INT TERM
+
+echo "shadow: built ${SHADOW} in RAM from ${FACTORY} (${added} account(s) appended locked)"

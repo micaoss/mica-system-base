@@ -1,0 +1,15 @@
+[Unit]
+Description=Persistent root home directory from the DATA partition
+# /mica/root is created by mica-seed-root before this bind.
+Requires=mica-seed-root.service
+After=mica-seed-root.service
+RequiresMountsFor=/mica
+
+[Mount]
+What=/mica/root
+Where=/root
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

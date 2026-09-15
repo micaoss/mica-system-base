@@ -1,0 +1,12 @@
+Package: mica-systemd-boot
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Description: systemd-boot EFI loader with persisted boot attempts
+ One file, /usr/lib/mica/systemd-boot/systemd-bootx64.efi or systemd-bootaa64.efi:
+ the systemd-boot of the systemd release the base system ships, patched so that
+ an entry whose boot attempts are exhausted is never selected and a boot whose
+ attempt counter cannot be written is refused. It is unsigned; the boot chain
+ signs it and places it on the EFI system partition.
