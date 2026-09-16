@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-16 08:10 [progress]
+
+The build environment moves to mica-build-env 20260916-0735, which rebuilt every
+image (its pipefail fix touched the shared library the images are built with);
+`locks/mica-build-env.lock` is replaced whole with the verified release asset and
+its pin names that release and trust hash. The upstream rows are unchanged. The
+four packages are version-locked, so the gate compares them with release
+20260915-1102: they must rebuild byte-identically under the new images.
+
+CI downloads the pinned Debian archives through the res mirror
+(`MICA_BASE_MIRROR=pool:https://res.micaos.dev/d/upstream/debian`): an archive
+the mirror does not have answers 404 and the row's own snapshot URL is used, and
+the committed sha256 is checked either way, so the mirror can only make a
+download faster.
+
 ## 2026-09-15 11:30 [progress]
 
 The release lock readers follow mica main 19fbdce: scoped releases and pins

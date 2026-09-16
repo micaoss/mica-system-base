@@ -91,8 +91,14 @@ jobs:
         with:
           path: _out/debian-base/debs
           key: debian-archives-${{ matrix.arch }}-${{ hashFiles('sources.json', 'locks/upstream.lock', 'debs/*/build-sources.json') }}
+      # res.micaos.dev mirrors the pinned pool paths; an archive it does not have
+      # answers 404 and the row's own snapshot.debian.org URL is used instead. The
+      # sha256 of the committed pin is checked either way, so the mirror can only
+      # make the download faster, never change what is built.
       - name: Pinned archives
         run: bun src/container.ts cache --arch ${{ matrix.arch }} --all
+        env:
+          MICA_BASE_MIRROR: pool:https://res.micaos.dev/d/upstream/debian
       - name: Save the pinned archives
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.archives-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
