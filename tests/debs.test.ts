@@ -252,3 +252,32 @@ describe('the mica-system payload', () => {
     expect(readFileSync(join(presets, '50-mica-nftables.preset'), 'utf8')).toBe('disable nftables.service\n')
   })
 })
+
+// Under `set -o pipefail`, an early-exiting reader on the right of a pipe (head,
+// grep -q/-m, sed -n Nq, read) fails the pipeline when the producer dies of
+// SIGPIPE, so the test passes or fails by where the match sits. No script here
+// enables pipefail, and the three latent sites are recorded in
+// docs/task/20260915-1145-pipefail-shapes.md to be hardened with the next bump of
+// their package. This guard keeps the two facts together: a script that enables
+// pipefail may not pipe into such a reader.
+test('no shell script pipes into an early-exiting reader under pipefail', () => {
+  const early = /\|[ \t]*(?:head\b|grep\b[^|]*(?:-[A-Za-z]*[qm]|--quiet|--max-count)|sed\b[^|]*\b\d*q\b|read\b)/
+  const scripts = run(['git', '-c', 'safe.directory=*', '-C', REPO, 'ls-files', '--', 'payload', 'debs', '*.sh']).output.split('\n').filter(Boolean)
+  const offending: string[] = []
+  for (const path of scripts) {
+    if (!lstatSync(join(REPO, path)).isFile())
+      continue
+    const text = readFileSync(join(REPO, path), 'utf8')
+    if (!/^#!.*\b(?:ba)?sh\b/.test(text) && !path.endsWith('Dockerfile') && !path.endsWith('.sh'))
+      continue
+    for (const [index, line] of text.split('\n').entries()) {
+      if (/set -o pipefail|set -[a-z]*o pipefail/.test(text) && early.test(line))
+        offending.push(`${path}:${index + 1}`)
+    }
+  }
+  expect(offending).toEqual([])
+  // The guard sees the shape: a script with pipefail and such a pipe is refused.
+  expect(early.test('printf \'%s\\n\' "$x" | grep -qx y')).toBe(true)
+  expect(early.test('sed -n "s/^a=//p" "$f" | head -n1')).toBe(true)
+  expect(early.test('dpkg-deb --fsys-tarfile "$1" | tar -tf -')).toBe(false)
+})
