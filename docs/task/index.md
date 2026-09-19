@@ -14,3 +14,4 @@ deleted. Only the marker changes; new tasks append to the end.
 
 - [x] [**20260915-0010-release-lock The release lock format: locks/ inputs, locks/upstream.lock and mica-system-base.lock**](20260915-0010-release-lock.md) `P1`
 - [ ] [**20260915-1145-pipefail-shapes Harden the three pipefail-fragile shell shapes with their next package bump**](20260915-1145-pipefail-shapes.md) `P3`
+- [-] [**20260917-0950-shell-colors Ship an interactive bash profile with a colored prompt and ls/grep colors**](20260917-0950-shell-colors.md) `P2`

@@ -1,6 +1,6 @@
 Package: mica-system
-Version: 1.0.0-1
-Source-Date-Epoch: 1789430400
+Version: 1.0.1-1
+Source-Date-Epoch: 1789603200
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin

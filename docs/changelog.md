@@ -8,6 +8,15 @@ replaces the old `/d/` prefix on res.micaos.dev. Configuration only: the mirror
 is tried before a row's snapshot URL, a miss answers 404 and falls back, and the
 committed sha256 is checked either way.
 
+## 2026-09-17 10:40 [progress]
+
+mica-system 1.0.1-1 ships `/etc/profile.d/mica-shell.sh`: an interactive bash
+on a color terminal gets a colored `user@host:cwd` prompt (red for root),
+`LS_COLORS`, and `ls`, `grep` and `diff` aliased to `--color=auto`; any other
+shell or terminal is left unchanged (`tests/payload/shell.test.ts`). It reaches
+a device once mica-build pins this release and keeps `/etc/profile` and
+`/etc/profile.d/*.sh` in the product root (task 20260917-0950-shell-colors).
+
 ## 2026-09-16 08:10 [progress]
 
 The build environment moves to mica-build-env 20260916-0735, which rebuilt every

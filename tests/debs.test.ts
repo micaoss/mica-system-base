@@ -126,7 +126,7 @@ describe('the package definitions', () => {
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
     expect(packages.find(entry => entry.name === 'mica-busybox')).toEqual({ name: 'mica-busybox', arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'], version: '1.38.0-mica1', epoch: 1789430400 })
-    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.0-1', 'mica-systemd-boot': '257.13-mica1' })
+    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.1-1', 'mica-systemd-boot': '257.13-mica1' })
   })
 
   // systemd-boot is compiled from the source of the systemd the lock pins, with the patch that
