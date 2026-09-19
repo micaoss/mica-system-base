@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-19 08:30 [progress]
+
+CI takes the pinned Debian archives from the res download host
+(`MICA_BASE_MIRROR=pool:https://dl.res.micaos.dev/upstream/debian`), which
+replaces the old `/d/` prefix on res.micaos.dev. Configuration only: the mirror
+is tried before a row's snapshot URL, a miss answers 404 and falls back, and the
+committed sha256 is checked either way.
+
 ## 2026-09-16 08:10 [progress]
 
 The build environment moves to mica-build-env 20260916-0735, which rebuilt every
