@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-20 07:10 [progress]
+
+README records the operator account and three decisions about it (coordinator,
+2026-09-20): `/home/mica` is absent from the root on purpose and lives on DATA,
+`uidmap` is absent on purpose and would be an `upstream.pkgs` row rather than a
+base change if rootless were ever wanted, and `/etc/subuid` and `/etc/subgid`
+are kept although inert, because suppressing a Debian default would be a policy
+invented here. Documentation only: no package input changes, so no version bump.
+
 ## 2026-09-20 06:20 [progress]
 
 Every base root is built with a list of the paths no package claims, beside it

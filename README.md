@@ -65,6 +65,37 @@ rules:
    root. A package that creates any other is the consumer's to pin before it is
    installed, or to ask Base to pin.
 
+## The operator account
+
+The root has two accounts and neither can log in with a password: `root` is
+`*` and the operator `mica` (uid and gid 1000) is `!` in `/etc/shadow`. A signed
+root is byte-identical on every device, so a password inside it would be one
+secret shared by the fleet; `mica-shadow-reconcile` rebuilds the shadow file in
+RAM at every boot and re-locks anything that is not locked. The only password
+that can exist is a transient root password set through micad, and it is gone at
+the next boot. The console is for reading; interactive access is micad's to
+grant, and it is also what enables `dropbear` at runtime.
+
+Three consequences of that account, decided on 2026-09-20 and recorded here
+because a reader cannot reconstruct them from the files:
+
+- **`/home/mica` is not in the root, deliberately.** The postinst creates the
+  account with `useradd --no-create-home`, `mica-seed-home` creates
+  `/mica/home/mica` on DATA owned 1000:1000 mode 0700 and leaves an existing one
+  alone, and `home.mount` binds it onto `/home` after that service. A home in the
+  image would be a home nobody can keep, which is also why the uid and gid are
+  fixed. If the home is ever missing on a device, the fault is
+  `mica-seed-home.service` or `home.mount`, not the account.
+- **`uidmap` is absent on purpose.** `newuidmap` and `newgidmap` are not
+  installed: nothing this repository ships maps a user namespace, and rootless
+  containers are deliberately unsupported (`mica-podman`). If a later stage ever
+  wants rootless, `uidmap` is a row of `upstream.pkgs` -- pinned for later stages
+  and not installed in the root -- rather than a change to the base root.
+- **`/etc/subuid` and `/etc/subgid` are kept, inert by design.** `mica:100000:65536`
+  is what `useradd` writes from `login.defs`; no code here asks for it. With no
+  `uidmap` in the root the ranges do nothing, and they stay because suppressing
+  them would be this repository inventing a policy to undo a Debian default.
+
 ## Layout
 
 | Path | Content |
