@@ -308,9 +308,19 @@ export function assertRootFrom(repo: string, root: string, release: Release): st
   const installed = capture(['dpkg-query', `--admindir=${join(root, 'var/lib/dpkg')}`, '-W', '-f=${Version}', 'mica-system'])
   if (installed.code !== 0 || installed.stdout !== version)
     fail(`${root} carries mica-system ${installed.stdout || '(none)'}, not ${version}; build it with: bun src/container.ts rootfs --arch <arch>`)
+  return assertBanner(root, release)
+}
+
+// The banner of a root: it names this release and commit, and in a release build
+// it may not name a snapshot. It is the one identity a person reads off a running
+// device, so a published root whose banner said `.dirty` would be an identity
+// defect of its own. Returns the build time it carries.
+export function assertBanner(root: string, release: Release): string {
   const identity = ISSUE.exec(readFileSync(join(root, 'etc/issue'), 'utf8'))
   if (!identity || identity[1] !== release.label || identity[3] !== release.commit)
     fail(`${root}/etc/issue does not name ${release.label} at ${release.commit}`)
+  if (release.released && /~git|\.dirty/.test(identity[1]!))
+    fail(`${root}/etc/issue names the snapshot ${identity[1]}, not a release; a published root's banner is its release`)
   return identity[2]!
 }
 

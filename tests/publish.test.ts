@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { declared, inputsHash } from '../src/debs/docker.ts'
-import { assertPools, assertVersions, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
+import { assertBanner, assertPools, assertVersions, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
 import { Registry, sha256 } from '../src/registry.ts'
 import { parseLock } from '../src/release-lock.ts'
 import { issue, releaseOf } from '../src/release.ts'
@@ -431,6 +431,23 @@ describe('publication', () => {
     expect(() => assertPools(repo, out, releaseOf(repo))).toThrow(`fixture-data_${version}_all.deb differs between the amd64 and arm64 pools`)
     deb('fixture-data', 'all', ['arm64'])
     expect(() => assertPools(repo, out, releaseOf(repo))).not.toThrow()
+  })
+
+  test('a released root may not carry a snapshot banner', () => {
+    const tree = join(work, 'banner')
+    mkdirSync(join(tree, 'etc'), { recursive: true })
+    const release = releaseOf(repo)
+    const snapshot = { ...release, label: `20260914-0102~git${commit.slice(0, 12)}`, released: false }
+    writeFileSync(join(tree, 'etc/issue'), issue(snapshot.label, commit, '2026-09-14T01:40:00Z'))
+    // A local build carries a snapshot label and that is what it is.
+    expect(assertBanner(tree, snapshot)).toBe('2026-09-14T01:40:00Z')
+    // The same banner in a release build is refused: a published root says its release.
+    expect(() => assertBanner(tree, { ...snapshot, released: true })).toThrow('names the snapshot')
+    // A release root names its release, its commit and nothing else.
+    writeFileSync(join(tree, 'etc/issue'), issue(release.label, commit, '2026-09-14T01:40:00Z'))
+    expect(assertBanner(tree, release)).toBe('2026-09-14T01:40:00Z')
+    writeFileSync(join(tree, 'etc/issue'), issue(release.label, 'f'.repeat(40), '2026-09-14T01:40:00Z'))
+    expect(() => assertBanner(tree, release)).toThrow('does not name')
   })
 
   test('each architecture packs its root layer; the index takes both with one build time', () => {

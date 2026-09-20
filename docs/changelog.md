@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-20 08:05 [progress]
+
+A released root may not carry a snapshot banner: `assertBanner` (the identity
+half of `assertRootFrom`, which packs every root layer) refuses an `/etc/issue`
+naming a `~git` or `.dirty` label when the build is a release build. A release
+builds from its tag, so this is defence in depth -- but the banner is the one
+identity a person reads off a running device, and a published root saying
+`.dirty` would be an identity defect of its own (coordinator, 2026-09-20).
+
 ## 2026-09-20 07:40 [progress]
 
 The base-root gate asserts that SSH does not authenticate through PAM: the
