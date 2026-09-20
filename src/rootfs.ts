@@ -145,6 +145,22 @@ export function assertBase(root: string): void {
     if (!existsSync(join(root, tool)))
       fail(`the base root has no /${tool}`)
   }
+  // SSH is the only way into a fielded device, and dropbear reaches an account
+  // through crypt(3) against /etc/shadow, not through PAM: Debian's dropbear-bin
+  // depends on no libpam and its binary links none. That is a packaging default
+  // nobody chose, and a rebuild that picked up libpam would move every device
+  // onto the PAM stack silently -- the stack this root also carries the libraries
+  // for, and whose configuration a composer has already been seen to drop
+  // (2026-09-20). Both halves are checked: the dependency, and the binary, which
+  // is the half that still fails when libpam merely appears in a build image.
+  const stanza = readFileSync(join(root, 'var/lib/dpkg/status'), 'utf8').split('\n\n').find(entry => /^Package: dropbear-bin$/m.test(entry)) ?? ''
+  const depends = /^Depends: (.*)$/m.exec(stanza)?.[1] ?? ''
+  if (!stanza)
+    fail('the base root has no installed dropbear-bin to check')
+  if (/\blibpam/.test(depends))
+    fail(`dropbear-bin depends on PAM: ${depends}. SSH authenticates through crypt(3) against /etc/shadow, and this would move every device onto the PAM stack`)
+  if (readFileSync(join(root, 'usr/sbin/dropbear')).includes('libpam'))
+    fail('/usr/sbin/dropbear names libpam: it was built against PAM, and SSH is the only route into a fielded device')
   for (const absent of ['usr/sbin/sshd', 'usr/bin/ssh', 'usr/lib/openssh', 'usr/bin/curl', 'usr/sbin/iptables']) {
     if (existsSync(join(root, absent)))
       fail(`the base root carries /${absent}`)

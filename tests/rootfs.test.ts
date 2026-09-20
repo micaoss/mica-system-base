@@ -25,8 +25,12 @@ function root(name: string): string {
   put('usr/lib/systemd/system/nftables.service', '[Unit]\n')
   put('usr/lib/systemd/system-preset/50-mica-dropbear.preset', 'disable dropbear.service\n')
   put('usr/lib/systemd/system-preset/50-mica-nftables.preset', 'disable nftables.service\n')
-  for (const tool of ['usr/sbin/dropbear', 'usr/bin/busybox', 'usr/sbin/nft', 'usr/sbin/dmsetup'])
+  for (const tool of ['usr/bin/busybox', 'usr/sbin/nft', 'usr/sbin/dmsetup'])
     put(tool)
+  // dropbear reaches an account through crypt(3), not through PAM: neither its
+  // Depends nor its binary may name libpam.
+  put('usr/sbin/dropbear', 'ELF\0libtomcrypt.so.1\0libc.so.6\0')
+  put('var/lib/dpkg/status', 'Package: busybox\nStatus: install ok installed\n\nPackage: dropbear-bin\nStatus: install ok installed\nDepends: libc6, libcrypt1, libtomcrypt1, libtommath1, zlib1g\n\n')
   mkdirSync(join(path, 'etc/systemd/system/multi-user.target.wants'), { recursive: true })
   mkdirSync(join(path, 'mica'))
   return path
@@ -97,6 +101,18 @@ test('each broken promise is refused by name', () => {
     writeFileSync(join(dated, file), `root:*:18262:0:99999:7:::\nsystemd-network:*:${day}:0:99999:7:::\n`)
     expect(() => assertBase(dated)).toThrow(`/${file} has last-change days other than 18262: systemd-network:${day}`)
   }
+
+  const pamDepends = root('dropbear-pam-depends')
+  writeFileSync(join(pamDepends, 'var/lib/dpkg/status'), 'Package: dropbear-bin\nStatus: install ok installed\nDepends: libc6, libpam0g (>= 0.99.7.1)\n\n')
+  expect(() => assertBase(pamDepends)).toThrow('dropbear-bin depends on PAM')
+
+  const pamLinked = root('dropbear-pam-linked')
+  writeFileSync(join(pamLinked, 'usr/sbin/dropbear'), 'ELF\0libpam.so.0\0libc.so.6\0')
+  expect(() => assertBase(pamLinked)).toThrow('/usr/sbin/dropbear names libpam')
+
+  const noDropbear = root('no-dropbear-status')
+  writeFileSync(join(noDropbear, 'var/lib/dpkg/status'), 'Package: busybox\nStatus: install ok installed\n\n')
+  expect(() => assertBase(noDropbear)).toThrow('no installed dropbear-bin')
 
   const openssh = root('openssh')
   mkdirSync(join(openssh, 'usr/sbin'), { recursive: true })

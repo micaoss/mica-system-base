@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-20 07:40 [progress]
+
+The base-root gate asserts that SSH does not authenticate through PAM: the
+installed `dropbear-bin` may name no `libpam` in its Depends, and
+`/usr/sbin/dropbear` may not name `libpam` in its bytes. dropbear reaches an
+account through `crypt(3)` against `/etc/shadow`, which is Debian's packaging
+default rather than a choice anyone made, and it is the only route into a
+fielded device (measured by mica-core from this repository's own pin,
+2026-09-20). The binary half is the one that still fails when libpam merely
+appears in a build image. README records it, with the evidence that this root
+carries the PAM libraries on purpose, so a missing PAM configuration is a loss
+and not a design.
+
 ## 2026-09-20 07:10 [progress]
 
 README records the operator account and three decisions about it (coordinator,

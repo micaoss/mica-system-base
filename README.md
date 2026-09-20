@@ -91,6 +91,14 @@ because a reader cannot reconstruct them from the files:
   containers are deliberately unsupported (`mica-podman`). If a later stage ever
   wants rootless, `uidmap` is a row of `upstream.pkgs` -- pinned for later stages
   and not installed in the root -- rather than a change to the base root.
+- **SSH does not go through PAM, and the base-root gate now says so.** Debian's
+  `dropbear-bin` depends on no `libpam` and `/usr/sbin/dropbear` links none: it
+  reaches an account through `crypt(3)` against `/etc/shadow`. That is a
+  packaging default nobody chose, and it is the only route into a fielded device,
+  so `assertBase` refuses a root whose `dropbear-bin` depends on PAM or whose
+  binary names `libpam`. The root does carry the PAM libraries (`libpam0g`,
+  `libpam-modules`, `libpam-runtime` are selected on purpose), so a root without
+  a PAM configuration is a root that lost one, not a root designed without it.
 - **`/etc/subuid` and `/etc/subgid` are kept, inert by design.** `mica:100000:65536`
   is what `useradd` writes from `login.defs`; no code here asks for it. With no
   `uidmap` in the root the ranges do nothing, and they stay because suppressing
