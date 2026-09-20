@@ -145,14 +145,16 @@ export function assertBase(root: string): void {
     if (!existsSync(join(root, tool)))
       fail(`the base root has no /${tool}`)
   }
-  // A base root has a login console on tty1: systemd's preset enables
-  // getty@tty1.service and the root ships that link. It is Base's intent rather
-  // than an accident, so it is asserted here -- a product that wants a logo VT
-  // instead (mica-boards ships NAutoVTs=0 and ReserveVT=2 for cx3576) states that
-  // in its own composition, and must not get it from this link going missing.
+  // THE SUBJECT OF THIS ASSERTION IS THE ROOT THIS REPOSITORY PUBLISHES, NOT THE
+  // DEVICE. systemd's preset enables getty@tty1.service and the Base root ships
+  // that link; the products disable getty@.service on purpose, so tty1 stays
+  // idle for the boot logo and the login is on tty2 (user, 2026-09-20, uniform
+  // across boards). What is gated here is that the link is present in what Base
+  // hands to the composition -- a deliberate removal one layer up is a decision
+  // somebody states, and a link going missing because nothing owns it is not.
   const tty1 = join(root, 'etc/systemd/system/getty.target.wants/getty@tty1.service')
   if (!lstatExists(tty1))
-    fail('the base root has no getty.target.wants/getty@tty1.service: a base root has a login console on tty1, and a product that wants none says so itself')
+    fail('the base root has no getty.target.wants/getty@tty1.service: the Base root ships the tty1 enablement link, whatever the product then does with it')
   // SSH is the only way into a fielded device, and dropbear reaches an account
   // through crypt(3) against /etc/shadow, not through PAM: Debian's dropbear-bin
   // depends on no libpam and its binary links none. That is a packaging default

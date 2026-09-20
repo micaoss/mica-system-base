@@ -32,7 +32,9 @@ function root(name: string): string {
   put('usr/sbin/dropbear', 'ELF\0libtomcrypt.so.1\0libc.so.6\0')
   put('var/lib/dpkg/status', 'Package: busybox\nStatus: install ok installed\n\nPackage: dropbear-bin\nStatus: install ok installed\nDepends: libc6, libcrypt1, libtomcrypt1, libtommath1, zlib1g\n\n')
   mkdirSync(join(path, 'etc/systemd/system/multi-user.target.wants'), { recursive: true })
-  // A base root has a login console on tty1; systemd's preset enables it.
+  // The Base root ships the tty1 enablement link; systemd's preset writes it.
+  // Whether the device runs a getty there is the product's decision, not this
+  // root's -- the products disable getty@.service so tty1 stays idle.
   mkdirSync(join(path, 'etc/systemd/system/getty.target.wants'), { recursive: true })
   symlinkSync('/usr/lib/systemd/system/getty@.service', join(path, 'etc/systemd/system/getty.target.wants/getty@tty1.service'))
   mkdirSync(join(path, 'mica'))
@@ -119,7 +121,7 @@ test('each broken promise is refused by name', () => {
 
   const noTty1 = root('no-tty1')
   rmSync(join(noTty1, 'etc/systemd/system/getty.target.wants/getty@tty1.service'))
-  expect(() => assertBase(noTty1)).toThrow('no getty.target.wants/getty@tty1.service')
+  expect(() => assertBase(noTty1)).toThrow('the Base root ships the tty1 enablement link')
 
   const openssh = root('openssh')
   mkdirSync(join(openssh, 'usr/sbin'), { recursive: true })

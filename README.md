@@ -92,14 +92,17 @@ because a reader cannot reconstruct them from the files:
   containers are deliberately unsupported (`mica-podman`). If a later stage ever
   wants rootless, `uidmap` is a row of `upstream.pkgs` -- pinned for later stages
   and not installed in the root -- rather than a change to the base root.
-- **A base root has a login console on tty1.** systemd's preset enables
-  `getty@tty1.service` and the root ships that link, so the gate asserts it: the
-  console a person reaches on a base root is Base's intent, not an accident of
-  what survived. A product that wants a logo VT instead states that in its own
-  composition -- `mica-boards` ships `NAutoVTs=0` and `ReserveVT=2` for cx3576 --
-  and must not get it from this link going missing. The link is one of the
-  unowned paths, written by systemd's postinst, so a composer that proves a
-  declaration by package ownership drops it.
+- **The Base root ships the tty1 enablement link; the device does not run a
+  getty there.** systemd's preset enables `getty@tty1.service` and the root
+  ships that link, and the gate asserts it -- of this root, which is the only
+  thing this repository can assert of. On a device tty1 stays idle for the boot
+  logo and the login prompt is on tty2 (user decision, 2026-09-20, uniform
+  across boards): the products disable `getty@.service` and say so. The
+  distinction is the point. The link is an unowned path, written by systemd's
+  postinst, so a composer that proves a declaration by package ownership drops
+  it silently -- and a deliberate removal that is stated survives a composer
+  repair, while an accidental one reverses the behaviour the day the composer
+  learns to keep unowned enablement links.
 - **SSH does not go through PAM, and the base-root gate now says so.** Debian's
   `dropbear-bin` depends on no `libpam` and `/usr/sbin/dropbear` links none: it
   reaches an account through `crypt(3)` against `/etc/shadow`. That is a

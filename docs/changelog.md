@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-20 14:49 [progress]
+
+The tty1 assertion names its subject (user decision via coordinator,
+2026-09-20): the gate asserts that **the Base root ships**
+`etc/systemd/system/getty.target.wants/getty@tty1.service`, not that a device
+has a login console there. On a device tty1 stays idle for the boot logo and
+the login is on tty2, uniform across boards, and the products disable
+`getty@.service` to get it -- a stated removal one layer up, which is a
+different thing from the link falling out because no package owns it. The
+assertion, the refusal message, the test and the README all say which of the
+two they are about.
+
+Found because three repositories held three positions on one observable
+behaviour -- this gate, the composer's silent drop, and cx3576's preset -- each
+internally consistent and green, contradicting only in the composition, which is
+the one place no repository's tests look.
+
 ## 2026-09-20 14:41 [progress]
 
 The unowned-path artefact carries its own counts: a `# mica-unowned v1` header
