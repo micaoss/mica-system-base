@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-20 14:31 [progress]
+
+The unowned-path artefact attributes what `systemd-tmpfiles` creates, reading
+the `tmpfiles.d` entry that names the path, and the last `unknown` writer is
+gone: 93 rows, 0 unknown. The path that needed it is `/etc/vconsole.conf`, and
+with it `/etc/default/locale` -- both are dangling compatibility symlinks
+created by `/usr/lib/tmpfiles.d/debian.conf`, which is why a maintainer script
+never names them and why a test for their existence reports absent: `[ -e ]`
+follows the link and the target does not exist. A dangling symlink is neither a
+present file nor an absent path, and it is exactly what a composer drops
+without noticing.
+
 ## 2026-09-20 14:21 [progress]
 
 The vectors pin and copy move together to mica `5ce4656f` (143 files, gate

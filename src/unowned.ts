@@ -61,6 +61,36 @@ function rootPaths(root: string, skip: RegExp): string[] {
 // Directories a root fills at runtime or that describe the packaging itself.
 const SKIP = /^\/(dev|proc|sys|run|tmp|mnt|mica|home|srv|root|boot)\/|^\/var\/(lib\/dpkg|log|cache)\/|^\/usr\/share\/doc\//
 
+// Paths systemd-tmpfiles creates from a tmpfiles.d entry. A maintainer script's
+// dh_installtmpfiles section runs it at install time, so the path is in the root
+// with no package owning it and no script naming it -- the rule file names it
+// instead. /etc/vconsole.conf is the one this repository could not attribute
+// until the entry was read: a dangling compatibility symlink, which is neither a
+// present file nor an absent path, and is exactly the kind of thing a composer
+// drops without noticing.
+function tmpfilesEntries(root: string): Map<string, string> {
+  const entries = new Map<string, string>()
+  for (const directory of ['usr/lib/tmpfiles.d', 'etc/tmpfiles.d']) {
+    let names: string[]
+    try {
+      names = readdirSync(join(root, directory))
+    }
+    catch {
+      continue
+    }
+    for (const name of names.filter(file => file.endsWith('.conf'))) {
+      for (const line of readFileSync(join(root, directory, name), 'utf8').split('\n')) {
+        const [type, path] = line.trim().split(/\s+/)
+        // The types that create a path; the rest act on one that already exists.
+        if (!type || !/^[LdDfFCwpvqQbch][+=!-]*$/.test(type) || !path?.startsWith('/') || entries.has(path))
+          continue
+        entries.set(path, `/${directory}/${name}`)
+      }
+    }
+  }
+  return entries
+}
+
 export interface UnownedPath { path: string, writer: string }
 
 export function unownedPaths(root: string): UnownedPath[] {
@@ -75,6 +105,7 @@ export function unownedPaths(root: string): UnownedPath[] {
   const scripts = readdirSync(info).filter(name => /\.(?:pre|post)(?:inst|rm)$/.test(name) || name.endsWith('.config'))
     .map(name => ({ name, text: readFileSync(join(info, name), 'utf8') }))
   const alternatives = scripts.filter(script => script.text.includes('update-alternatives'))
+  const tmpfiles = tmpfilesEntries(root)
   return rootPaths(root, SKIP).filter(path => !owned.has(path)).sort().map((path) => {
     const generated = GENERATED.find(rule => rule.match.test(path))
     const link = path.startsWith('/etc/alternatives/') ? path.slice('/etc/alternatives/'.length) : ''
@@ -83,6 +114,7 @@ export function unownedPaths(root: string): UnownedPath[] {
     const caller = unit ? scripts.filter(script => script.text.includes(unit.name(path))).map(script => script.name) : []
     const writer = OURS[path]
       ?? generated?.writer
+      ?? (tmpfiles.has(path) ? `systemd-tmpfiles (${tmpfiles.get(path)})` : undefined)
       ?? (link ? `update-alternatives (${alternatives.filter(script => script.text.includes(`/etc/alternatives/${link}`) || script.text.includes(` ${link} `)).map(script => script.name).join(', ') || 'unknown caller'})` : undefined)
       ?? (named.length ? named.map(script => script.name).join(', ') : undefined)
       ?? (unit ? `${unit.writer} (${caller.join(', ') || 'unknown caller'})` : 'unknown')

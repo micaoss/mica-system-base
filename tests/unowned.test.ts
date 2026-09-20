@@ -41,9 +41,14 @@ function root(name: string): string {
   put('var/lib/systemd/deb-systemd-helper-enabled/dbus.service.dsh-also')
   put('etc/rc2.d/S01dbus')
   put('etc/nowhere.conf')
+  // A dangling compatibility symlink created by a tmpfiles.d entry: no package
+  // owns it and no script names it, so only the rule file can attribute it.
+  put('usr/lib/tmpfiles.d/debian.conf', '# comment\nd /run/lock 0755 root root -\nL+ /etc/vconsole.conf  - - -  -  default/keyboard\n')
+  put('var/lib/dpkg/info/systemd.list', '/usr/lib/tmpfiles.d/debian.conf\n')
   put('usr/bin/awk')
   mkdirSync(join(path, 'etc/alternatives'), { recursive: true })
   symlinkSync('/usr/bin/mawk', join(path, 'etc/alternatives/awk'))
+  symlinkSync('default/keyboard', join(path, 'etc/vconsole.conf'))
   // Skipped: the dpkg database, documentation and the runtime directories.
   put('var/lib/dpkg/status', 'Package: login\n')
   put('usr/share/doc/login/copyright')
@@ -63,6 +68,7 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
     '/etc/pam.d/common-auth',
     '/etc/passwd',
     '/etc/rc2.d/S01dbus',
+    '/etc/vconsole.conf',
     '/usr/bin/awk',
     '/var/lib/pam/auth',
     '/var/lib/systemd/deb-systemd-helper-enabled/dbus.service.dsh-also',
@@ -78,6 +84,7 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
   expect(writers.get('/etc/fstab')).toBe('quota.postinst')
   expect(writers.get('/var/lib/systemd/deb-systemd-helper-enabled/dbus.service.dsh-also')).toBe('deb-systemd-helper (dbus.postinst)')
   expect(writers.get('/etc/rc2.d/S01dbus')).toBe('update-rc.d (dbus.postinst)')
+  expect(writers.get('/etc/vconsole.conf')).toBe('systemd-tmpfiles (/usr/lib/tmpfiles.d/debian.conf)')
   expect(writers.get('/etc/passwd')).toContain('src/bootstrap.ts writeSeed')
   expect(writers.get('/etc/hostname')).toBe('src/bootstrap.ts cleanRoot')
   // An alternative names the tool and the package that installed the link.
