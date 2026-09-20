@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-20 19:51 [progress]
+
+The unowned-path artefact says what `/etc/subuid` and `/etc/subgid` are:
+`base-passwd`'s postinst creates the files, `useradd` writes
+`mica:100000:65536` from `login.defs`, and the range is inert because no
+`uidmap` is in the root. It was attributed to `base-passwd.postinst` alone,
+which is where the file comes from and not where the range comes from. The
+cost of the imprecision is a reader grepping `/etc/subuid` and concluding
+rootless containers are supported -- they are uniformly absent, here and in
+the products, by decision.
+
 ## 2026-09-20 14:49 [progress]
 
 The tty1 assertion names its subject (user decision via coordinator,

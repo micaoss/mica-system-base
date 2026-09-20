@@ -25,6 +25,13 @@ const OURS: Record<string, string> = {
   '/etc/hostname': 'src/bootstrap.ts cleanRoot',
   '/etc/dpkg/dpkg.cfg.d/mica-slim': 'src/bootstrap.ts cleanRoot',
   '/etc/.pwd.lock': 'passwd tools (lock file of useradd and friends)',
+  // Not an allocation this repository made: base-passwd.postinst creates the
+  // empty file and useradd writes the range from Debian's login.defs when the
+  // operator account is created. It is inert here -- no uidmap in the root, so
+  // nothing can apply a subordinate range -- and saying so in the artefact is
+  // cheaper than a reader grepping /etc/subuid and concluding rootless works.
+  '/etc/subuid': 'base-passwd.postinst creates it, useradd writes the range from login.defs SUB_UID_MIN/SUB_UID_COUNT; inert, no uidmap in the root',
+  '/etc/subgid': 'base-passwd.postinst creates it, useradd writes the range from login.defs SUB_GID_MIN/SUB_GID_COUNT; inert, no uidmap in the root',
 }
 
 // Generators a maintainer script runs, keyed by the paths they write.

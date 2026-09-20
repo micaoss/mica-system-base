@@ -35,6 +35,7 @@ function root(name: string): string {
   put('etc/pam.d/common-auth', 'auth required pam_unix.so\n')
   put('var/lib/pam/auth')
   put('etc/passwd', 'root:x:0:0:root:/root:/bin/sh\n')
+  put('etc/subuid', 'mica:100000:65536\n')
   put('etc/hostname', 'mica\n')
   put('etc/ld.so.cache')
   put('etc/fstab')
@@ -68,6 +69,7 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
     '/etc/pam.d/common-auth',
     '/etc/passwd',
     '/etc/rc2.d/S01dbus',
+    '/etc/subuid',
     '/etc/vconsole.conf',
     '/usr/bin/awk',
     '/var/lib/pam/auth',
@@ -85,6 +87,8 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
   expect(writers.get('/var/lib/systemd/deb-systemd-helper-enabled/dbus.service.dsh-also')).toBe('deb-systemd-helper (dbus.postinst)')
   expect(writers.get('/etc/rc2.d/S01dbus')).toBe('update-rc.d (dbus.postinst)')
   expect(writers.get('/etc/vconsole.conf')).toBe('systemd-tmpfiles (/usr/lib/tmpfiles.d/debian.conf)')
+  // A range nothing in the image can apply says so where a reader greps it.
+  expect(writers.get('/etc/subuid')).toContain('inert, no uidmap in the root')
   expect(writers.get('/etc/passwd')).toContain('src/bootstrap.ts writeSeed')
   expect(writers.get('/etc/hostname')).toBe('src/bootstrap.ts cleanRoot')
   // An alternative names the tool and the package that installed the link.

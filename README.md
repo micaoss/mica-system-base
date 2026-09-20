@@ -135,9 +135,15 @@ because a reader cannot reconstruct them from the files:
   implies root, and root implies SSH; the operator account exists for a person,
   not as a privilege boundary.
 - **`/etc/subuid` and `/etc/subgid` are kept, inert by design.** `mica:100000:65536`
-  is what `useradd` writes from `login.defs`; no code here asks for it. With no
+  is what `useradd` writes from `login.defs` (`SUB_UID_MIN` 100000,
+  `SUB_UID_COUNT` 65536) when the operator account is created; `base-passwd`'s
+  postinst creates the empty files and no code here asks for either. With no
   `uidmap` in the root the ranges do nothing, and they stay because suppressing
-  them would be this repository inventing a policy to undo a Debian default.
+  them would be this repository inventing a policy to undo a Debian default. It
+  is not a rootless allocation: rootless is uniformly absent, by decision, here
+  and in the products. The unowned-path artefact says so on those two rows, so
+  a reader who greps `/etc/subuid` in a root learns it there rather than
+  concluding the feature is supported.
 
 ## Layout
 
