@@ -20,6 +20,21 @@ rediscovering them; a CI artifact could not be pinned. The readers follow mica
 25ee36b: the `data` row, the version-index rows (`origin`, `built`, `index`)
 with their refusals, and the scope separator, which is now `<scope>.<release>`.
 
+## 2026-09-20 08:45 [progress]
+
+The release-lock vectors are read out of mica at a pinned commit and a
+difference is refused (coordinator ruling, 2026-09-20): `tests/vectors.pin`
+names the repository and the full commit, `src/vectors.ts` compares every
+vector's git blob name against mica's tree there, and the gate
+`bun src/container.ts vectors` runs it in CI beside the build-env pin check.
+Set equality both directions, because the fixture the canonical no longer has
+is the one that stays green forever. This copy had been byte-identical to
+canonical while its provenance comment named a commit at which `expected.tsv`
+had 69 rows, and that comment is now gone; the pin is checked. Recorded with
+it: a current fixture set does not imply a current reader -- the reader here
+was four days stale on the scope separator while these same 133 blobs were
+current.
+
 ## 2026-09-20 08:40 [progress]
 
 The base-root gate asserts the tty1 login console: systemd's preset enables

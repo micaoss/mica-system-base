@@ -46,6 +46,10 @@ jobs:
           key: ${{ steps.bun-cache.outputs.cache-primary-key }}
       - name: locks/mica-build-env.lock against its pinned release
         run: bun src/container.ts environment
+      - name: tests/vectors against mica at the pinned commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun src/container.ts vectors
       - name: Lint, typecheck and tests
         run: bun run check
   base:

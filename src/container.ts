@@ -12,6 +12,7 @@ import { ARCHES, lockRows, parseRows, SELECTIONS, sourceRows, UPSTREAM_LOCK } fr
 import { assertBuildEnvRelease, assertEnvironmentImage, BUILD_ENV, buildEnvAsset, environment, REPO } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import { BASE_PACKAGES, ISSUE_ENV } from './rootfs.ts'
+import { checkVectors } from './vectors.ts'
 
 const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'test', 'test-bootstrap']
 const IN_CONTAINER = '/mica-system-base'
@@ -594,6 +595,9 @@ if (import.meta.main) {
     }
     else if (process.argv[2] === 'environment') {
       process.exitCode = await pullEnvironment()
+    }
+    else if (process.argv[2] === 'vectors') {
+      process.exitCode = await checkVectors()
     }
     else if (process.argv[2] === 'rootfs') {
       process.exitCode = await rootfs(process.argv.slice(3))
