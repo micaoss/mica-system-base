@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-20 14:36 [progress]
+
+The root gate counts the unowned paths it could not attribute and names them,
+because the attribution rules are otherwise only ever exercised against a
+synthetic root: a fixture cannot contradict the rules it was written for. The
+built root is the one original that can, and what it costs them is now visible
+in the run that produced it rather than measured by hand.
+
 ## 2026-09-20 14:31 [progress]
 
 The unowned-path artefact attributes what `systemd-tmpfiles` creates, reading
