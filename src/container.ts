@@ -493,12 +493,11 @@ async function rootfs(argv: string[]): Promise<number> {
       fail(`listing the unowned paths of the ${arch} root failed`)
     // The attribution rules are otherwise only ever exercised against a
     // synthetic root in tests/unowned.test.ts -- a fixture cannot contradict
-    // them. This is the one place they meet a built root, so what the real root
-    // costs them is counted here rather than assumed: an unnamed writer is a
-    // work item and it is visible in the run that produced it.
-    const rows = readFileSync(unowned, 'utf8').split('\n').filter(Boolean)
-    const unknown = rows.filter(row => row.endsWith('\tunknown'))
-    console.log(`rootfs: ${rows.length} paths no package claims, ${unknown.length} without a named writer${unknown.length ? `: ${unknown.map(row => row.split('\t')[0]).join(', ')}` : ''}, in ${unowned}`)
+    // them. This is the one place they meet a built root, so the artefact's own
+    // header, which carries the counts wherever the file goes, is echoed from
+    // the run that produced it.
+    const [header] = readFileSync(unowned, 'utf8').split('\n')
+    console.log(`rootfs: ${header!.slice(header!.indexOf(':') + 2)}, in ${unowned}`)
     console.log(`RESULT: PASS (${arch} base root at ${root})`)
     return 0
   }

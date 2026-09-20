@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-20 14:41 [progress]
+
+The unowned-path artefact carries its own counts: a `# mica-unowned v1` header
+naming how many paths no package claims and how many had no named writer, which
+a reader can check against the rows beneath it (coordinator, 2026-09-20). A
+number that lives only in a CI log is attention; a number in the artefact is an
+instrument, and the one unattributed row this file used to carry was found by
+hand rather than by anything that read it. The root gate echoes the header
+instead of counting the file itself. No consumer reads these assets yet, so the
+format lands before anyone parses it; the next release's `data` rows carry the
+new bytes and no package version changes.
+
 ## 2026-09-20 14:36 [progress]
 
 The root gate counts the unowned paths it could not attribute and names them,

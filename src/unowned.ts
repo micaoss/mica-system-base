@@ -122,6 +122,17 @@ export function unownedPaths(root: string): UnownedPath[] {
   })
 }
 
+// The file a release publishes. The header carries what the run log would
+// otherwise be the only witness of: how many paths this root holds that no
+// package claims, and how many of them this repository could not attribute. A
+// reader three months from now has the counts beside the rows and can check one
+// against the other; a number that lives only in a CI log is attention, not an
+// instrument. (The single unattributed row this artefact once carried was found
+// by hand, not by anything that read the file.)
+export const UNOWNED_HEADER = '# mica-unowned v1'
+
 export function formatUnowned(rows: UnownedPath[]): string {
-  return `${rows.map(row => `${row.path}\t${row.writer}`).join('\n')}\n`
+  const unknown = rows.filter(row => row.writer === 'unknown').length
+  const header = `${UNOWNED_HEADER}: ${rows.length} paths no package claims, ${unknown} without a named writer`
+  return `${[header, ...rows.map(row => `${row.path}\t${row.writer}`)].join('\n')}\n`
 }

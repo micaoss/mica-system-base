@@ -95,6 +95,10 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
   // The file is sorted, tab-separated and has one row per path.
   const text = formatUnowned(rows)
   expect(text.endsWith('\n')).toBe(true)
-  expect(text.split('\n').filter(Boolean)).toHaveLength(rows.length)
-  expect(text.split('\n').filter(Boolean).every(line => line.split('\t').length === 2)).toBe(true)
+  const [header, ...lines] = text.split('\n').filter(Boolean)
+  // The counts travel with the artefact, and the header can be checked against
+  // the rows by whoever reads the file rather than the run that wrote it.
+  expect(header).toBe(`# mica-unowned v1: ${rows.length} paths no package claims, 1 without a named writer`)
+  expect(lines).toHaveLength(rows.length)
+  expect(lines.every(line => line.split('\t').length === 2)).toBe(true)
 })
