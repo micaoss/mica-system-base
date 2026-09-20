@@ -46,7 +46,7 @@ test.each(expected.filter(([path]) => !path.startsWith('repos/')))('%s is %s (%s
 test('every vector on disk is listed', () => {
   const listed = new Set(expected.map(([path]) => path))
   const walk = (directory: string): string[] => readdirSync(join(VECTORS, directory)).flatMap(entry => statSync(join(VECTORS, directory, entry)).isDirectory() ? walk(join(directory, entry)) : [join(directory, entry)])
-  const files = [...walk('lock'), ...walk('upstream')].filter(path => path.endsWith('.lock'))
+  const files = [...walk('lock'), ...walk('upstream'), ...walk('vectors-pin')].filter(path => path.endsWith('.lock') || path.endsWith('.pin'))
   const cases = ['pins/valid', 'pins/refused'].flatMap(directory => readdirSync(join(VECTORS, directory)).map(entry => join(directory, entry)))
   expect([...files, ...cases].filter(path => !listed.has(path))).toEqual([])
   expect(expected.length).toBeGreaterThan(40)

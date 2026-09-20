@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-20 14:21 [progress]
+
+The vectors pin and copy move together to mica `5ce4656f` (143 files, gate
+green), which carries the repair of six `upstream/refused` fixtures that were
+missing a comment line their sibling has -- found with this repository's
+multiset argument, run against a set it was not written for. A copy check
+answers "did this travel intact" and never "was it right when it left": the
+gate here compared 133 and then 139 blobs correctly while every copy was wrong
+together. The mechanism is not weakened by that; it is correctly sized.
+
+The pin reader now accepts comment lines, because the spec adopted the form
+this repository used to name a known defect above the keys
+(`vectors-pin/valid/commented.pin`), and the listing test sweeps `vectors-pin/`
+too, so an unlisted pin vector cannot hide there either.
+
 ## 2026-09-20 14:12 [progress]
 
 The vectors pin moves to mica `ddf4edc8`, the commit that repairs the

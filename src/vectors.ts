@@ -24,8 +24,11 @@ export const PIN = 'tests/vectors.pin'
 export const VECTORS = 'tests/vectors'
 
 // The pin itself (spec 5): the header, then REPOSITORY and COMMIT in that
-// order and nothing else, then a final newline. The commit is the full 40 hex,
-// because a prefix is not a name a tree can be compared against.
+// order and nothing else, then a final newline. Comment lines are allowed and
+// are where a pin carries its reasoning -- a known defect at the pinned commit
+// belongs above the keys, because a defect named under a gate beats one carried
+// silently. The commit is the full 40 hex: a prefix is not a name a tree can be
+// compared against.
 const HEADER = '# mica-vectors-pin v1'
 
 export function parseVectorsPin(text: string, file: string): VectorsPin {
@@ -34,9 +37,10 @@ export function parseVectorsPin(text: string, file: string): VectorsPin {
   }
   if (!text.endsWith('\n') || text.includes('\r') || text.includes('\n\n'))
     refuse('encoding', 'not lines each ending in one newline')
-  const [header, ...lines] = text.slice(0, -1).split('\n')
+  const [header, ...rest] = text.slice(0, -1).split('\n')
   if (header !== HEADER)
     refuse('header', `first line ${header}, not ${HEADER}`)
+  const lines = rest.filter(line => !line.startsWith('#'))
   if (lines.length !== 2 || !lines[0]!.startsWith('REPOSITORY=') || !lines[1]!.startsWith('COMMIT='))
     refuse('pin-format', 'not exactly REPOSITORY= then COMMIT=')
   const [repository, commit] = [lines[0]!.slice('REPOSITORY='.length), lines[1]!.slice('COMMIT='.length)]
