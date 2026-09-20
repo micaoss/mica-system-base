@@ -540,7 +540,11 @@ export async function publishLock(repo: string, registry: Registry, assets: Rele
   if (extra.length)
     fail(`release ${release.label} carries ${extra.join(', ')}; a release carries ${expected.join(', ')} and nothing else`)
   const results: string[] = []
-  // The data files first: when the lock is readable, what it names already is.
+  // THE ORDER IS LOAD-BEARING: the data files, then the lock that names them,
+  // then SHA256SUMS. The lock is published after its referents, so at every
+  // moment -- including the middle of an interrupted upload -- a reader that can
+  // see the lock can already fetch everything it points at. A loop that uploads
+  // in any other order is correct only when nobody looks during it.
   for (const [asset, bytes] of [...data.map(asset => [asset.file, asset.bytes] as const), [file, lock], ['SHA256SUMS', sums]] as const) {
     if (present.has(asset)) {
       const existing = await served(asset)
