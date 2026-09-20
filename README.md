@@ -96,7 +96,14 @@ because a reader cannot reconstruct them from the files:
   reaches an account through `crypt(3)` against `/etc/shadow`. That is a
   packaging default nobody chose, and it is the only route into a fielded device,
   so `assertBase` refuses a root whose `dropbear-bin` depends on PAM or whose
-  binary names `libpam`. The root does carry the PAM libraries (`libpam0g`,
+  binary names `libpam`. The binary half reads the bytes rather than asking a
+  tool, so it holds in an image without `readelf` and it is strictly stronger
+  than "links `libpam`": a binary that merely mentioned the string would fail it.
+  That is a false positive and not a false negative, which is the right direction
+  for the only route into a fielded device, and it is sound because a `DT_NEEDED`
+  entry stores its soname literally. A root with no installed `dropbear-bin` is
+  refused outright, so the check cannot pass by finding nothing.
+  The root does carry the PAM libraries (`libpam0g`,
   `libpam-modules`, `libpam-runtime` are selected on purpose), so a root without
   a PAM configuration is a root that lost one, not a root designed without it.
 - **`/etc/subuid` and `/etc/subgid` are kept, inert by design.** `mica:100000:65536`
