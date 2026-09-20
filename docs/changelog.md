@@ -19,7 +19,8 @@ the one place no repository's tests look.
 
 ## 2026-09-20 14:41 [progress]
 
-The unowned-path artefact carries its own counts: a `# mica-unowned v1` header
+The header, the gate line and the file are now one source read twice. The
+unowned-path artefact carries its own counts: a `# mica-unowned v1` header
 naming how many paths no package claims and how many had no named writer, which
 a reader can check against the rows beneath it (coordinator, 2026-09-20). A
 number that lives only in a CI log is attention; a number in the artefact is an
