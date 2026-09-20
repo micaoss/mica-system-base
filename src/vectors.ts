@@ -2,8 +2,9 @@
 // copy of somebody else's truth is worth exactly what it can prove about where
 // it came from: a comment naming a commit is an assertion, and this repository
 // has already shipped one that was fifteen vectors out of date while the files
-// beside it were current. So the commit is pinned in tests/vectors.pin and this
-// reads mica's tree at that commit and refuses any difference.
+// beside it were current. So the commit is pinned in tests/vectors.pin
+// (`mica-vectors-pin v1`) and this reads mica's tree at that commit and refuses
+// any difference.
 //
 // Both directions. A missing file and a differing file are the obvious halves;
 // the extra file is the half that hides, because a fixture the canonical no
@@ -13,6 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fail } from './errors.ts'
 import { REPO } from './pins.ts'
+import { LockRefusal } from './release-lock.ts'
 
 export interface VectorsPin { repository: string, commit: string }
 
@@ -21,20 +23,32 @@ const UPSTREAM = 'docs/design/release-lock/vectors/'
 export const PIN = 'tests/vectors.pin'
 export const VECTORS = 'tests/vectors'
 
-// The pin: the repository the vectors come from and the full commit they were
-// taken at. Two keys, in order, nothing else -- a pin nobody can parse in one
-// line is a pin nobody checks.
-export function vectorsPin(repo = REPO): VectorsPin {
-  const lines = readFileSync(join(repo, PIN), 'utf8').split('\n').filter(line => line && !line.startsWith('#'))
-  const value = (index: number, key: string, pattern: RegExp): string => {
-    const line = lines[index] ?? ''
-    if (!line.startsWith(`${key}=`) || !pattern.test(line.slice(key.length + 1)))
-      fail(`${PIN}: line ${index + 1} is not a valid ${key}=`)
-    return line.slice(key.length + 1)
+// The pin itself (spec 5): the header, then REPOSITORY and COMMIT in that
+// order and nothing else, then a final newline. The commit is the full 40 hex,
+// because a prefix is not a name a tree can be compared against.
+const HEADER = '# mica-vectors-pin v1'
+
+export function parseVectorsPin(text: string, file: string): VectorsPin {
+  const refuse = (rule: string, detail: string): never => {
+    throw new LockRefusal(rule, file, detail)
   }
-  if (lines.length !== 2)
-    fail(`${PIN}: expected exactly REPOSITORY= and COMMIT=`)
-  return { repository: value(0, 'REPOSITORY', /^[a-z0-9][\w-]*$/), commit: value(1, 'COMMIT', /^[0-9a-f]{40}$/) }
+  if (!text.endsWith('\n') || text.includes('\r') || text.includes('\n\n'))
+    refuse('encoding', 'not lines each ending in one newline')
+  const [header, ...lines] = text.slice(0, -1).split('\n')
+  if (header !== HEADER)
+    refuse('header', `first line ${header}, not ${HEADER}`)
+  if (lines.length !== 2 || !lines[0]!.startsWith('REPOSITORY=') || !lines[1]!.startsWith('COMMIT='))
+    refuse('pin-format', 'not exactly REPOSITORY= then COMMIT=')
+  const [repository, commit] = [lines[0]!.slice('REPOSITORY='.length), lines[1]!.slice('COMMIT='.length)]
+  if (!/^[a-z0-9][\w-]*$/.test(repository))
+    refuse('field-value', `REPOSITORY=${repository}`)
+  if (!/^[0-9a-f]{40}$/.test(commit))
+    refuse('field-value', `COMMIT=${commit}`)
+  return { repository, commit }
+}
+
+export function vectorsPin(repo = REPO): VectorsPin {
+  return parseVectorsPin(readFileSync(join(repo, PIN), 'utf8'), PIN)
 }
 
 // A file's git blob name, so a local file and a tree entry of the GitHub API are

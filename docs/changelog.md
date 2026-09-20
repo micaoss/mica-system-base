@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-20 14:12 [progress]
+
+The vectors pin moves to mica `ddf4edc8`, the commit that repairs the
+`bun-linux-uefi-x64.zip` rename artefact, and `tests/vectors` is refreshed with
+it (139 files, gate green). The pin file is now the specified
+`mica-vectors-pin v1` -- header, `REPOSITORY=`, `COMMIT=`, final newline -- and
+its six canonical vectors run beside the lock vectors, so the reader of the pin
+is held to the same standard as the reader of the lock: 220 tests.
+
+The first pin, `735ebaa`, was cut two minutes before the repair landed. That is
+the mechanism working rather than failing: four days of drift went unnoticed
+because nothing named a commit, and two minutes of it was visible immediately
+because something did.
+
 ## 2026-09-20 14:05 [release]
 
 Release `20260920-0832` at `cc21cd9`, the first carrying producer data: four

@@ -1,10 +1,3 @@
-# The commit of mica whose docs/design/release-lock/vectors this repository's
-# tests/vectors equals, checked by `bun src/container.ts vectors`.
-# Known and deliberate at this commit: ten vectors carry the download URL
-# bun-linux-uefi-x64.zip, a board-rename sweep artefact (mica 91fce7c8) for an
-# asset Bun does not publish. It is inert -- nothing downloads a fixture -- and
-# it is pinned here rather than silently carried. Move this pin to the commit
-# that repairs it; the gate will not notice on its own, because a pin is a
-# statement about one commit and not about the newest one.
+# mica-vectors-pin v1
 REPOSITORY=mica
-COMMIT=735ebaa24d3a42fc339a9a0e2a6d4b76ab1d287a
+COMMIT=ddf4edc8c0c54d84ff5e67811e74c3f223f37dcf

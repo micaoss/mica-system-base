@@ -4,7 +4,7 @@
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterAll, expect, test } from 'bun:test'
-import { assertVectors, blob, localTree, vectorsPin } from '../src/vectors.ts'
+import { assertVectors, blob, localTree, parseVectorsPin, vectorsPin } from '../src/vectors.ts'
 import { REPO, workdir } from './fixture.ts'
 
 const work = workdir('vectors')
@@ -12,12 +12,7 @@ afterAll(() => rmSync(work, { recursive: true, force: true }))
 
 const pin = { repository: 'mica', commit: 'a'.repeat(40) }
 
-function repo(name: string, lines: string): string {
-  const path = join(work, name)
-  mkdirSync(join(path, 'tests'), { recursive: true })
-  writeFileSync(join(path, 'tests/vectors.pin'), lines)
-  return path
-}
+const HEADER = '# mica-vectors-pin v1\n'
 
 function tree(name: string, files: Record<string, string>): Map<string, string> {
   const path = join(work, name)
@@ -34,13 +29,18 @@ test('this repository pins the commit its vectors came from', () => {
   expect(here.commit).toMatch(/^[0-9a-f]{40}$/)
 })
 
-test('a pin is two keys in order and nothing else', () => {
-  expect(vectorsPin(repo('ok', 'REPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\n'))).toEqual({ repository: 'mica', commit: 'b1c2d3e4f5061728394a5b6c7d8e9f0102030405' })
+test('the pin format is the spec\'s, rule for rule', () => {
+  // The six vectors-pin vectors run in tests/release-lock.test.ts against the
+  // canonical expectations; these are the same rules seen from this side, plus
+  // the values this repository actually writes.
+  expect(parseVectorsPin(`${HEADER}REPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\n`, 'p')).toEqual({ repository: 'mica', commit: 'b1c2d3e4f5061728394a5b6c7d8e9f0102030405' })
   // A short commit is the failure this pin exists to prevent: it names a
-  // prefix, and a prefix is not a name a reader can compare a tree against.
-  expect(() => vectorsPin(repo('short', 'REPOSITORY=mica\nCOMMIT=735ebaa\n'))).toThrow('line 2 is not a valid COMMIT=')
-  expect(() => vectorsPin(repo('swapped', 'COMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\nREPOSITORY=mica\n'))).toThrow('line 1 is not a valid REPOSITORY=')
-  expect(() => vectorsPin(repo('extra', 'REPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\nRELEASE=20260920-0832\n'))).toThrow('expected exactly REPOSITORY= and COMMIT=')
+  // prefix, and a prefix is not a name a tree can be compared against.
+  expect(() => parseVectorsPin(`${HEADER}REPOSITORY=mica\nCOMMIT=735ebaa\n`, 'p')).toThrow('field-value')
+  expect(() => parseVectorsPin(`${HEADER}COMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\nREPOSITORY=mica\n`, 'p')).toThrow('pin-format')
+  expect(() => parseVectorsPin(`${HEADER}REPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\nRELEASE=20260920-0832\n`, 'p')).toThrow('pin-format')
+  expect(() => parseVectorsPin(`# mica-pin v1\nREPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405\n`, 'p')).toThrow('header')
+  expect(() => parseVectorsPin(`${HEADER}REPOSITORY=mica\nCOMMIT=b1c2d3e4f5061728394a5b6c7d8e9f0102030405`, 'p')).toThrow('encoding')
 })
 
 test('a file hashes to its git blob name', () => {

@@ -64,6 +64,12 @@ upstream/refused/image-without-digest.lock	refused	reference-digest	-
 upstream/refused/source-without-sha256.lock	refused	column-count	-
 upstream/refused/git-short-commit.lock	refused	field-value	-
 upstream/refused/unsorted.lock	refused	sort-order	-
+vectors-pin/valid/vectors.pin	valid	-	-
+vectors-pin/refused/header.pin	refused	header	-
+vectors-pin/refused/key-order.pin	refused	pin-format	-
+vectors-pin/refused/extra-key.pin	refused	pin-format	-
+vectors-pin/refused/short-commit.pin	refused	field-value	-
+vectors-pin/refused/no-final-lf.pin	refused	encoding	-
 pins/valid/release	valid	-	ci
 pins/valid/offline-checkout	valid	-	local
 pins/valid/scoped	valid	-	ci

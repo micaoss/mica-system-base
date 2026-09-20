@@ -11,6 +11,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
 import { LockRefusal, parseLock, parseUpstream, readInputs } from '../src/release-lock.ts'
+import { parseVectorsPin } from '../src/vectors.ts'
 import { REPO } from './fixture.ts'
 
 const VECTORS = join(REPO, 'tests/vectors')
@@ -36,6 +37,8 @@ test.each(expected.filter(([path]) => !path.startsWith('repos/')))('%s is %s (%s
     expect(result(() => parseLock(read(path), path))).toBe(want)
   else if (path.startsWith('upstream/'))
     expect(result(() => parseUpstream(read(path), path))).toBe(want)
+  else if (path.startsWith('vectors-pin/'))
+    expect(result(() => parseVectorsPin(read(path), path))).toBe(want)
   else
     expect(result(() => readInputs(join(VECTORS, path), mode === 'ci'))).toBe(want)
 })
