@@ -12,10 +12,13 @@ export class LockRefusal extends Refusal {
   }
 }
 
-export const KINDS = { release: 4, image: 5, pool: 3, package: 5, board: 5, upstream: 7, apt: 5, input: 4, product: 8, bundle: 4, asset: 6 } as const
+export const KINDS = { release: 4, image: 5, pool: 3, package: 5, board: 5, upstream: 7, apt: 5, input: 4, origin: 3, built: 5, index: 3, product: 8, bundle: 4, asset: 6, data: 4 } as const
 export type Kind = keyof typeof KINDS
 const BASE_ONLY: Kind[] = ['upstream', 'apt']
-const BUILD_ONLY: Kind[] = ['input', 'product', 'bundle', 'asset']
+const BUILD_ONLY: Kind[] = ['input', 'origin', 'built', 'index', 'product', 'bundle', 'asset']
+const INDEX_KINDS: Kind[] = ['origin', 'built', 'index']
+// mica-build's version index is a scope of its own, and only its own.
+const INDEX_SCOPE = 'mica'
 export const BASE_REPOSITORY = 'mica-system-base'
 // Repositories whose releases are scoped (<scope>/<release>, pins SCOPE=).
 const SCOPED = ['mica-boards', 'mica-build']
@@ -122,8 +125,8 @@ export function parseLock(text: string, file: string): Lock {
   if (rows[0]?.[0] !== 'release' || rows.filter(row => row[0] === 'release').length !== 1)
     refuse('release-row', 'the release row is not exactly once and first')
   const [, repository = '', scoped = '', commit = ''] = rows[0]!
-  const scope = scoped.includes('/') ? scoped.slice(0, scoped.lastIndexOf('/')) : ''
-  const release = scoped.slice(scoped.lastIndexOf('/') + 1)
+  const scope = scoped.includes('.') ? scoped.slice(0, scoped.lastIndexOf('.')) : ''
+  const release = scoped.slice(scoped.lastIndexOf('.') + 1)
   const field = (ok: boolean, what: string): void => {
     if (!ok)
       refuse('field-value', what)
@@ -131,6 +134,9 @@ export function parseLock(text: string, file: string): Lock {
   field(REPOSITORY.test(repository) && (RELEASE.test(release) || release === 'offline') && COMMIT.test(commit) && (scope === '' || SCOPE.test(scope)), 'the release row\'s repository, release or commit')
   if ((scope !== '') !== SCOPED.includes(repository))
     refuse('release-scope', `release ${scoped} of ${repository}`)
+  if (scope === INDEX_SCOPE && repository !== 'mica-build')
+    refuse('index-scope', `the ${INDEX_SCOPE} scope belongs to mica-build`)
+  const indexLock = repository === 'mica-build' && scope === INDEX_SCOPE
   const registry = release === 'offline' ? 'local' : 'ghcr.io/micaoss'
   // Returns the reference's tag, empty when it has none.
   const reference = (value: string, expected = repository): string => {
@@ -146,6 +152,17 @@ export function parseLock(text: string, file: string): Lock {
     return match[3] ?? ''
   }
   const boardScope = repository === 'mica-boards' ? scope : ''
+  // An index row names one of mica-build's own scoped releases, never the index.
+  const indexInput = (name: string): void => {
+    const [inputRepository = '', inputScope = ''] = name.includes('.') ? [name.slice(0, name.indexOf('.')), name.slice(name.indexOf('.') + 1)] : [name, '']
+    field(inputRepository === 'mica-build' && SCOPE.test(inputScope), `input ${name}`)
+    if (inputScope === INDEX_SCOPE)
+      refuse('index-scope', `input ${name}`)
+  }
+  const assetFile = (row: string[], assetRelease: string): boolean => {
+    const prefix = `mica-${row[1]}-${assetRelease}.`
+    return row[2] === 'image' ? row[4]!.startsWith(prefix) : row[4] === prefix + (UPDATE_SUFFIX[row[3]!] ?? '\n')
+  }
   const keys = new Set<string>()
   const order: (string | number)[][] = []
   const pools = new Set<string>()
@@ -203,8 +220,29 @@ export function parseLock(text: string, file: string): Lock {
         refuse('release-scope', `input ${row[1]}`)
       key = [row[1]!]
     }
+    else if (kind === 'origin') {
+      indexInput(row[1]!)
+      field(COMMIT.test(row[2]!), `origin ${row[1]}`)
+      key = [row[1]!]
+    }
+    else if (kind === 'built') {
+      indexInput(row[1]!)
+      const [name = '', builtScope = ''] = row[2]!.includes('.') ? [row[2]!.slice(0, row[2]!.indexOf('.')), row[2]!.slice(row[2]!.indexOf('.') + 1)] : [row[2]!, '']
+      if (!(REPOSITORY.test(name) && (builtScope === '' || SCOPE.test(builtScope)) && (builtScope !== '') === SCOPED.includes(name) && (RELEASE.test(row[3]!) || row[3] === 'offline') && SHA256.test(row[4]!)))
+        refuse('index-built-form', `built ${row[1]} ${row[2]}`)
+      key = [row[1]!, row[2]!]
+    }
+    else if (kind === 'index') {
+      field(SCOPE.test(row[1]!), `index ${row[1]}`)
+      if (row[1] === INDEX_SCOPE)
+        refuse('index-scope', `index ${row[1]}`)
+      indexInput(row[2]!)
+      key = [row[1]!]
+    }
     else if (kind === 'product') {
       field(SCOPE.test(row[1]!) && SCOPE.test(row[2]!) && PROFILES.includes(row[3]!) && GENERATION.test(row[4]!) && row.slice(5, 8).every(value => SHA256.test(value)), `product ${row[1]}`)
+      if (row[1] === INDEX_SCOPE || row[2] === INDEX_SCOPE)
+        refuse('index-scope', `product ${row[1]} ${row[2]}`)
       key = [row[1]!]
     }
     else if (kind === 'bundle') {
@@ -213,10 +251,19 @@ export function parseLock(text: string, file: string): Lock {
       key = [row[1]!, row[2]!]
     }
     else if (kind === 'asset') {
-      const prefix = `mica-${row[1]}-${release}.`
-      field(SCOPE.test(row[1]!) && BUNDLES.includes(row[2]!) && SHA256.test(row[5]!) && row[4]!.startsWith(prefix)
-        && (row[2] === 'image' ? NAME.test(row[3]!) : row[4] === prefix + (UPDATE_SUFFIX[row[3]!] ?? '\n')), `asset ${row[1]} ${row[2]} ${row[3]}`)
+      field(SCOPE.test(row[1]!) && BUNDLES.includes(row[2]!) && SHA256.test(row[5]!)
+        && (row[2] === 'image' ? NAME.test(row[3]!) : Object.hasOwn(UPDATE_SUFFIX, row[3]!)), `asset ${row[1]} ${row[2]} ${row[3]}`)
+      if (!indexLock)
+        field(assetFile(row, release), `asset file ${row[4]}`)
       key = [row[1]!, row[2]!, row[3]!]
+    }
+    else if (kind === 'data') {
+      // 1.2.4: producer data, one file per row. The file is a second key, so two
+      // names for one file cannot make its meaning depend on the row a reader took.
+      field(NAME.test(row[1]!) && NAME.test(row[2]!) && SHA256.test(row[3]!), `data ${row[1]} ${row[2]}`)
+      if (rows.some(other => other !== row && other[0] === 'data' && other[2] === row[2]))
+        refuse('data-file', `two data rows name ${row[2]}`)
+      key = [row[1]!]
     }
     else {
       refuse('release-row', 'a second release row')
@@ -231,6 +278,30 @@ export function parseLock(text: string, file: string): Lock {
     refuse('base-only-kind', `an upstream or apt row in a lock of ${repository}`)
   if (repository !== 'mica-build' && rows.some(row => BUILD_ONLY.includes(row[0] as Kind)))
     refuse('build-only-kind', `an input, product, bundle or asset row in a lock of ${repository}`)
+  if (!indexLock && rows.some(row => INDEX_KINDS.includes(row[0] as Kind)))
+    refuse('index-scope', 'an origin, built or index row outside the version index')
+  if (indexLock) {
+    if (!rows.some(row => row[0] === 'index'))
+      refuse('index-scope', 'a version index with no index row')
+    if (rows.some(row => (['image', 'pool', 'package', 'board', 'upstream', 'apt'] as string[]).includes(row[0]!))
+      || rows.some(row => row[0] === 'input' && (row[1]!.includes('.') ? row[1]!.slice(0, row[1]!.indexOf('.')) : row[1]) !== 'mica-build'))
+      refuse('index-only-inputs', 'a version index naming something other than mica-build releases')
+    const inputs = new Map(rows.filter(row => row[0] === 'input').map(row => [row[1]!, row[2]!]))
+    if (rows.some(row => (row[0] === 'origin' || row[0] === 'built') && !inputs.has(row[1]!))
+      || rows.some(row => row[0] === 'index' && !inputs.has(row[2]!))
+      || [...inputs.keys()].some(name => rows.filter(row => row[0] === 'origin' && row[1] === name).length !== 1 || !rows.some(row => row[0] === 'built' && row[1] === name)))
+      refuse('index-input', 'an index input without its origin and built rows')
+    const indexed = new Map(rows.filter(row => row[0] === 'index').map(row => [row[1]!, inputs.get(row[2]!)!]))
+    if (JSON.stringify([...new Set(rows.filter(row => row[0] === 'product').map(row => row[1]))].sort()) !== JSON.stringify([...indexed.keys()].sort())
+      || rows.some(row => (row[0] === 'bundle' || row[0] === 'asset') && !indexed.has(row[1]!)))
+      refuse('index-product-source', 'a product or bundle of no indexed scope')
+    for (const row of rows) {
+      if (row[0] === 'bundle' && REFERENCE.exec(row[3]!)?.[3] !== `${row[2]}.${row[1]}.${indexed.get(row[1]!)}`)
+        refuse('index-product-source', `bundle ${row[1]} ${row[2]}`)
+      if (row[0] === 'asset' && !assetFile(row, indexed.get(row[1]!)!))
+        refuse('index-product-source', `asset ${row[1]} ${row[2]} ${row[3]}`)
+    }
+  }
   const products = new Set(rows.filter(row => row[0] === 'product').map(row => row[1]))
   const bundles = new Set(rows.filter(row => row[0] === 'bundle').map(row => `${row[1]} ${row[2]}`))
   if (rows.some(row => (row[0] === 'bundle' || row[0] === 'asset') && !products.has(row[1])))

@@ -1,7 +1,7 @@
 # mica-lock v1
-release	mica-boards	x64/20260914-2042	0123456789abcdef0123456789abcdef01234567
-pool	amd64	ghcr.io/micaoss/mica-boards:pool.x64.amd64.20260914-2042@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-package	mica-board-x64	amd64	0.1.0+git0123456789ab-1	1111111111111111111111111111111111111111111111111111111111111111
+release	mica-boards	uefi-x64.20260914-2042	0123456789abcdef0123456789abcdef01234567
+pool	amd64	ghcr.io/micaoss/mica-boards:pool.uefi-x64.amd64.20260914-2042@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+package	mica-board-uefi-x64	amd64	0.1.0+git0123456789ab-1	1111111111111111111111111111111111111111111111111111111111111111
 package	mica-wifi	amd64	0.1.0+git0123456789ab-1	2222222222222222222222222222222222222222222222222222222222222222
-board	x64	board	amd64	ghcr.io/micaoss/mica-boards:board.x64.20260914-2042@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-board	x64	firmware	amd64	ghcr.io/micaoss/mica-boards:firmware.x64.20260914-2042@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+board	uefi-x64	board	amd64	ghcr.io/micaoss/mica-boards:board.uefi-x64.20260914-2042@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+board	uefi-x64	firmware	amd64	ghcr.io/micaoss/mica-boards:firmware.uefi-x64.20260914-2042@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

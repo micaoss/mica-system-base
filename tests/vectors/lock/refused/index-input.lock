@@ -1,0 +1,21 @@
+# mica-lock v1
+release	mica-build	mica.20260914-2100	0123456789abcdef0123456789abcdef01234567
+input	mica-build.cx3576	20260914-2042	1111111111111111111111111111111111111111111111111111111111111111
+input	mica-build.uefi-x64	20260914-2042	2222222222222222222222222222222222222222222222222222222222222222
+origin	mica-build.cx3576	89abcdef0123456789abcdef0123456789abcdef
+origin	mica-build.uefi-x64	89abcdef0123456789abcdef0123456789abcdef
+built	mica-build.cx3576	mica-boards.cx3576	20260914-2042	3333333333333333333333333333333333333333333333333333333333333333
+built	mica-build.cx3576	mica-build-env	20260914-2042	4444444444444444444444444444444444444444444444444444444444444444
+index	cx3576-dev	mica-build.cx3576
+index	uefi-x64-dev	mica-build.uefi-x64
+product	cx3576-dev	cx3576	dev	3	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+product	uefi-x64-dev	uefi-x64	dev	3	dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd	eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee	ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+bundle	cx3576-dev	image	ghcr.io/micaoss/mica-build:image.cx3576-dev.20260914-2042@sha256:6666666666666666666666666666666666666666666666666666666666666666
+bundle	cx3576-dev	update	ghcr.io/micaoss/mica-build:update.cx3576-dev.20260914-2042@sha256:7777777777777777777777777777777777777777777777777777777777777777
+bundle	uefi-x64-dev	image	ghcr.io/micaoss/mica-build:image.uefi-x64-dev.20260914-2042@sha256:8888888888888888888888888888888888888888888888888888888888888888
+bundle	uefi-x64-dev	update	ghcr.io/micaoss/mica-build:update.uefi-x64-dev.20260914-2042@sha256:9999999999999999999999999999999999999999999999999999999999999999
+asset	cx3576-dev	image	disk	mica-cx3576-dev-20260914-2042.img.gz	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+asset	cx3576-dev	update	full	mica-cx3576-dev-20260914-2042.micaupd	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+asset	uefi-x64-dev	image	disk	mica-uefi-x64-dev-20260914-2042.img.gz	cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+asset	uefi-x64-dev	update	full	mica-uefi-x64-dev-20260914-2042.micaupd	dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+asset	uefi-x64-dev	update	kernel	mica-uefi-x64-dev-20260914-2042.kernel.micaupd	eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

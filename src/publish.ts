@@ -438,12 +438,29 @@ export interface Published {
 export const REFERENCE = 'ghcr.io/micaoss'
 const KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg'
 
+// Producer data (mica:docs/design/release-lock.md 1.2.4): the paths of each
+// root that no package owns, with their writers, as one asset per architecture
+// named by a `data` row. A consumer that composes a root cannot derive them --
+// ownership is its proof and these have no owner -- and a CI artifact is not
+// content-addressed, expires and cannot be pinned, so they belong on the release.
+export interface DataAsset { name: string, file: string, path: string, bytes: Uint8Array, sha256: string }
+
+export function dataAssets(repo: string, release: Release): DataAsset[] {
+  return ARCHES.map((arch) => {
+    const path = join(repo, '_out', 'rootfs', `${arch}.unowned.tsv`)
+    if (!existsSync(path))
+      fail(`${path} is missing; build the root with: bun src/container.ts rootfs --arch ${arch}`)
+    const bytes = new Uint8Array(readFileSync(path))
+    return { name: `unowned.${arch}`, file: `${release.repository}-unowned.${arch}.tsv`, path, bytes, sha256: sha256(bytes) }
+  })
+}
+
 // <repository>.lock (mica:docs/design/release-lock.md, sections 1 and 3): the
 // release; the rootfs index and images; the pools; this repository's packages,
 // each the layer of its pool with that digest; the Debian packages pinned for
 // later stages with the upstream.pkgs roots they are pinned for; and the Debian
 // snapshot as the one apt source. The lock must pass the format's rules.
-export function renderLock(repo: string, release: Release, published: Published): string {
+export function renderLock(repo: string, release: Release, published: Published, data: DataAsset[]): string {
   const at = `${REFERENCE}/${release.repository}`
   const rows: string[][] = [
     ['release', release.repository, release.label, release.commit],
@@ -464,7 +481,8 @@ export function renderLock(repo: string, release: Release, published: Published)
   const bytes = (value: string): Buffer => Buffer.from(value)
   const byKey = (a: string[], b: string[]): number => Buffer.compare(bytes(a[1]!), bytes(b[1]!)) || Buffer.compare(bytes(a[2]!), bytes(b[2]!))
   const { mirror, suite } = sources(repo)
-  rows.push(...packages.sort(byKey), ...upstream.sort(byKey), ['apt', mirror, suite, 'main', KEYRING])
+  rows.push(...packages.sort(byKey), ...upstream.sort(byKey), ['apt', mirror, suite, 'main', KEYRING],
+    ...data.map(asset => ['data', asset.name, asset.file, asset.sha256]).sort(byKey))
   const file = `${release.repository}.lock`
   const text = `${['# mica-lock v1', `# ${file}: ${release.repository} ${release.label}, written when the release was published.`, ...rows.map(row => row.join('\t'))].join('\n')}\n`
   parseLock(text, file)
@@ -499,11 +517,12 @@ export async function publishLock(repo: string, registry: Registry, assets: Rele
     const { bytes, manifest } = await read(`pool.${arch}.${release.label}`)
     return { digest: sha256(bytes), layers: (manifest.layers ?? []) as Layer[] }
   }
+  const data = dataAssets(repo, release)
   const lock = new TextEncoder().encode(renderLock(repo, release, {
     index: sha256(index.bytes),
     platforms: { amd64: platform('amd64'), arm64: platform('arm64') },
     pools: { amd64: await pool('amd64'), arm64: await pool('arm64') },
-  }))
+  }, data))
   const file = `${release.repository}.lock`
   const sums = new TextEncoder().encode(`${sha256(lock)}  ${file}\n`)
   const same = (a: Uint8Array | undefined, b: Uint8Array): boolean => a !== undefined && a.length === b.length && sha256(a) === sha256(b)
@@ -516,11 +535,13 @@ export async function publishLock(repo: string, registry: Registry, assets: Rele
     return bytes
   }
   const present = new Set(await assets.list(release.label))
-  const extra = [...present].filter(asset => asset !== file && asset !== 'SHA256SUMS')
+  const expected = [file, 'SHA256SUMS', ...data.map(asset => asset.file)]
+  const extra = [...present].filter(asset => !expected.includes(asset))
   if (extra.length)
-    fail(`release ${release.label} carries ${extra.join(', ')}; a release carries exactly ${file} and SHA256SUMS`)
+    fail(`release ${release.label} carries ${extra.join(', ')}; a release carries ${expected.join(', ')} and nothing else`)
   const results: string[] = []
-  for (const [asset, bytes] of [[file, lock], ['SHA256SUMS', sums]] as const) {
+  // The data files first: when the lock is readable, what it names already is.
+  for (const [asset, bytes] of [...data.map(asset => [asset.file, asset.bytes] as const), [file, lock], ['SHA256SUMS', sums]] as const) {
     if (present.has(asset)) {
       const existing = await served(asset)
       if (!same(existing, bytes))
@@ -545,6 +566,7 @@ export function dryRunLock(repo: string, out: string, tag: string): string {
   const pools = assertPools(repo, out, built)
   const release = { ...built, label: tag }
   const images = rootfsImages(release, readLayers(join(out, 'layers')))
+  const data = dataAssets(repo, release)
   const pool = (arch: Arch): { digest: string, layers: Layer[] } => {
     const { manifest, layers } = poolManifest(repo, release, arch, join(out, 'debs', arch, 'pool'), pools.get(arch)!)
     return { digest: sha256(manifest), layers }
@@ -553,7 +575,7 @@ export function dryRunLock(repo: string, out: string, tag: string): string {
     index: sha256(images.index),
     platforms: { amd64: sha256(images.platforms.get('amd64')!.manifest), arm64: sha256(images.platforms.get('arm64')!.manifest) },
     pools: { amd64: pool('amd64'), arm64: pool('arm64') },
-  })
+  }, data)
 }
 
 // The release of GITHUB_REPOSITORY (micaoss/<repository> by default): listed and

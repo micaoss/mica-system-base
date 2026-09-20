@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-20 09:05 [progress]
+
+A release carries the unowned-path lists as producer data
+(mica:docs/design/release-lock.md 1.2.4, user 2026-09-20): two assets,
+`mica-system-base-unowned.<arch>.tsv`, named by `data unowned.<arch> <file>
+<sha256>` rows of the lock, with `SHA256SUMS` still listing only the lock. A
+consumer that composes a root reads them from a pinned release instead of
+rediscovering them; a CI artifact could not be pinned. The readers follow mica
+25ee36b: the `data` row, the version-index rows (`origin`, `built`, `index`)
+with their refusals, and the scope separator, which is now `<scope>.<release>`.
+
 ## 2026-09-20 08:40 [progress]
 
 The base-root gate asserts the tty1 login console: systemd's preset enables

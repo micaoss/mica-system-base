@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { declared, inputsHash } from '../src/debs/docker.ts'
-import { assertBanner, assertPools, assertVersions, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
+import { assertBanner, assertPools, assertVersions, dataAssets, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
 import { Registry, sha256 } from '../src/registry.ts'
 import { parseLock } from '../src/release-lock.ts'
 import { issue, releaseOf } from '../src/release.ts'
@@ -104,6 +104,7 @@ describe('publication', () => {
       writeFileSync(join(repo, 'debs', name, 'control'), `Package: ${name}\nVersion: 1.0-1\nSource-Date-Epoch: 1757800000\n`)
     }
     writeFileSync(join(repo, 'package.json'), '{ "name": "mica-system-base" }\n')
+    writeFileSync(join(repo, '.gitignore'), '_out/\n')
     writeFileSync(join(repo, 'sources.json'), readFileSync(join(REPO, 'sources.json')))
     // One upstream package pinned for later stages, as the release lock lists it.
     writeFileSync(join(repo, 'debs/consumers.pkgs'), 'upstream-*\n')
@@ -115,6 +116,10 @@ describe('publication', () => {
     git('tag', '20260914-0130')
     commit = git('rev-parse', 'HEAD')
     version = '1.0-1'
+    // The producer-data assets a release names with its `data` rows.
+    mkdirSync(join(repo, '_out/rootfs'), { recursive: true })
+    for (const arch of ['amd64', 'arm64'] as const)
+      writeFileSync(join(repo, `_out/rootfs/${arch}.unowned.tsv`), `/etc/passwd\tbootstrap seed\n/etc/pam.d/common-auth\tpam-auth-update (libpam-runtime.postinst)\n/etc/${arch}.conf\tunknown\n`)
     deb('fixture-data', 'all', ['amd64', 'arm64'])
     deb('fixture-tool', 'amd64', ['amd64'])
     deb('fixture-tool', 'arm64', ['arm64'])
@@ -328,10 +333,22 @@ describe('publication', () => {
       `upstream\tlibfixture\tamd64\t1.0-1\t${'a'.repeat(64)}\t${UPSTREAM_URL}_amd64.deb\tlibfixture,tool`,
       `upstream\tlibfixture\tarm64\t1.0-1\t${'b'.repeat(64)}\t${UPSTREAM_URL}_arm64.deb\tlibfixture,tool`,
       'apt\thttps://snapshot.debian.org/archive/debian/20260905T000000Z\ttrixie\tmain\t/usr/share/keyrings/debian-archive-keyring.gpg',
+      ...dataAssets(repo, releaseOf(repo)).map(asset => `data\t${asset.name}\t${asset.file}\t${asset.sha256}`),
       '',
     ].join('\n')
+    const data = dataAssets(repo, releaseOf(repo))
     const release = assets()
-    expect(await publishLock(repo, client(), release)).toEqual(['mica-system-base.lock (uploaded)', 'SHA256SUMS (uploaded)'])
+    // The data files are uploaded before the lock that names them.
+    expect(await publishLock(repo, client(), release)).toEqual([
+      'mica-system-base-unowned.amd64.tsv (uploaded)',
+      'mica-system-base-unowned.arm64.tsv (uploaded)',
+      'mica-system-base.lock (uploaded)',
+      'SHA256SUMS (uploaded)',
+    ])
+    for (const asset of data)
+      expect(release.files.get(`20260914-0130/${asset.file}`)).toEqual(asset.bytes)
+    // SHA256SUMS still lists only the lock; the data files hang off its rows.
+    expect(parseLock(text(release.files.get('20260914-0130/mica-system-base.lock')!), 'lock').rows.filter(row => row[0] === 'data')).toHaveLength(2)
     expect(text(release.files.get('20260914-0130/mica-system-base.lock')!)).toBe(lock)
     expect(text(release.files.get('20260914-0130/SHA256SUMS')!)).toBe(`${sha256(new TextEncoder().encode(lock))}  mica-system-base.lock\n`)
     expect(parseLock(lock, 'mica-system-base.lock').release).toBe('20260914-0130')
@@ -347,10 +364,15 @@ describe('publication', () => {
     ])
 
     // A later attempt finds the same assets and uploads nothing; an interrupted one finishes.
-    expect(await publishLock(repo, client(), release)).toEqual(['mica-system-base.lock (present)', 'SHA256SUMS (present)'])
+    expect(await publishLock(repo, client(), release)).toEqual([
+      'mica-system-base-unowned.amd64.tsv (present)',
+      'mica-system-base-unowned.arm64.tsv (present)',
+      'mica-system-base.lock (present)',
+      'SHA256SUMS (present)',
+    ])
     release.files.delete('20260914-0130/SHA256SUMS')
-    expect(await publishLock(repo, client(), release)).toEqual(['mica-system-base.lock (present)', 'SHA256SUMS (uploaded)'])
-    expect(release.uploads).toEqual(['mica-system-base.lock', 'SHA256SUMS', 'SHA256SUMS'])
+    expect((await publishLock(repo, client(), release)).at(-1)).toBe('SHA256SUMS (uploaded)')
+    expect(release.uploads).toEqual(['mica-system-base-unowned.amd64.tsv', 'mica-system-base-unowned.arm64.tsv', 'mica-system-base.lock', 'SHA256SUMS', 'SHA256SUMS'])
     // Whether an asset exists is asked of the release, never of the download URL.
     expect(release.early).toEqual([])
 
@@ -382,20 +404,21 @@ describe('publication', () => {
     const waits: number[] = []
     expect(await publishLock(repo, client(), slow, async (ms) => {
       waits.push(ms)
-    })).toEqual(['mica-system-base.lock (uploaded)', 'SHA256SUMS (uploaded)'])
+    })).toEqual(['mica-system-base-unowned.amd64.tsv (uploaded)', 'mica-system-base-unowned.arm64.tsv (uploaded)', 'mica-system-base.lock (uploaded)', 'SHA256SUMS (uploaded)'])
     expect(waits).toEqual([10_000, 10_000, 10_000])
     const lost = assets()
     const upload = lost.upload
     lost.upload = async (tag, file, bytes) => upload(tag, file, bytes)
     lost.download = async () => undefined
-    await expect(publishLock(repo, client(), lost, async () => {})).rejects.toThrow('mica-system-base.lock of release 20260914-0130 does not read back')
+    // The first asset uploaded is the first to be read back, and it is a data file.
+    await expect(publishLock(repo, client(), lost, async () => {})).rejects.toThrow('mica-system-base-unowned.amd64.tsv of release 20260914-0130 does not read back')
     // A listed asset that is not served yet is waited for before it is compared.
     const listed = assets()
     await publishLock(repo, client(), listed, async () => {})
     let late = 2
     const served = listed.download
     listed.download = async (tag, file) => (late-- > 0 ? undefined : served(tag, file))
-    expect(await publishLock(repo, client(), listed, async () => {})).toEqual(['mica-system-base.lock (present)', 'SHA256SUMS (present)'])
+    expect(await publishLock(repo, client(), listed, async () => {})).toEqual(['mica-system-base-unowned.amd64.tsv (present)', 'mica-system-base-unowned.arm64.tsv (present)', 'mica-system-base.lock (present)', 'SHA256SUMS (present)'])
   })
 
   test('a dry run writes the lock of the local pools and root layers without a registry', () => {

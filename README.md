@@ -23,7 +23,8 @@ lock format of `mica:docs/design/release-lock.md`:
 | Asset | Content |
 | --- | --- |
 | `mica-system-base.lock` | `mica-lock v1`: the `release` row; `image mica-system-base rootfs` rows for the index and its amd64 and arm64 manifests; a `pool` row per architecture; a `package` row per package of this repository and architecture (the pool layer with that sha256); an `upstream` row per Debian package pinned for later stages and architecture (version, sha256, snapshot URL and the `upstream.pkgs` roots it is pinned for); and one `apt` row, the Debian snapshot the root was built from |
-| `SHA256SUMS` | the sha256 of `mica-system-base.lock`, its only line |
+| `mica-system-base-unowned.<arch>.tsv` | producer data, named by a `data` row of the lock: every path of that architecture's root that no package owns, with what wrote it, tab-separated and sorted. A composer proves a declaration by package ownership and cannot derive these |
+| `SHA256SUMS` | the sha256 of `mica-system-base.lock`, its only line; the data assets hang off the lock's rows |
 
 ## Consuming a release
 

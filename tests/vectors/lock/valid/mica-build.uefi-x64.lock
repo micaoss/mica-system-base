@@ -15,3 +15,4 @@ asset	uefi-x64-dev	image	disk	mica-uefi-x64-dev-20260914-2042.img.gz	fffffffffff
 asset	uefi-x64-dev	update	full	mica-uefi-x64-dev-20260914-2042.micaupd	eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 asset	uefi-x64-dev	update	root	mica-uefi-x64-dev-20260914-2042.root.micaupd	dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 asset	uefi-x64-minimal	image	disk	mica-uefi-x64-minimal-20260914-2042.img.gz	cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+asset	uefi-x64-minimal	update	full	mica-uefi-x64-minimal-20260914-2042.micaupd	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
