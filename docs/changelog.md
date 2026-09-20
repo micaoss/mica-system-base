@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-20 08:40 [progress]
+
+The base-root gate asserts the tty1 login console: systemd's preset enables
+`getty@tty1.service` and the root ships
+`etc/systemd/system/getty.target.wants/getty@tty1.service`, which is an unowned
+path and therefore one a composer drops. A base root has a console on tty1 by
+intent; a product that wants a logo VT states that itself (the `NAutoVTs=0` and
+`ReserveVT=2` drop-in is `mica-boards`' cx3576 overlay, not a Base file).
+
 ## 2026-09-20 08:05 [progress]
 
 A released root may not carry a snapshot banner: `assertBanner` (the identity

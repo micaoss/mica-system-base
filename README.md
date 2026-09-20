@@ -91,6 +91,14 @@ because a reader cannot reconstruct them from the files:
   containers are deliberately unsupported (`mica-podman`). If a later stage ever
   wants rootless, `uidmap` is a row of `upstream.pkgs` -- pinned for later stages
   and not installed in the root -- rather than a change to the base root.
+- **A base root has a login console on tty1.** systemd's preset enables
+  `getty@tty1.service` and the root ships that link, so the gate asserts it: the
+  console a person reaches on a base root is Base's intent, not an accident of
+  what survived. A product that wants a logo VT instead states that in its own
+  composition -- `mica-boards` ships `NAutoVTs=0` and `ReserveVT=2` for cx3576 --
+  and must not get it from this link going missing. The link is one of the
+  unowned paths, written by systemd's postinst, so a composer that proves a
+  declaration by package ownership drops it.
 - **SSH does not go through PAM, and the base-root gate now says so.** Debian's
   `dropbear-bin` depends on no `libpam` and `/usr/sbin/dropbear` links none: it
   reaches an account through `crypt(3)` against `/etc/shadow`. That is a
