@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-20 09:30 [progress]
+
+README records what the container graphroot's mount options are not (user,
+2026-09-20): `nosuid` and `nodev` on `/mica/containers` are a default with no
+security claim, because the engine is rootful and podman access implies root.
+They stay as they are, `noexec` is not added, and the reason to check them on a
+booted guest is uniformity across boards rather than confinement. The access
+model is recorded with it: there is no unprivileged-user story on these devices.
+
 ## 2026-09-20 09:05 [progress]
 
 A release carries the unowned-path lists as producer data

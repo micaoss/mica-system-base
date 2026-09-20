@@ -115,6 +115,22 @@ because a reader cannot reconstruct them from the files:
   The root does carry the PAM libraries (`libpam0g`,
   `libpam-modules`, `libpam-runtime` are selected on purpose), so a root without
   a PAM configuration is a root that lost one, not a root designed without it.
+- **The container graphroot's mount options are a default, not a boundary.**
+  `mica-containers.mount` binds `/mnt/data/containers` onto `/mica/containers`
+  with `bind,private,nosuid,nodev` and no `noexec`, and `mica-podman`'s
+  `storage.conf` sets `mountopt=nodev`, which agrees with it. THESE OPTIONS ARE
+  NOT A SECURITY BOUNDARY AND ARE NOT INTENDED AS ONE (user, 2026-09-20): the
+  engine is rootful and rootless is unsupported, so anyone who can run `podman`
+  is already root and can bind the graphroot elsewhere without them. Keep them --
+  removing them changes what containers can do, for no reason -- and do not add
+  `noexec` "for consistency": there is no threat model here to be consistent
+  with. The options are also a uniformity question rather than a hardening one:
+  a bind cannot weaken the underlying mount, so `noexec` on DATA on one board
+  would stop containers executing out of the graphroot there and Base could not
+  undo it. The filesystem and options of DATA itself are the product's.
+- **There is no unprivileged-user story on these devices.** podman access
+  implies root, and root implies SSH; the operator account exists for a person,
+  not as a privilege boundary.
 - **`/etc/subuid` and `/etc/subgid` are kept, inert by design.** `mica:100000:65536`
   is what `useradd` writes from `login.defs`; no code here asks for it. With no
   `uidmap` in the root the ranges do nothing, and they stay because suppressing
