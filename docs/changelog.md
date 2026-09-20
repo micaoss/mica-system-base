@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-09-20 08:55 [release]
+## 2026-09-20 14:05 [release]
 
 Release `20260920-0832` at `cc21cd9`, the first carrying producer data: four
 assets exactly -- `mica-system-base.lock`, `SHA256SUMS` listing only the lock,
