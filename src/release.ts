@@ -54,12 +54,15 @@ export function releaseOf(repo: string): Release {
   }
 }
 
-// /etc/issue of the base root: the release label, the build time and the commit.
+// /etc/issue of the base root: the base system this root was built from, its
+// release, build time and commit. It names the Base, not the product: a product
+// is composed later and this file is written before one exists, so an
+// unqualified "Mica OS <release>" would assert a version this root does not know.
 export function issue(label: string, commit: string, built: string): string {
-  return `Mica OS ${label} \\n \\l\nBuild: ${built}\nCommit: ${commit}\n\n`
+  return `Mica OS Base ${label} \\n \\l\nBuild: ${built}\nCommit: ${commit}\n\n`
 }
 
-export const ISSUE = /^Mica OS (\d{8}-\d{4}(?:~git[0-9a-f]{12}(?:\.dirty)?)?) \\n \\l\nBuild: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\nCommit: ([0-9a-f]{40})\n\n$/
+export const ISSUE = /^Mica OS Base (\d{8}-\d{4}(?:~git[0-9a-f]{12}(?:\.dirty)?)?) \\n \\l\nBuild: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\nCommit: ([0-9a-f]{40})\n\n$/
 
 export function buildTime(): string {
   const value = process.env.MICA_BUILD_TIME ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')

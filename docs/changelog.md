@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-20 05:40 [progress]
+
+The console banner names the Base: /etc/issue reads `Mica OS Base <release>`
+rather than `Mica OS <release>`, with the `ISSUE` regex and the base-root
+validator. The release in it is a mica-system-base release, and a product is
+composed later with a release of its own, so the unqualified line asserted a
+version this root does not know (coordinator, 2026-09-20).
+
 ## 2026-09-19 08:30 [progress]
 
 CI takes the pinned Debian archives from the res download host

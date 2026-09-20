@@ -110,9 +110,9 @@ export function assertBase(root: string): void {
     if (walk(root, directory).length)
       fail(`the base root carries content under /${directory}`)
   }
-  // Its own identity in /etc/issue, and no message of the day.
+  // Its own identity in /etc/issue, named as the Base, and no message of the day.
   if (!ISSUE.test(readFileSync(join(root, 'etc/issue'), 'utf8')))
-    fail('the base root\'s /etc/issue does not name its release, build time and commit')
+    fail('the base root\'s /etc/issue does not name the Base, its release, build time and commit')
   if (existsSync(join(root, 'etc/motd')) || lstatExists(join(root, 'etc/motd')))
     fail('the base root carries /etc/motd')
   // No identity of the machine that built it.

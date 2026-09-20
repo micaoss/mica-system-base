@@ -47,11 +47,15 @@ test('a clean checkout whose HEAD carries one YYYYMMDD-HHMM tag is that release;
   expect(() => releaseOf(work)).toThrow('20261301-0000 is not a UTC time')
 })
 
-test('/etc/issue names the release, the build time and the commit', () => {
+// The banner names the Base, not a product: a product is composed later, so an
+// unqualified "Mica OS <release>" would read as a product version it is not.
+test('/etc/issue names the Base, its release, the build time and the commit', () => {
   const text = issue('20260914-0130', 'a'.repeat(40), '2026-09-14T01:40:00Z')
-  expect(text).toBe(`Mica OS 20260914-0130 \\n \\l\nBuild: 2026-09-14T01:40:00Z\nCommit: ${'a'.repeat(40)}\n\n`)
+  expect(text).toBe(`Mica OS Base 20260914-0130 \\n \\l\nBuild: 2026-09-14T01:40:00Z\nCommit: ${'a'.repeat(40)}\n\n`)
   expect(ISSUE.exec(text)?.slice(1)).toEqual(['20260914-0130', '2026-09-14T01:40:00Z', 'a'.repeat(40)])
   expect(ISSUE.test(issue(`20260914-0102~git${'b'.repeat(12)}.dirty`, 'a'.repeat(40), '2026-09-14T01:40:00Z'))).toBe(true)
   expect(ISSUE.test(issue('v0.0.1', 'a'.repeat(40), '2026-09-14T01:40:00Z'))).toBe(false)
   expect(ISSUE.test(issue('20260914-0130', 'short', '2026-09-14T01:40:00Z'))).toBe(false)
+  expect(text.startsWith('Mica OS Base ')).toBe(true)
+  expect(ISSUE.test(text.replace('Mica OS Base ', 'Mica OS '))).toBe(false)
 })
