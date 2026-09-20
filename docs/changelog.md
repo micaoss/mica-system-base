@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-20 08:55 [release]
+
+Release `20260920-0832` at `cc21cd9`, the first carrying producer data: four
+assets exactly -- `mica-system-base.lock`, `SHA256SUMS` listing only the lock,
+and `mica-system-base-unowned.{amd64,arm64}.tsv` named by the lock's two `data`
+rows. Trust hash `a57a2a1e746f5231c918bf521d15a8688c6f646ca3c0ddff23d5d7567376a5c1`.
+
+All four packages reused by digest, none rebuilt -- and **both pool manifest
+digests are unchanged from `20260919-1959`**, which is the first observable
+proof of the package-version rule rather than a promise of it: ten commits of
+root policy landed between the two releases, none touched a package version,
+and the pool manifest carries only `mica.source-repo` and `mica.arch`, so a
+release that changes no package changes no pool byte. The rootfs images did
+move, because the banner names the release; that asymmetry is the correct one.
+
+Verified from the published artefacts and not from the run log: pool manifests
+and the rootfs index fetched by tag and re-hashed to the digests the lock
+names, per-arch manifests by digest, the index's two children equal to the two
+`image` rows, four pool layer blobs with their package titles, and the amd64
+rootfs layer downloaded and re-hashed, with `/etc/issue` reading `Mica OS Base
+20260920-0832`, all 23 shadow entries locked at day 18262 and
+`getty.target.wants/getty@tty1.service` present, read out of that layer.
+
 ## 2026-09-20 09:30 [progress]
 
 README records what the container graphroot's mount options are not (user,
