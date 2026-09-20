@@ -477,6 +477,20 @@ async function rootfs(argv: string[]): Promise<number> {
     const release = releaseOf(REPO)
     Object.assign(process.env, { MICA_BASE_LABEL: release.label, MICA_BASE_COMMIT: release.commit, MICA_BUILD_TIME: buildTime() })
     await bootstrap({ command: 'bootstrap', arch, cacheDir, root, local, check: false, selection: { kind: 'consumers', file: selection } })
+    // Beside the root: every path no package claims, with what wrote it. A
+    // composer proves a declaration by package ownership and has nothing to prove
+    // these with, so the root says which they are rather than each consumer
+    // guessing (mica-build, 2026-09-20).
+    const unowned = `${root}.unowned.tsv`
+    const listed = dockerRun({
+      arch: hostArch(),
+      network: 'none',
+      mounts: [[REPO, IN_CONTAINER, 'ro'], [root, '/root-tree', 'ro'], [dirname(unowned), '/out', 'rw']],
+      command: cli('unowned', '--root', '/root-tree', '--output', `/out/${basename(unowned)}`),
+    })
+    if (listed !== 0)
+      fail(`listing the unowned paths of the ${arch} root failed`)
+    console.log(`rootfs: ${readFileSync(unowned, 'utf8').split('\n').filter(Boolean).length} paths no package claims, in ${unowned}`)
     console.log(`RESULT: PASS (${arch} base root at ${root})`)
     return 0
   }

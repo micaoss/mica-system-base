@@ -1,6 +1,6 @@
-// Commands inside the environment image: cache | verify | select | bootstrap | pin-inputs.
+// Commands inside the environment image: cache | verify | select | bootstrap | pin-inputs | unowned.
 import type { Options } from './args.ts'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { parse, USAGE } from './args.ts'
 import { bootstrap } from './bootstrap.ts'
 import { populate } from './cache.ts'
@@ -9,9 +9,10 @@ import { need } from './exec.ts'
 import { formatRows, selectBuild, selectInputs, selectRuntime } from './lock.ts'
 import { resolveBuild, resolveInputs, resolveUpstream } from './pin-inputs.ts'
 import { REPO, requireBun } from './pins.ts'
+import { formatUnowned, unownedPaths } from './unowned.ts'
 import { verifyRows } from './verify.ts'
 
-const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs']
+const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'unowned']
 
 // Cache runs from different containers share one directory: lock with flock(1).
 function underCacheLock(cacheDir: string): number | undefined {
@@ -28,9 +29,9 @@ function underCacheLock(cacheDir: string): number | undefined {
 
 async function main(options: Options): Promise<number> {
   requireBun()
-  if (!options.arch)
+  if (!options.arch && options.command !== 'unowned')
     fail('--arch is required')
-  const arch = options.arch
+  const arch = options.arch!
   if (options.command === 'pin-inputs') {
     if (options.selection.kind === 'package')
       await resolveBuild(options.selection.name, arch, options.output)
@@ -38,6 +39,12 @@ async function main(options: Options): Promise<number> {
       await resolveUpstream(options.selection.file, arch, options.output)
     else
       await resolveInputs(arch, options.output)
+    return 0
+  }
+  if (options.command === 'unowned') {
+    if (!options.root || !options.output)
+      fail('unowned requires --root and --output')
+    writeFileSync(options.output, formatUnowned(unownedPaths(options.root)))
     return 0
   }
   const selected = selectRuntime(REPO, arch, options.selection)

@@ -119,6 +119,7 @@ jobs:
           path: |
             _out/debs/${{ matrix.arch }}/pool/*.deb
             _out/layers/${{ matrix.arch }}/
+            _out/rootfs/${{ matrix.arch }}.unowned.tsv
           if-no-files-found: error
   gate:
     needs: base

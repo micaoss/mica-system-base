@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-20 06:20 [progress]
+
+Every base root is built with a list of the paths no package claims, beside it
+as `_out/rootfs/<arch>.unowned.tsv`: one tab-separated row per path with what
+wrote it, read out of the root itself (the generator, the maintainer script that
+names the path, or this repository's own build). A composer proves a declaration
+by package ownership and has nothing to prove a generated path with, and nothing
+compared the set it declares against the set a root has; this is the set to diff
+against (mica-build and the coordinator, 2026-09-20). 93 paths in the amd64 root
+of this commit, 3 of them with a writer that could not be established, which say
+`unknown` rather than a guess.
+
 ## 2026-09-20 05:40 [progress]
 
 The console banner names the Base: /etc/issue reads `Mica OS Base <release>`

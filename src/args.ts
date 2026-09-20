@@ -63,7 +63,7 @@ export function parse(argv: string[], commands: string[]): Options | undefined {
     }
   }
   const arch = values.get('--arch')
-  if (!['test', 'pin-inputs'].includes(command)) {
+  if (!['test', 'pin-inputs', 'unowned'].includes(command)) {
     if (!arch)
       fail('--arch is required')
     if (!(ARCHES as string[]).includes(arch))
@@ -77,10 +77,10 @@ export function parse(argv: string[], commands: string[]): Options | undefined {
     fail('--package cannot be used with bootstrap; select a complete system closure')
   if (command !== 'bootstrap' && values.has('--local'))
     fail('--local is only valid with bootstrap')
-  if (command !== 'bootstrap' && values.has('--root'))
-    fail('--root is only valid with bootstrap')
-  if (command !== 'pin-inputs' && values.has('--output'))
-    fail('--output is only valid with pin-inputs')
+  if (!['bootstrap', 'unowned'].includes(command) && values.has('--root'))
+    fail('--root is only valid with bootstrap and unowned')
+  if (!['pin-inputs', 'unowned'].includes(command) && values.has('--output'))
+    fail('--output is only valid with pin-inputs and unowned')
 
   const cacheDir = resolvePath(values.get('--cache-dir') ?? join(REPO, '_out/debian-base'))
   if (cacheDir === '/')
@@ -98,6 +98,12 @@ export function parse(argv: string[], commands: string[]): Options | undefined {
   if (output !== undefined)
     options.output = resolvePath(output)
 
+  if (command === 'unowned') {
+    const given = values.get('--root')
+    if (!given)
+      fail('unowned requires --root')
+    options.root = resolvePath(given)
+  }
   if (command === 'bootstrap') {
     const given = values.get('--root')
     if (!given)
