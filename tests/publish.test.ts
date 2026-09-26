@@ -130,7 +130,6 @@ describe('publication', () => {
     api = github(() => commit)
     use(server)
     process.env.MICA_GITHUB_API = api.url
-    process.env.MICA_RELEASES_API = api.url
     process.env.GH_TOKEN = 'test-token'
     for (const [name, arches] of [['fixture-data', 'all'], ['fixture-tool', 'amd64,arm64']] as const) {
       mkdirSync(join(repo, 'debs', name), { recursive: true })

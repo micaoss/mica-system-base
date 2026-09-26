@@ -2,7 +2,7 @@
 
 ## 2026-09-26 22:40 [progress]
 
-The switch to mica-build-tools (plan 20260926-2122), pinned at `5d0a5d9`, with mica-build-env
+The switch to mica-build-tools (plan 20260926-2122), pinned at `5467dbc`, with mica-build-env
 moved to 20260926-2110. The repository's own lock reader, vectors copy, OCI client, packer,
 inputs hash, download path and pool publisher are gone: `src/` imports `@mica/build-tools`,
 each producer declares a `mica-inputs`, the Dockerfiles pack with `deb pack`, the source cache
