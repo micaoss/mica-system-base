@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 11:50 [release]
+
+Release 20260926-1135, built from 8610b35 on mica-build-env 20260916-0735: the lock at snapshot
+20260926T000000Z. Verified from the published artefacts: SHA256SUMS checks the lock; the `apt`
+row names the new snapshot; the package rows move mica-ca-trust to 20250419-mica2, mica-ssh to
+1.0.0-2 and mica-tzdata to 2026c-mica1 and leave the others byte-identical to 20260926-1045;
+the amd64 root carries libc6 2.41-12+deb13u4, libssl3t64 3.5.7-1~deb13u2, libexpat1
+2.8.3-1~deb13u1, util-linux 2.41.5-0+deb13u1 and perl-base 5.40.1-6+deb13u1, and no bash;
+both unowned-path assets list 189 paths, none without a named writer. Resolving from the
+security pocket as well waits for the release-lock change planned in mica
+(20260926-1125-apt-row-per-source) and its readers.
+
 ## 2026-09-26 12:10 [progress]
 
 The lock moves to snapshot 20260926T000000Z (plan 20260926-1130-snapshot-20260926). A scan of

@@ -1,6 +1,6 @@
 # 20260926-1040-runtime-lock-security The runtime lock resolves without the security archive
 
-- **status**: in_progress
+- **status**: completed
 - **priority**: P1
 - **owner**: claude/lock-security
 - **createdAt**: 2026-09-26 10:40
@@ -38,3 +38,10 @@ Checking the runtime lock against the security archive
 
 2026-09-26 11:30: scanned; 33 of 173 pinned names are behind, all current in trixie main at
 20260926T000000Z. Plan: docs/plan/20260926-1130-snapshot-20260926.md.
+
+2026-09-26 11:50: answered. Every runtime package that lagged is current in release
+20260926-1135 (snapshot 20260926, after the point release), and pin-inputs now resolves the
+runtime rows. Resolving from trixie-security between point releases needs one `apt` row per
+source: mica task 20260926-1125-apt-row-per-source, then the readers, then Base.
+
+- complete: Released as 20260926-1135; the security pocket waits for the release-lock change.
