@@ -122,11 +122,11 @@ test('a build for one architecture takes its own and the all packages, filed int
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
-    expect(packages.map(entry => entry.name)).toEqual(['mica-busybox', 'mica-ca-trust', 'mica-system', 'mica-systemd-boot'])
+    expect(packages.map(entry => entry.name)).toEqual(['mica-busybox', 'mica-ca-trust', 'mica-system', 'mica-systemd-boot', 'mica-wifi', 'mica-wifi-ap'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
     expect(packages.find(entry => entry.name === 'mica-busybox')).toEqual({ name: 'mica-busybox', arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'], version: '1.38.0-mica1', epoch: 1789430400 })
-    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.1-1', 'mica-systemd-boot': '257.13-mica1' })
+    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.1-1', 'mica-systemd-boot': '257.13-mica1', 'mica-wifi': '2.12-mica1', 'mica-wifi-ap': '2.12-mica1' })
   })
 
   // systemd-boot is compiled from the source of the systemd the lock pins, with the patch that
@@ -163,6 +163,65 @@ describe('the package definitions', () => {
     expect(readFileSync(join(REPO, 'debs/mica-busybox/config'), 'utf8')).toMatch(/^CONFIG_STATIC=y$/m)
     expect(readFileSync(join(REPO, 'debs/mica-busybox/control'), 'utf8')).not.toMatch(/^Depends:/m)
     expect(existsSync(join(REPO, 'debs/mica-busybox/inputs'))).toBe(false)
+  })
+
+  // wpa_supplicant and hostapd are compiled from the upstream hostap release with nl80211 only,
+  // libnl linked statically and OpenSSL for WPA2 and WPA3: nothing else is configured, and the
+  // units keep the names and paths micad drives.
+  describe.each([
+    { name: 'mica-wifi', source: 'wpa-supplicant', archive: 'wpa_supplicant', unit: 'usr/lib/systemd/system/wpa_supplicant@.service', config: ['CONFIG_AP=y', 'CONFIG_BACKEND=file', 'CONFIG_BGSCAN_SIMPLE=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_CONFIG_BLOBS=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+    { name: 'mica-wifi-ap', source: 'hostapd', archive: 'hostapd', unit: 'usr/lib/systemd/system/hostapd@.service', config: ['CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_ACCOUNTING=y', 'CONFIG_NO_RADIUS=y', 'CONFIG_NO_VLAN=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+  ])('$name', ({ name, source, archive, unit, config }) => {
+    const dockerfile = (): string => readFileSync(join(REPO, 'debs', name, 'Dockerfile'), 'utf8')
+
+    test('builds the pinned upstream hostap release on pinned build tools', () => {
+      const { version, url } = selectSource(REPO, source)
+      expect(version).toMatch(/^\d+\.\d+$/)
+      expect(url).toBe(`https://w1.fi/releases/${archive}-${version}.tar.gz`)
+      expect(readFileSync(join(REPO, 'debs', name, 'control'), 'utf8')).toMatch(new RegExp(`^Version: ${version.replaceAll('.', '\\.')}-mica\\d+$`, 'm'))
+      const entry = declared(REPO).find(candidate => candidate.name === name)!
+      expect(entry).toMatchObject({ arches: ['amd64', 'arm64'], sources: [source], build: ['libnl-3-dev', 'libnl-genl-3-dev', 'libssl-dev', 'pkg-config'] })
+      for (const arch of ['amd64', 'arm64'] as const)
+        expect(selectBuild(REPO, arch, name).map(row => row.name)).toEqual(expect.arrayContaining(entry.build))
+      expect(dockerfile()).toContain('FROM --platform=linux/${MICA_DEB_ARCH} ${MICA_BUILD_C_IMAGE} AS build')
+      expect(readFileSync(join(REPO, 'debs/consumers.pkgs'), 'utf8')).toMatch(new RegExp(`^${name}$`, 'm'))
+    })
+
+    // The headers it compiles against are of the ABI series the root runs: the build snapshot's
+    // security archive may carry a newer patch release than the runtime lock.
+    test('compiles against the libssl and libnl series the root pins', () => {
+      const series = (version: string): string => version.replace(/^\d+:/, '').split('-')[0]!.split('.').slice(0, 2).join('.')
+      for (const arch of ['amd64', 'arm64'] as const) {
+        const build = new Map(selectBuild(REPO, arch, name).map(row => [row.name, row.version]))
+        for (const [dev, runtime] of [['libssl-dev', 'libssl3t64'], ['libnl-3-dev', 'libnl-3-200'], ['libnl-genl-3-dev', 'libnl-genl-3-200']] as const)
+          expect(series(build.get(dev)!)).toBe(series(selectRuntime(REPO, arch, { kind: 'package', name: runtime })[0]!.version))
+      }
+    })
+
+    test('configures exactly the minimal feature set', () => {
+      const settings = readFileSync(join(REPO, 'debs', name, 'config'), 'utf8').split('\n').filter(line => /^CONFIG_/.test(line))
+      expect(settings.sort()).toEqual([...config])
+    })
+
+    test('refuses a binary that loads anything but libc, libcrypto and libnl', () => {
+      expect(dockerfile()).toContain('libc.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200) ;;')
+    })
+
+    test('ships the unit micad drives', () => {
+      expect(dockerfile()).toContain(`/stage/${unit}`)
+    })
+  })
+
+  test('the AP unit starts hostapd on the configuration micad renders', () => {
+    const service = readFileSync(join(REPO, 'debs/mica-wifi-ap/hostapd@.service'), 'utf8')
+    expect(service).toMatch(/^ExecStart=\/usr\/sbin\/hostapd -B -P \/run\/hostapd\.%i\.pid \/etc\/hostapd\/%i\.conf$/m)
+    expect(service).toMatch(/^ConditionFileNotEmpty=\/etc\/hostapd\/%i\.conf$/m)
+  })
+
+  test('upstream.pkgs no longer pins Debian\'s wpasupplicant or hostapd', () => {
+    const roots = readFileSync(join(REPO, 'upstream.pkgs'), 'utf8').split('\n').map(line => line.replace(/#.*/, '').trim())
+    expect(roots).not.toContain('wpasupplicant')
+    expect(roots).not.toContain('hostapd')
   })
 })
 

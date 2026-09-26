@@ -9,17 +9,13 @@ libatomic1
 libglib2.0-0t64
 libjson-c5
 libsubid5
-# radio (Wi-Fi, Wi-Fi AP, Bluetooth)
+# radio: Bluetooth, and the iw and rfkill mica-wifi and mica-wifi-ap depend on
 bluez
-hostapd
 iw
 libasound2t64
 libdw1t64
-libnl-route-3-200
-libpcsclite1
 libreadline8t64
 readline-common
 rfkill
-wpasupplicant
 # board audio
 alsa-utils

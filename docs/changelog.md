@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-26 11:00 [progress]
+
+mica-wifi and mica-wifi-ap 2.12-mica1: wpa_supplicant, wpa_cli, hostapd and hostapd_cli
+compiled from the upstream hostap 2.12 release archives (`source.wpa-supplicant`,
+`source.hostapd`, tracked upstream as podman is) with nl80211 only and the root's libnl-3,
+libnl-genl-3 and libcrypto; no D-Bus, PC/SC, readline, WPS, P2P, mesh or EAP. Each build
+refuses a binary that loads any other library and one whose `-v` is not the pinned
+release. Installed sizes are 1509 KiB and 980 KiB on amd64, against Debian's wpasupplicant
+and hostapd with libnl-route and libpcsclite. The packages carry what mica-build's
+`radio-wifi` producer shipped (the STATE binds of `/etc/wpa_supplicant` and `/etc/hostapd`,
+the regulatory database reload) and `wpa_supplicant@.service` and `hostapd@.service` with
+the names and paths micad drives, so Wi-Fi packaging lives here alone. upstream.pkgs no
+longer pins wpasupplicant, hostapd, libnl-route-3-200 or libpcsclite1.
+
+`pin-inputs` now reads `apt-get --print-uris` lines without an index hash, which the
+security archive prints (`printedUri`, tests/pin-inputs.test.ts). The build closure of both
+packages takes libssl-dev 3.5.7-1~deb13u2 from that archive while the runtime lock pins
+libssl3t64 3.5.6-1~deb13u2; the tests hold the build headers to the runtime's ABI series,
+the binaries were run with `LD_BIND_NOW=1` on the pinned root, and the lag itself is task
+20260926-1040-runtime-lock-security (task 20260926-0904-mica-wifi).
+
 ## 2026-09-20 19:51 [progress]
 
 The unowned-path artefact says what `/etc/subuid` and `/etc/subgid` are:

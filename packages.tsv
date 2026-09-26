@@ -26,7 +26,6 @@ findutils	base
 gcc-14-base	base,mica-system
 grep	base
 gzip	base
-hostapd	upstream-hostapd
 hostname	base
 init-system-helpers	base,mica-system
 iw	upstream-iw
@@ -84,15 +83,13 @@ libnftables1	mica-system
 libnftnl11	mica-system
 libnl-3-200	mica-system
 libnl-genl-3-200	mica-system
-libnl-route-3-200	upstream-hostapd,upstream-libnl-route-3-200,upstream-wpasupplicant
 libpam-modules	base,mica-system
 libpam-modules-bin	base,mica-system
 libpam-runtime	base,mica-system
 libpam0g	base,mica-system
 libpcre2-8-0	base,mica-system
-libpcsclite1	upstream-libpcsclite1,upstream-wpasupplicant
 libproc2-0	mica-system
-libreadline8t64	upstream-bluez,upstream-libreadline8t64,upstream-wpasupplicant
+libreadline8t64	upstream-bluez,upstream-libreadline8t64
 libsamplerate0	upstream-alsa-utils
 libsasl2-2	mica-system
 libsasl2-modules-db	mica-system
@@ -132,7 +129,7 @@ passwd	base,mica-system
 perl-base	base,mica-system
 procps	mica-system
 quota	mica-system
-readline-common	upstream-bluez,upstream-libreadline8t64,upstream-readline-common,upstream-wpasupplicant
+readline-common	upstream-bluez,upstream-libreadline8t64,upstream-readline-common
 rfkill	upstream-rfkill
 sed	base
 systemd	mica-system
@@ -145,5 +142,4 @@ tar	base
 tzdata	base
 udev	mica-system
 util-linux	base
-wpasupplicant	upstream-wpasupplicant
 zlib1g	base,mica-system

@@ -1,0 +1,23 @@
+Package: mica-wifi
+Version: 2.12-mica1
+Source-Date-Epoch: 1790380800
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: net
+Priority: optional
+Depends: libc6, libnl-3-200, libnl-genl-3-200, libssl3t64, iw, rfkill
+Description: Mica OS Wi-Fi station: a minimal wpa_supplicant
+ /usr/sbin/wpa_supplicant and /usr/sbin/wpa_cli compiled from the upstream
+ hostap release with the nl80211 driver only, and WPA2 and WPA3 personal
+ through the root's OpenSSL. No D-Bus interface, smartcard, WPS, P2P, mesh or
+ enterprise EAP.
+ .
+ wpa_supplicant@.service is installed and not enabled: micad starts one
+ instance per interface and renders its
+ /etc/wpa_supplicant/wpa_supplicant-<interface>.conf. /etc is inside the
+ read-only root, so etc-wpa_supplicant.mount binds /etc/wpa_supplicant from
+ the STATE partition, where the PSKs also survive an A/B update.
+ mica-regdb-reload.service loads the wireless regulatory database before a
+ radio is configured.
+ .
+ Access-point support is mica-wifi-ap.

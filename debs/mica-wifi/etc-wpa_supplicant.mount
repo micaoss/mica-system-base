@@ -1,0 +1,22 @@
+[Unit]
+Description=wpa_supplicant configuration from DATA state
+# The station reconciler renders /etc/wpa_supplicant/wpa_supplicant-<iface>.conf
+# at runtime, and that path is not a preference: it is baked into the ExecStart
+# of the wpa_supplicant@.service template this package ships. On Mica OS /etc is inside the
+# read-only dm-verity squashfs, so without this bind the reconciler's write
+# fails on device and nowhere else — every unit test green, no uplink.
+# The file carries PSKs in the clear, so it must also survive an A/B update
+# rather than being re-entered by the operator after every upgrade.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+Before=wpa_supplicant@.service
+
+[Mount]
+What=/mnt/data/state/wpa_supplicant
+Where=/etc/wpa_supplicant
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target
