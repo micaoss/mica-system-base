@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-26 09:45 [release]
+
+Release 20260926-0933, built from cb2d61b on mica-build-env 20260916-0735: the release of
+mica-wifi and mica-wifi-ap 2.12-mica1. Verified from the published artefacts: SHA256SUMS
+checks the lock; the lock adds a package row for each of mica-wifi and mica-wifi-ap on amd64
+and arm64, and the eight package rows of mica-busybox, mica-ca-trust, mica-system and
+mica-systemd-boot are byte-identical to 20260920-0832, reused by digest; the pool manifests
+moved because they carry the two new layers; no upstream row names wpasupplicant, hostapd,
+libnl-route-3-200 or libpcsclite1.
+
 ## 2026-09-26 11:00 [progress]
 
 mica-wifi and mica-wifi-ap 2.12-mica1: wpa_supplicant, wpa_cli, hostapd and hostapd_cli
