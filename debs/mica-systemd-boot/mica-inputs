@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-systemd-boot
+source build.mica-systemd-boot.*
+source source.systemd

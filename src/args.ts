@@ -82,7 +82,7 @@ export function parse(argv: string[], commands: string[]): Options | undefined {
   if (!['pin-inputs', 'unowned'].includes(command) && values.has('--output'))
     fail('--output is only valid with pin-inputs and unowned')
 
-  const cacheDir = resolvePath(values.get('--cache-dir') ?? join(REPO, '_out/debian-base'))
+  const cacheDir = resolvePath(values.get('--cache-dir') ?? join(REPO, 'repos'))
   if (cacheDir === '/')
     fail('cache directory cannot be the host root')
   const options: Options = { command, cacheDir, check, selection: { kind: 'base' } }
@@ -138,14 +138,14 @@ local packages whose locked upstream dependencies are added to that floor.
 --all selects every locked runtime package. --package selects one upstream
 package for cache, verify or select; it excludes the base and the inputs.
 select prints the selected rows of locks/upstream.lock.
-cache downloads only missing archives (runtime and inputs) and verifies their
-SHA256 and metadata. It is the only command besides pin-inputs that touches
-the network. Set MICA_BASE_MIRROR to an https:// base to fetch through a
-mirror -- \`<base>\` or \`pool:<base>\` for a mirror serving /pool,
-\`snapshot:<base>\` for a mirror of snapshot.debian.org. The mirror is tried
-first and each record's own URL is the fallback; a 404 from the mirror is
-normal, the committed SHA256 is checked either way, and cache reports how many
-archives came from each.
+cache downloads only missing archives (runtime and inputs) with mica-build-tools'
+\`repos get\` and verifies their SHA256 and metadata. It is the only command
+besides pin-inputs that touches the network. MICA_MIRROR names a mirror to
+fetch through -- \`<base>\` or \`pool:<base>\` for a mirror serving /pool,
+\`snapshot:<base>\` for a mirror of snapshot.debian.org; the mirror is tried
+first and each record's own URL is the fallback, the committed SHA256 is checked
+either way, and cache reports how many archives came from each.
+MICA_FETCH_DEADLINE bounds one download (seconds, default 600).
 bootstrap builds the selected root offline with the environment's mmdebstrap. It needs
 CAP_SYS_ADMIN and an empty destination; a foreign architecture runs in a
 BuildKit stage. No command installs APT into the root.
@@ -156,6 +156,6 @@ debs/<package>/build-sources.json (the closure of the packages it declares with
 build=), and the closure of upstream.pkgs with its packages.tsv lines;
 --check only compares.
 
-Default cache: _out/debian-base/debs/<sha256>.deb. Version, architecture, URL
+Default cache: repos/sha256/<sha256>, the source cache of mica-build-tools. Version, architecture, URL
 and SHA256 are pinned in locks/upstream.lock; packages.tsv names the consumers
 that select each Debian package.`

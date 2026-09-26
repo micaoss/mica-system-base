@@ -1,45 +1,53 @@
-// Publish a release of this repository, from CI, into its own public package:
+// The Base's own half of a release, from CI. mica-build-tools publishes the
+// pools (`release pool`), compares every package with the latest release (`pool
+// guard`) and attaches the lock (`release attach`); this publishes what only the
+// Base has:
 //
-//   bun src/publish.ts pool     <registry>/<repository>:pool.<arch>.<YYYYMMDD-HHMM>
-//   bun src/publish.ts rootfs   <registry>/<repository>:rootfs.<YYYYMMDD-HHMM>
-//   bun src/publish.ts lock     mica-system-base.lock and SHA256SUMS on the GitHub Release
+//   bun src/publish.ts layer --arch <arch>   one architecture's root layer, on its runner
+//   bun src/publish.ts gate                  both pools as one build, then pool gate and pool guard
+//   bun src/publish.ts rootfs <tag>          ghcr.io/micaoss/<repository>:rootfs.<tag>
+//   bun src/publish.ts lock <tag>            <repository>.lock and its data assets, attached
+//   bun src/publish.ts lock --dry-run --tag <tag>
 //
-// pool: one artifact per architecture, one layer per archive of _out/debs/<arch>/pool.
 // rootfs: one OCI image index over a linux/amd64 and a linux/arm64 image, each a
-// single layer made from _out/rootfs/<arch>.
-//
-// Only a release publishes: a clean checkout whose HEAD carries its release tag
-// YYYYMMDD-HHMM, and only what that commit built. Nothing is re-pointed: an
-// existing pool tag must hold exactly these bytes, and an existing rootfs tag,
+// single layer made from _out/rootfs/<arch>. Only a release publishes: `release
+// check` passes for the tag first. Nothing is re-pointed: an existing rootfs tag,
 // which carries its first build's time, must be this release and whole, and is
 // then finished rather than rebuilt. Every publication is read back with no
 // credential, so a package that is not public fails here and a later attempt
-// completes it. MICA_REGISTRY (ghcr.io/micaoss), MICA_REGISTRY_USER and GH_TOKEN
-// configure the registry; MICA_REGISTRY_PLAIN_HTTP=1 is for a local test registry.
+// completes it. The registry credential is mica-build-tools' (MICA_REGISTRY_TOKEN,
+// GITHUB_TOKEN or GH_TOKEN, and MICA_REGISTRY_USER); MICA_OCI_REGISTRY replaces
+// https://ghcr.io for a test registry.
+import type { Lock } from '@mica/build-tools'
 import type { Arch } from './lock.ts'
 import type { Release } from './release.ts'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { declared, inputsHash } from './debs/docker.ts'
+import { bearer, checkLock, digestOf, OCI_INDEX, OCI_MANIFEST, ociBlob, ociManifest, poolArchives, poolGate, poolGuard, poolManifest, Pusher, releaseAttach, releaseCheck } from '@mica/build-tools'
+import { declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { capture, output } from './exec.ts'
 import { ARCHES, selectRuntime } from './lock.ts'
 import { environment, REPO, sources } from './pins.ts'
-import { parseLock } from './release-lock.ts'
-import { OCI_INDEX, OCI_MANIFEST, Registry, sha256 } from './registry.ts'
 import { issue, ISSUE, releaseOf } from './release.ts'
 
-const EMPTY = new TextEncoder().encode('{}')
+const HOST = 'ghcr.io'
 const OCI_CONFIG = 'application/vnd.oci.image.config.v1+json'
 const OCI_LAYER = 'application/vnd.oci.image.layer.v1.tar+gzip'
 const BUILT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 const TITLE = 'org.opencontainers.image.title'
 
-// The release this checkout publishes.
-export function releaseToPublish(repo: string): Release {
+export const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+
+// The release this checkout publishes: `release check` passes for `tag`, and the
+// checkout is that release.
+export async function releaseToPublish(repo: string, tag: string): Promise<Release> {
   const release = releaseOf(repo)
-  if (!release.released)
-    fail(`${repo} at ${release.commit.slice(0, 12)} is not a release: publishing needs a clean checkout whose HEAD carries its release tag YYYYMMDD-HHMM`)
+  await releaseCheck(repo, release.repository, tag)
+  if (!release.released || release.label !== tag)
+    fail(`${repo} at ${release.commit.slice(0, 12)} is not release ${tag}`)
   return release
 }
 
@@ -57,42 +65,33 @@ function annotations(release: Release, created: string, extra: Record<string, st
 
 const json = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
 
-// Push `bytes` as <repo>:<tag> unless the tag already holds exactly them.
-async function putTag(registry: Registry, repo: string, tag: string, mediaType: string, bytes: Uint8Array): Promise<'pushed' | 'present'> {
-  const existing = await registry.manifest(repo, tag)
-  if (existing.status === 200) {
-    if (sha256(existing.body) !== sha256(bytes))
-      fail(`${registry.host}/${repo}:${tag} exists with other content (sha256:${sha256(existing.body)}, this build sha256:${sha256(bytes)}); a tag is never re-pointed`)
-    return 'present'
+// A manifest by tag, with the publishing credential or with none; undefined when
+// the tag does not exist. mica-build-tools reads by digest only, and whether a
+// tag exists, and what it holds, is what a later attempt must know.
+async function tagged(name: string, tag: string, credential: boolean): Promise<Uint8Array | undefined> {
+  const secret = process.env.MICA_REGISTRY_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''
+  if (credential && !secret)
+    fail('publishing needs a token with write:packages in MICA_REGISTRY_TOKEN, GITHUB_TOKEN or GH_TOKEN')
+  const user = process.env.MICA_REGISTRY_USER || process.env.GITHUB_ACTOR || 'mica'
+  const token = await bearer(HOST, name, credential ? 'pull,push' : 'pull', credential ? { user, token: secret } : undefined)
+  const response = await fetch(`${process.env.MICA_OCI_REGISTRY ?? `https://${HOST}`}/v2/${name}/manifests/${tag}`, {
+    headers: { Accept: `${OCI_INDEX}, ${OCI_MANIFEST}`, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (response.status === 404)
+    return undefined
+  if (response.status !== 200) {
+    if (!credential && (response.status === 401 || response.status === 403))
+      fail(`${HOST}/${name}:${tag} cannot be pulled anonymously; make the package public (https://github.com/orgs/micaoss/packages/container/package/${name.split('/').at(-1)}, Package settings -> Change visibility)`)
+    fail(`reading ${HOST}/${name}:${tag} answered HTTP ${response.status}`)
   }
-  if (existing.status !== 404)
-    fail(`reading ${registry.host}/${repo}:${tag} answered HTTP ${existing.status}`)
-  await registry.putManifest(repo, tag, mediaType, bytes)
-  return 'pushed'
-}
-
-// The tag and the blobs read with no credential; returns the tag's manifest.
-async function readBack(registry: Registry, repo: string, tag: string, digests: string[]): Promise<Uint8Array> {
-  const settings = `https://github.com/orgs/${registry.owner}/packages/container/package/${repo.split('/').at(-1)}`
-  const manifest = await registry.anonymous(repo, tag)
-  if (manifest === undefined)
-    fail(`${registry.host}/${repo}:${tag} cannot be pulled anonymously; make the package public (${settings}, Package settings -> Change visibility)`)
-  for (const digest of digests)
-    await anonymousBlob(registry, repo, digest)
-  return manifest
-}
-
-async function anonymousBlob(registry: Registry, repo: string, digest: string, size?: number): Promise<Uint8Array<ArrayBuffer>> {
-  const blob = await registry.anonymousBlob(repo, digest)
-  if (blob === undefined || (size !== undefined && blob.length !== size))
-    fail(`${registry.host}/${repo} does not serve ${digest} anonymously with those bytes`)
-  return blob
+  return new Uint8Array(await response.arrayBuffer())
 }
 
 // The pools of _out/debs, built per architecture, as one build: each holds
-// exactly the declared packages at their declared versions, every archive names
-// the repository, and an `all` archive is the same bytes in both pools. Returns
-// the archives of each pool.
+// exactly the declared packages at their declared versions, and every archive
+// names the repository -- the producer map only this repository has; pool gate
+// checks what the archives answer by themselves. Returns the archives of each pool.
 export function assertPools(repo: string, out: string, release: Release): Map<Arch, string[]> {
   const packages = declared(repo)
   const pools = new Map<Arch, string[]>()
@@ -106,11 +105,6 @@ export function assertPools(repo: string, out: string, release: Release): Map<Ar
       fail(`${pool} holds ${files.join(', ') || 'nothing'}; the ${arch} pool is ${expected.join(', ')}. Build it with: bun src/container.ts debs --arch ${arch}`)
     pools.set(arch, files)
   }
-  for (const file of pools.get('amd64')!.filter(file => file.endsWith('_all.deb'))) {
-    const [amd64, arm64] = ARCHES.map(arch => sha256(new Uint8Array(readFileSync(join(out, 'debs', arch, 'pool', file)))))
-    if (amd64 !== arm64)
-      fail(`${file} differs between the amd64 and arm64 pools (sha256 ${amd64} and ${arm64}); an all package must build to the same bytes on both`)
-  }
   for (const [arch, files] of pools) {
     for (const file of files) {
       const fields = output(['dpkg-deb', '--field', join(out, 'debs', arch, 'pool', file), 'Mica-Source-Repo'], `reading ${file}`)
@@ -121,119 +115,19 @@ export function assertPools(repo: string, out: string, release: Release): Map<Ar
   return pools
 }
 
-interface Layer { mediaType: string, digest: string, size: number, annotations: Record<string, string> }
+// A pool manifest's layers, as the lock reads them.
+interface Layer { digest: string, annotations?: Record<string, string> }
 
-const ARCHIVE = /^([a-z0-9][a-z0-9+.-]*)_([^_]+)_(all|amd64|arm64)\.deb$/
-
-// The pool manifest of one architecture: an empty config and one layer per
-// archive, titled with its file name and annotated with its package's inputs.
-// Nothing in it names a release, so a pool whose packages did not change is the
-// same manifest in the next release.
-export function poolManifest(repo: string, release: Release, arch: Arch, pool: string, files: string[]): { manifest: Uint8Array, blobs: Uint8Array[], layers: Layer[] } {
-  const packages = declared(repo)
-  const blobs = files.map(file => new Uint8Array(readFileSync(join(pool, file))))
-  const layers = files.map((file, index) => {
-    const [, name = '', , target = ''] = ARCHIVE.exec(file) ?? fail(`${file} is not <package>_<version>_<arch>.deb`)
-    const entry = packages.find(candidate => candidate.name === name) ?? fail(`${file} is no package of debs/`)
-    return { mediaType: 'application/vnd.mica.deb', digest: `sha256:${sha256(blobs[index]!)}`, size: blobs[index]!.length, annotations: { [TITLE]: file, 'mica.inputs': inputsHash(repo, entry, target as Arch | 'all') } }
-  })
-  const manifest = json({
-    schemaVersion: 2,
-    mediaType: OCI_MANIFEST,
-    artifactType: 'application/vnd.mica.pool',
-    config: { mediaType: 'application/vnd.oci.empty.v1+json', digest: `sha256:${sha256(EMPTY)}`, size: EMPTY.length },
-    layers,
-    annotations: { 'mica.source-repo': release.repository, 'mica.arch': arch },
-  })
-  return { manifest, blobs, layers }
-}
-
-// A package of a published pool.
-export interface PublishedPackage { name: string, version: string, digest: string, inputs: string }
-
-export interface PriorRelease { label: string, pools: Map<Arch, PublishedPackage[]>, predates?: boolean }
-
-// The latest release before this one, as consumers read it: its lock checked
-// against its SHA256SUMS, and every pool it names read with no credential at its
-// digest. Undefined when there is no earlier release; an earlier release whose
-// lock or pools cannot be read is refused, never skipped. A release whose pools
-// record no mica.inputs at all predates version-locked packages: its release-
-// stamped versions are not compared, and every package is built.
-export async function priorRelease(release: Release, registry: Registry, assets: ReleaseAssets): Promise<PriorRelease | undefined> {
-  const label = (await assets.releases()).filter(tag => /^\d{8}-\d{4}$/.test(tag) && tag !== release.label && (!release.released || tag < release.label)).sort().at(-1)
-  if (!label)
-    return undefined
-  const file = `${release.repository}.lock`
-  const [lock, sums] = await Promise.all([assets.download(label, file), assets.download(label, 'SHA256SUMS')])
-  if (!lock || !sums || new TextDecoder().decode(sums) !== `${sha256(lock)}  ${file}\n`)
-    fail(`release ${label} does not serve a ${file} its SHA256SUMS lists; the previous packages cannot be compared`)
-  const pools = new Map<Arch, PublishedPackage[]>()
-  for (const row of parseLock(new TextDecoder().decode(lock), `${file} of ${label}`).rows.filter(candidate => candidate[0] === 'pool')) {
-    const digest = row[2]!.slice(row[2]!.indexOf('@') + 1)
-    const name = `${registry.owner}/${release.repository}`
-    const bytes = await registry.anonymous(name, digest)
-    if (bytes === undefined || `sha256:${sha256(bytes)}` !== digest)
-      fail(`the ${row[1]} pool of release ${label} (${digest}) cannot be read anonymously with its digest`)
-    const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Manifest
-    pools.set(row[1] as Arch, (manifest.layers ?? []).map((layer) => {
-      const title = ARCHIVE.exec(layer.annotations?.[TITLE] ?? '') ?? fail(`the ${row[1]} pool of release ${label} has a layer titled ${layer.annotations?.[TITLE]}`)
-      return { name: title[1]!, version: title[2]!, digest: layer.digest ?? '', inputs: layer.annotations?.['mica.inputs'] ?? '' }
-    }))
+// A lock held in memory, checked by mica-build-tools under its own file name.
+export function parseLock(text: string, file: string): Lock {
+  const work = mkdtempSync(join(tmpdir(), 'mica-lock-'))
+  try {
+    writeFileSync(join(work, file), text)
+    return checkLock(join(work, file))
   }
-  const recorded = [...pools.values()].flat().map(entry => Boolean(entry.inputs))
-  if (!recorded.includes(true))
-    return { label, pools: new Map(), predates: true }
-  if (recorded.includes(false))
-    fail(`release ${label} has pool layers without mica.inputs beside layers with it`)
-  return { label, pools }
-}
-
-// Packages are locked by their version: against the prior release, a package of
-// the same name, architecture and version must have the same inputs and rebuild
-// to the published bytes, which the release then reuses; a higher version is
-// built; a lower one is refused. Returns one line per archive.
-export function assertVersions(repo: string, out: string, release: Release, prior: PriorRelease | undefined): string[] {
-  const lines: string[] = []
-  for (const [arch, files] of assertPools(repo, out, release)) {
-    const { layers } = poolManifest(repo, release, arch, join(out, 'debs', arch, 'pool'), files)
-    for (const layer of layers) {
-      const [, name = '', version = ''] = ARCHIVE.exec(layer.annotations[TITLE]!)!
-      const published = prior?.pools.get(arch)?.find(candidate => candidate.name === name)
-      if (!published) {
-        lines.push(`${arch} ${name} ${version}: ${prior?.predates ? `built; release ${prior.label} predates version-locked packages` : 'new'}`)
-        continue
-      }
-      if (published.version !== version) {
-        if (capture(['dpkg', '--compare-versions', version, 'gt', published.version]).code !== 0)
-          fail(`${name} ${version} (${arch}) is not higher than ${published.version} of release ${prior!.label}`)
-        lines.push(`${arch} ${name} ${version}: built, above ${published.version} of ${prior!.label}`)
-        continue
-      }
-      if (published.inputs !== layer.annotations['mica.inputs'])
-        fail(`inputs of ${name} changed without a version bump: ${version} (${arch}) of release ${prior!.label} records inputs ${published.inputs || '(none)'}, this tree ${layer.annotations['mica.inputs']}`)
-      if (published.digest !== layer.digest)
-        fail(`${name} ${version} (${arch}) builds to ${layer.digest}, not the ${published.digest} release ${prior!.label} published; bump its version`)
-      lines.push(`${arch} ${name} ${version}: reused from ${prior!.label}, byte-identical`)
-    }
+  finally {
+    rmSync(work, { recursive: true, force: true })
   }
-  return lines
-}
-
-export async function publishPool(repo: string, out: string, registry: Registry, assets: ReleaseAssets): Promise<string[]> {
-  const release = releaseToPublish(repo)
-  const name = `${registry.owner}/${release.repository}`
-  const published = assertVersions(repo, out, release, await priorRelease(release, registry, assets))
-  for (const [arch, files] of assertPools(repo, out, release)) {
-    const { manifest, blobs, layers } = poolManifest(repo, release, arch, join(out, 'debs', arch, 'pool'), files)
-    for (const blob of blobs)
-      await registry.putBlob(name, blob)
-    await registry.putBlob(name, EMPTY)
-    const tag = `pool.${arch}.${release.label}`
-    const state = await putTag(registry, name, tag, OCI_MANIFEST, manifest)
-    await readBack(registry, name, tag, layers.map(layer => layer.digest))
-    published.push(`${registry.host}/${name}:${tag} (${state}, sha256:${sha256(manifest)}, ${layers.length} archives)`)
-  }
-  return published
 }
 
 export interface RootfsLayer { gzip: Uint8Array, diffId: string }
@@ -345,28 +239,27 @@ export function rootfsImages(release: Release, { layers, built }: RootfsBuild): 
   return { index: json({ schemaVersion: 2, mediaType: OCI_INDEX, manifests, annotations: annotations(release, built) }), platforms }
 }
 
-// Publishes rootfs.<label> from `build`, or, when an earlier attempt of this
+// Publishes rootfs.<tag> from `build`, or, when an earlier attempt of this
 // release already wrote that tag, leaves it and its first build time alone and
 // finishes its read-back; `build` is then not called.
-export async function publishRootfs(repo: string, build: () => RootfsBuild, registry: Registry): Promise<string> {
-  const release = releaseToPublish(repo)
-  const name = `${registry.owner}/${release.repository}`
-  const tag = `rootfs.${release.label}`
-  const existing = await registry.manifest(name, tag)
-  if (existing.status !== 200 && existing.status !== 404)
-    fail(`reading ${registry.host}/${name}:${tag} answered HTTP ${existing.status}`)
-  if (existing.status === 404) {
+export async function publishRootfs(repo: string, tag: string, build: () => RootfsBuild): Promise<string> {
+  const release = await releaseToPublish(repo, tag)
+  const name = `micaoss/${release.repository}`
+  const rootfs = `rootfs.${release.label}`
+  const existing = await tagged(name, rootfs, true)
+  if (!existing) {
     const images = rootfsImages(release, build())
+    const pusher = new Pusher(HOST, name)
     for (const arch of ARCHES) {
       const image = images.platforms.get(arch)!
-      await registry.putBlob(name, image.config)
-      await registry.putBlob(name, image.layer)
-      await registry.putManifest(name, `sha256:${sha256(image.manifest)}`, OCI_MANIFEST, image.manifest)
+      await pusher.blob(image.config)
+      await pusher.blob(image.layer)
+      await pusher.manifest(digestOf(image.manifest), image.manifest)
     }
-    await putTag(registry, name, tag, OCI_INDEX, images.index)
+    await pusher.manifest(rootfs, images.index, OCI_INDEX)
   }
-  const { built, digest } = await readBackRootfs(registry, name, tag, release)
-  return `${registry.host}/${name}:${tag} (${existing.status === 200 ? 'present' : 'pushed'}, built ${built}, sha256:${digest}, linux/amd64 and linux/arm64)`
+  const { built, digest } = await readBackRootfs(repo, name, rootfs, release)
+  return `${HOST}/${name}:${rootfs} (${existing ? 'present' : 'pushed'}, built ${built}, sha256:${digest}, linux/amd64 and linux/arm64)`
 }
 
 interface Descriptor { mediaType?: string, digest?: string, size?: number, platform?: { os?: string, architecture?: string }, annotations?: Record<string, string> }
@@ -377,8 +270,8 @@ interface Manifest { mediaType?: string, manifests?: Descriptor[], config?: Desc
 // layer matching their digests and sizes, the layer matching its diff_id, and its
 // /etc/issue naming this release, commit and the index's build time. Returns
 // that build time and the index digest.
-async function readBackRootfs(registry: Registry, name: string, tag: string, release: Release): Promise<{ built: string, digest: string }> {
-  const refuse: (why: string) => never = why => fail(`${registry.host}/${name}:${tag} is not ${release.label} at ${release.commit}: ${why}; a tag is never re-pointed`)
+async function readBackRootfs(repo: string, name: string, tag: string, release: Release): Promise<{ built: string, digest: string }> {
+  const refuse: (why: string) => never = why => fail(`${HOST}/${name}:${tag} is not ${release.label} at ${release.commit}: ${why}; a tag is never re-pointed`)
   const parse = <T>(bytes: Uint8Array): T | undefined => {
     try {
       return JSON.parse(new TextDecoder().decode(bytes)) as T
@@ -389,7 +282,14 @@ async function readBackRootfs(registry: Registry, name: string, tag: string, rel
   }
   const same = (actual: Record<string, string> | undefined, expected: Record<string, string>): boolean =>
     JSON.stringify(Object.entries(actual ?? {}).sort()) === JSON.stringify(Object.entries(expected).sort())
-  const indexBytes = await readBack(registry, name, tag, [])
+  const locks = join(repo, 'locks')
+  const read = async <T>(what: string, load: () => Promise<Uint8Array>, size?: number): Promise<{ bytes: Uint8Array, value: T | undefined }> => {
+    const bytes = await load().catch(() => refuse(`${what} is not served anonymously with its digest`))
+    if (size !== undefined && bytes.length !== size)
+      refuse(`${what} is not served anonymously with its size`)
+    return { bytes, value: parse<T>(bytes) }
+  }
+  const indexBytes = await tagged(name, tag, false) ?? fail(`${HOST}/${name}:${tag} does not exist`)
   const index = parse<Manifest>(indexBytes)
   const built = index?.annotations?.['org.opencontainers.image.created'] ?? ''
   if (index?.mediaType !== OCI_INDEX || !BUILT.test(built) || !same(index.annotations, annotations(release, built)))
@@ -398,17 +298,15 @@ async function readBackRootfs(registry: Registry, name: string, tag: string, rel
     refuse('its index is not one image each for linux/amd64 and linux/arm64')
   for (const [position, arch] of ARCHES.entries()) {
     const entry = index.manifests[position]!
-    const manifestBytes = await registry.anonymous(name, entry.digest ?? '')
-    if (manifestBytes === undefined || `sha256:${sha256(manifestBytes)}` !== entry.digest || manifestBytes.length !== entry.size)
-      refuse(`its ${arch} manifest ${entry.digest} is not served anonymously with those bytes`)
-    const manifest = parse<Manifest>(manifestBytes)
+    const { value: manifest } = await read<Manifest>(`its ${arch} manifest ${entry.digest}`, () => ociManifest(`${HOST}/${name}@${entry.digest}`, locks, 'ci'), entry.size)
     const layer = manifest?.layers?.[0]
     if (manifest?.mediaType !== OCI_MANIFEST || manifest.config?.mediaType !== OCI_CONFIG || manifest.layers?.length !== 1 || layer?.mediaType !== OCI_LAYER || !same(manifest.annotations, annotations(release, built, { 'mica.arch': arch })))
       refuse(`its ${arch} manifest does not name this release`)
-    const config = parse<{ architecture?: string, os?: string, created?: string, rootfs?: { diff_ids?: string[] } }>(await anonymousBlob(registry, name, manifest.config.digest ?? '', manifest.config.size))
+    const blob = (descriptor: Descriptor): Promise<Uint8Array> => ociBlob(`${HOST}/${name}`, (descriptor.digest ?? '').slice('sha256:'.length), locks, 'ci')
+    const { value: config } = await read<{ architecture?: string, os?: string, created?: string, rootfs?: { diff_ids?: string[] } }>(`its ${arch} config`, () => blob(manifest.config!), manifest.config.size)
     if (config?.architecture !== arch || config.os !== 'linux' || config.created !== built || config.rootfs?.diff_ids?.length !== 1)
       refuse(`its ${arch} config does not name this build`)
-    const tar = Bun.gunzipSync(await anonymousBlob(registry, name, layer.digest ?? '', layer.size))
+    const tar = Bun.gunzipSync(new Uint8Array((await read(`its ${arch} layer`, () => blob(layer), layer.size)).bytes))
     if (`sha256:${sha256(tar)}` !== config.rootfs.diff_ids[0])
       refuse(`its ${arch} layer does not match its diff_id`)
     const issued = Bun.spawnSync(['tar', '-xOf', '-', './etc/issue'], { stdin: tar, stdout: 'pipe', stderr: 'pipe' })
@@ -416,15 +314,6 @@ async function readBackRootfs(registry: Registry, name: string, tag: string, rel
       refuse(`the /etc/issue of its ${arch} root does not name this release, commit and build time ${built}`)
   }
   return { built, digest: sha256(indexBytes) }
-}
-
-// A GitHub Release's assets: listed and uploaded with the workflow's credential,
-// read with none.
-export interface ReleaseAssets {
-  releases: () => Promise<string[]>
-  list: (tag: string) => Promise<string[]>
-  download: (tag: string, name: string) => Promise<Uint8Array | undefined>
-  upload: (tag: string, name: string, bytes: Uint8Array) => Promise<void>
 }
 
 // What the release lock names: the rootfs index and its platform manifests, and
@@ -469,9 +358,9 @@ export function renderLock(repo: string, release: Release, published: Published,
     ...ARCHES.map(arch => ['pool', arch, `${at}:pool.${arch}.${release.label}@sha256:${published.pools[arch].digest}`]),
   ]
   const packages = ARCHES.flatMap(arch => published.pools[arch].layers.map((layer) => {
-    const title = /^([a-z0-9][a-z0-9+.-]*)_([^_]+)_(?:all|amd64|arm64)\.deb$/.exec(layer.annotations[TITLE] ?? '')
+    const title = /^([a-z0-9][a-z0-9+.-]*)_([^_]+)_(?:all|amd64|arm64)\.deb$/.exec(layer.annotations?.[TITLE] ?? '')
     if (!title)
-      fail(`the ${arch} pool has a layer titled ${layer.annotations[TITLE]}, not <package>_<version>_<arch>.deb`)
+      fail(`the ${arch} pool has a layer titled ${layer.annotations?.[TITLE]}, not <package>_<version>_<arch>.deb`)
     return ['package', title[1]!, arch, title[2]!, layer.digest.slice('sha256:'.length)]
   }))
   const upstream = ARCHES.flatMap(arch => selectRuntime(repo, arch, { kind: 'all' }).flatMap((row) => {
@@ -489,26 +378,20 @@ export function renderLock(repo: string, release: Release, published: Published,
   return text
 }
 
-// <repository>.lock and SHA256SUMS on the release, the lock first: the rootfs
-// index and the pools of this release as the registry serves them with no
-// credential. Whether an asset exists is asked of the release, never of its
-// download URL, which GitHub may answer from a cached 404 for a while after the
-// upload. An asset already on the release must hold exactly these bytes and is
-// never replaced; every asset is read back with no credential, and one GitHub
-// does not serve yet is waited for, six times ten seconds at most.
-export async function publishLock(repo: string, registry: Registry, assets: ReleaseAssets, wait = (ms: number): Promise<void> => Bun.sleep(ms)): Promise<string[]> {
-  const release = releaseToPublish(repo)
-  const name = `${registry.owner}/${release.repository}`
-  const read = async (tag: string): Promise<{ bytes: Uint8Array, manifest: Manifest }> => {
-    const bytes = await registry.anonymous(name, tag)
-    if (bytes === undefined)
-      fail(`${registry.host}/${name}:${tag} cannot be read anonymously; publish it first`)
+// The lock of release `tag` from its rootfs and pools as the registry serves them
+// with no credential, written with its data assets under <out>/release/; returns
+// the lock's path and the data files.
+export async function writeLock(repo: string, out: string, tag: string): Promise<{ lock: string, data: string[] }> {
+  const release = await releaseToPublish(repo, tag)
+  const name = `micaoss/${release.repository}`
+  const read = async (reference: string): Promise<{ bytes: Uint8Array, manifest: Manifest }> => {
+    const bytes = await tagged(name, reference, false) ?? fail(`${HOST}/${name}:${reference} does not exist; publish it first`)
     const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Manifest
     // A rootfs names its release; a pool names none and is identified by its tag.
-    if (tag.startsWith('rootfs.') && manifest.annotations?.['org.opencontainers.image.version'] !== release.label)
-      fail(`${registry.host}/${name}:${tag} names version ${manifest.annotations?.['org.opencontainers.image.version']}, not ${release.label}`)
-    if (tag.startsWith('pool.') && manifest.annotations?.['mica.source-repo'] !== release.repository)
-      fail(`${registry.host}/${name}:${tag} is not a pool of ${release.repository}`)
+    if (reference.startsWith('rootfs.') && manifest.annotations?.['org.opencontainers.image.version'] !== release.label)
+      fail(`${HOST}/${name}:${reference} names version ${manifest.annotations?.['org.opencontainers.image.version']}, not ${release.label}`)
+    if (reference.startsWith('pool.') && manifest.annotations?.['mica.source-repo'] !== release.repository)
+      fail(`${HOST}/${name}:${reference} is not a pool of ${release.repository}`)
     return { bytes, manifest }
   }
   const index = await read(`rootfs.${release.label}`)
@@ -518,145 +401,78 @@ export async function publishLock(repo: string, registry: Registry, assets: Rele
     return { digest: sha256(bytes), layers: (manifest.layers ?? []) as Layer[] }
   }
   const data = dataAssets(repo, release)
-  const lock = new TextEncoder().encode(renderLock(repo, release, {
+  const text = renderLock(repo, release, {
     index: sha256(index.bytes),
     platforms: { amd64: platform('amd64'), arm64: platform('arm64') },
     pools: { amd64: await pool('amd64'), arm64: await pool('arm64') },
-  }, data))
-  const file = `${release.repository}.lock`
-  const sums = new TextEncoder().encode(`${sha256(lock)}  ${file}\n`)
-  const same = (a: Uint8Array | undefined, b: Uint8Array): boolean => a !== undefined && a.length === b.length && sha256(a) === sha256(b)
-  const served = async (asset: string): Promise<Uint8Array | undefined> => {
-    let bytes = await assets.download(release.label, asset)
-    for (let attempt = 0; bytes === undefined && attempt < 6; attempt++) {
-      await wait(10_000)
-      bytes = await assets.download(release.label, asset)
-    }
-    return bytes
-  }
-  const present = new Set(await assets.list(release.label))
-  const expected = [file, 'SHA256SUMS', ...data.map(asset => asset.file)]
-  const extra = [...present].filter(asset => !expected.includes(asset))
-  if (extra.length)
-    fail(`release ${release.label} carries ${extra.join(', ')}; a release carries ${expected.join(', ')} and nothing else`)
-  const results: string[] = []
-  // THE ORDER IS LOAD-BEARING: the data files, then the lock that names them,
-  // then SHA256SUMS. The lock is published after its referents, so at every
-  // moment -- including the middle of an interrupted upload -- a reader that can
-  // see the lock can already fetch everything it points at. A loop that uploads
-  // in any other order is correct only when nobody looks during it.
-  for (const [asset, bytes] of [...data.map(asset => [asset.file, asset.bytes] as const), [file, lock], ['SHA256SUMS', sums]] as const) {
-    if (present.has(asset)) {
-      const existing = await served(asset)
-      if (!same(existing, bytes))
-        fail(`${asset} of release ${release.label} exists with other content (sha256 ${existing ? sha256(existing) : 'not served'}, this publication ${sha256(bytes)}); a release asset is never replaced`)
-      results.push(`${asset} (present)`)
-      continue
-    }
-    await assets.upload(release.label, asset, bytes)
-    if (!same(await served(asset), bytes))
-      fail(`${asset} of release ${release.label} does not read back with the uploaded bytes`)
-    results.push(`${asset} (uploaded)`)
-  }
-  return results
+  }, data)
+  const into = join(out, 'release')
+  rmSync(into, { recursive: true, force: true })
+  mkdirSync(into, { recursive: true })
+  for (const asset of data)
+    writeFileSync(join(into, asset.file), asset.bytes)
+  writeFileSync(join(into, `${release.repository}.lock`), text)
+  return { lock: join(into, `${release.repository}.lock`), data: data.map(asset => join(into, asset.file)) }
 }
 
-// The lock a release at `tag` would carry, from this checkout's pools and root
-// layers, computed without a registry.
-export function dryRunLock(repo: string, out: string, tag: string): string {
+// The lock a release at `tag` would carry, from this checkout's pools
+// (_out/debs, as `release pool` would publish them) and root layers, computed
+// without a registry.
+export function dryRunLock(repo: string, tag: string): string {
   if (!/^\d{8}-\d{4}$/.test(tag))
     fail(`--tag ${tag} is not YYYYMMDD-HHMM`)
   const built = releaseOf(repo)
-  const pools = assertPools(repo, out, built)
+  assertPools(repo, join(repo, '_out'), built)
   const release = { ...built, label: tag }
-  const images = rootfsImages(release, readLayers(join(out, 'layers')))
-  const data = dataAssets(repo, release)
+  const images = rootfsImages(release, readLayers(join(repo, '_out', 'layers')))
   const pool = (arch: Arch): { digest: string, layers: Layer[] } => {
-    const { manifest, layers } = poolManifest(repo, release, arch, join(out, 'debs', arch, 'pool'), pools.get(arch)!)
-    return { digest: sha256(manifest), layers }
+    const archives = poolArchives(repo, release.repository, arch)
+    const manifest = poolManifest(release.repository, arch, archives.map(archive => ({ title: archive.file, digest: `sha256:${archive.sha256}`, size: archive.bytes.length, inputs: archive.inputs })))
+    return { digest: sha256(manifest), layers: (JSON.parse(new TextDecoder().decode(manifest)) as Manifest).layers as Layer[] }
   }
   return renderLock(repo, release, {
     index: sha256(images.index),
     platforms: { amd64: sha256(images.platforms.get('amd64')!.manifest), arm64: sha256(images.platforms.get('arm64')!.manifest) },
     pools: { amd64: pool('amd64'), arm64: pool('arm64') },
-  }, data)
+  }, dataAssets(repo, release))
 }
 
-// The release of GITHUB_REPOSITORY (micaoss/<repository> by default): listed and
-// uploaded through gh with GH_TOKEN (never --clobber), downloaded anonymously.
-export function githubReleaseAssets(repository: string): ReleaseAssets {
-  return {
-    releases: async () => {
-      const listed = capture(['gh', 'release', 'list', '--repo', repository, '--exclude-drafts', '--limit', '1000', '--json', 'tagName', '--jq', '.[].tagName'])
-      if (listed.code !== 0)
-        fail(`listing the releases of ${repository} failed: ${listed.stderr.trim()}`)
-      return listed.stdout.split('\n').filter(Boolean)
-    },
-    list: async (tag) => {
-      const listed = capture(['gh', 'release', 'view', tag, '--repo', repository, '--json', 'assets', '--jq', '.assets[].name'])
-      if (listed.code !== 0)
-        fail(`listing the assets of ${repository} release ${tag} failed: ${listed.stderr.trim()}`)
-      return listed.stdout.split('\n').filter(Boolean)
-    },
-    download: async (tag, name) => {
-      const response = await fetch(`https://github.com/${repository}/releases/download/${tag}/${name}`, { signal: AbortSignal.timeout(60_000) })
-      if (response.status === 404)
-        return undefined
-      if (!response.ok)
-        fail(`downloading ${name} of ${repository} release ${tag} answered HTTP ${response.status}`)
-      return new Uint8Array(await response.arrayBuffer())
-    },
-    upload: async (tag, name, bytes) => {
-      const scratch = mkdtempSync(join(REPO, '_out', '.release-asset.'))
-      try {
-        writeFileSync(join(scratch, name), bytes)
-        const uploaded = capture(['gh', 'release', 'upload', tag, join(scratch, name), '--repo', repository])
-        if (uploaded.code !== 0)
-          fail(`uploading ${name} to ${repository} release ${tag} failed: ${uploaded.stderr.trim()}`)
-      }
-      finally {
-        rmSync(scratch, { recursive: true, force: true })
-      }
-    },
+// Both pools as one build: the declared packages (assertPools), then the gates of
+// mica-build-tools -- pool gate over the archives, and pool guard for each one
+// against the latest release, which refuses a package whose inputs or bytes
+// changed without a version bump. Reads only.
+export async function gate(repo: string): Promise<string[]> {
+  const release = releaseOf(repo)
+  const out = join(repo, '_out')
+  const pools = assertPools(repo, out, release)
+  const lines = [`the ${release.label} pools hold ${[...pools].map(([arch, files]) => `${arch}: ${files.length}`).join(', ')} archives of the declared packages`]
+  const { archives, problems } = poolGate(join(out, 'debs'), ARCHES)
+  if (problems.length)
+    fail(`pool gate: ${problems.join('; ')}`)
+  lines.push(`pool gate: ${archives} archives pass`)
+  for (const [arch, files] of pools) {
+    for (const file of files)
+      lines.push(`pool guard: ${await poolGuard(repo, release.repository, arch, join(out, 'debs', arch, 'pool', file))}`)
   }
+  return lines
 }
 
-export function registryFromEnv(): Registry {
-  const token = process.env.GH_TOKEN ?? ''
-  if (!token)
-    fail('GH_TOKEN is unset; publishing needs a token with write:packages, which CI\'s own token has')
-  return new Registry(process.env.MICA_REGISTRY ?? 'ghcr.io/micaoss', process.env.MICA_REGISTRY_USER ?? 'micaoss', token, process.env.MICA_REGISTRY_PLAIN_HTTP === '1')
-}
-
-// pool and rootfs publish; lock attaches <repository>.lock and SHA256SUMS to the
-// release, or with --dry-run --tag YYYYMMDD-HHMM prints the lock of this build;
-// layer packs one architecture's root on its runner; gate checks the pools of
-// both architectures as one build and, reading only, their packages against the
-// latest release's (assertVersions).
 async function main(argv: string[]): Promise<void> {
   const [kind, option, value] = argv
   const out = join(REPO, '_out')
   const layers = join(out, 'layers')
-  const repository = process.env.GITHUB_REPOSITORY ?? `micaoss/${releaseOf(REPO).repository}`
-  if (kind === 'pool') {
-    for (const line of await publishPool(REPO, out, registryFromEnv(), githubReleaseAssets(repository)))
-      console.log(`publish: ${line}`)
+  if (kind === 'rootfs' && option && !value) {
+    console.log(`publish: ${await publishRootfs(REPO, option, () => readLayers(layers))}`)
     return
   }
-  if (kind === 'rootfs') {
-    releaseToPublish(REPO)
-    console.log(`publish: ${await publishRootfs(REPO, () => readLayers(layers), registryFromEnv())}`)
+  if (kind === 'lock' && option === '--dry-run' && value === '--tag' && argv[3]) {
+    process.stdout.write(dryRunLock(REPO, argv[3]))
     return
   }
-  if (kind === 'lock' && option === '--dry-run' && argv[2] === '--tag' && argv[3]) {
-    process.stdout.write(dryRunLock(REPO, out, argv[3]))
-    return
-  }
-  if (kind === 'lock' && !option) {
-    const release = releaseToPublish(REPO)
-    mkdirSync(out, { recursive: true })
-    for (const line of await publishLock(REPO, registryFromEnv(), githubReleaseAssets(repository)))
-      console.log(`publish: ${repository} release ${release.label}: ${line}`)
+  if (kind === 'lock' && option && !value) {
+    const { lock, data } = await writeLock(REPO, out, option)
+    for (const line of await releaseAttach(REPO, releaseOf(REPO).repository, option, lock, '', data))
+      console.log(`publish: release ${option}: ${line}`)
     return
   }
   if (kind === 'layer' && option === '--arch' && (ARCHES as string[]).includes(value ?? '')) {
@@ -668,19 +484,12 @@ async function main(argv: string[]): Promise<void> {
     console.log(`layer: ${arch} root of ${release.label}, built ${built}, in ${join(layers, arch)}`)
     return
   }
-  if (kind === 'gate') {
-    const release = releaseOf(REPO)
-    const pools = assertPools(REPO, out, release)
-    console.log(`gate: the ${release.label} pools hold ${[...pools].map(([arch, files]) => `${arch}: ${files.length}`).join(', ')} archives; the all archives are identical`)
-    const anonymous = new Registry(process.env.MICA_REGISTRY ?? 'ghcr.io/micaoss', '', '', process.env.MICA_REGISTRY_PLAIN_HTTP === '1')
-    const prior = await priorRelease(release, anonymous, githubReleaseAssets(repository))
-    for (const line of assertVersions(REPO, out, release, prior))
+  if (kind === 'gate' && !option) {
+    for (const line of await gate(REPO))
       console.log(`gate: ${line}`)
-    if (!prior)
-      console.log('gate: no earlier release; every package is built')
     return
   }
-  fail('usage: bun src/publish.ts pool | rootfs | lock [--dry-run --tag YYYYMMDD-HHMM] | layer --arch amd64|arm64 | gate')
+  fail('usage: bun src/publish.ts layer --arch amd64|arm64 | gate | rootfs <tag> | lock <tag> | lock --dry-run --tag <tag>')
 }
 
 if (import.meta.main) {

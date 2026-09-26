@@ -3,6 +3,7 @@ import type { Options } from './args.ts'
 import type { Arch, Row } from './lock.ts'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { verifyLocks } from '@mica/build-tools'
 import { parse, resolvePath, USAGE } from './args.ts'
 import { nonDirectories } from './bootstrap.ts'
 import { buildDebs, declared } from './debs/docker.ts'
@@ -10,15 +11,15 @@ import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
 import { ARCHES, lines as readLines, lockRows, parseRows, SELECTIONS, selectRuntime, sourceRows, UPSTREAM_LOCK } from './lock.ts'
 import { addedNames, runtimeNames, tagPinnedRoots } from './pin-inputs.ts'
-import { assertBuildEnvRelease, assertEnvironmentImage, BUILD_ENV, buildEnvAsset, environment, REPO } from './pins.ts'
+import { assertEnvironmentImage, environment, REPO } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import { BASE_PACKAGES, ISSUE_ENV } from './rootfs.ts'
-import { checkVectors } from './vectors.ts'
 
 const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'test', 'test-bootstrap']
 const IN_CONTAINER = '/mica-system-base'
 // What a BuildKit stage needs of this repository.
-const REPO_FILES = ['src', 'locks', 'debs', 'environment.json', 'packages.tsv', 'sources.json', 'ids.json']
+// @mica/build-tools resolves through tsconfig.json onto the pinned checkout.
+const REPO_FILES = ['src', 'locks', 'debs', 'environment.json', 'packages.tsv', 'sources.json', 'ids.json', 'tsconfig.json', 'repos/mica-build-tools/src']
 
 function hostArch(): Arch {
   if (process.arch === 'x64')
@@ -453,7 +454,7 @@ async function main(options: Options): Promise<number> {
     // Only cache has a network, so only cache gets the mirror.
     network: options.command === 'cache' ? 'default' : 'none',
     mounts,
-    env: options.command === 'cache' ? ['MICA_BASE_MIRROR', 'MICA_BASE_FETCH_DEADLINE'] : [],
+    env: options.command === 'cache' ? ['MICA_MIRROR', 'MICA_FETCH_DEADLINE', 'MICA_OFFLINE'] : [],
     command: cli(options.command, '--arch', options.arch!, '--cache-dir', '/cache', ...selection.args),
   })
 }
@@ -475,7 +476,7 @@ async function rootfs(argv: string[]): Promise<number> {
   const out = join(REPO, '_out')
   const root = resolvePath(values.get('--root') ?? join(out, 'rootfs', arch))
   const pool = resolvePath(values.get('--pool') ?? join(out, 'debs', arch, 'pool'))
-  const cacheDir = resolvePath(values.get('--cache-dir') ?? join(out, 'debian-base'))
+  const cacheDir = resolvePath(values.get('--cache-dir') ?? join(REPO, 'repos'))
   if (!existsSync(pool))
     fail(`${pool} does not exist; run: bun src/container.ts debs`)
   if (root.startsWith(`${join(out, 'rootfs')}/`))
@@ -547,18 +548,15 @@ function imageFile(image: string, path: string): string {
   }
 }
 
-// Check the pinned mica-build-env release lists the committed lock, then pull each
+// Check each pinned release lists its committed lock, then pull each
 // architecture's base image and tag it locally: the tag names one platform, so
 // docker run uses it without a platform flag. BuildKit stages take the images by
 // digest.
 async function pullEnvironment(): Promise<number> {
   const env = environment()
-  const url = buildEnvAsset(env.buildEnv, 'SHA256SUMS')
-  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => undefined)
-  if (!response?.ok)
-    fail(`downloading ${url} failed${response ? ` (HTTP ${response.status})` : ''}`)
-  assertBuildEnvRelease(env.buildEnv, new Uint8Array(await response.arrayBuffer()), new Uint8Array(readFileSync(join(REPO, 'locks', `${BUILD_ENV}.lock`))))
-  console.log(`environment: ${env.buildEnv.repository} ${env.buildEnv.release} pins base ${env.base.amd64}, ${env.base.arm64} and c ${env.c.amd64}, ${env.c.arm64}`)
+  for (const line of await verifyLocks(join(REPO, 'locks')))
+    console.log(`environment: ${line}`)
+  console.log(`environment: base ${env.base.amd64}, ${env.base.arm64} and c ${env.c.amd64}, ${env.c.arm64}`)
   const { image } = env
   for (const arch of ARCHES) {
     const reference = environmentReference(arch)
@@ -571,7 +569,7 @@ async function pullEnvironment(): Promise<number> {
 }
 
 async function debs(argv: string[]): Promise<number> {
-  let cacheDir = join(REPO, '_out/debian-base')
+  let cacheDir = join(REPO, 'repos')
   let out = join(REPO, '_out/debs')
   const only: string[] = []
   let arch: Arch | undefined
@@ -617,9 +615,6 @@ if (import.meta.main) {
     }
     else if (process.argv[2] === 'environment') {
       process.exitCode = await pullEnvironment()
-    }
-    else if (process.argv[2] === 'vectors') {
-      process.exitCode = await checkVectors()
     }
     else if (process.argv[2] === 'rootfs') {
       process.exitCode = await rootfs(process.argv.slice(3))

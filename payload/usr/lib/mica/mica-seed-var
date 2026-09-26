@@ -1,6 +1,17 @@
 #!/bin/sh
 # Seed the writable var tree once, after DATA project quotas are established.
 set -eu
+# Copy what <into> lacks of <from>, entry by entry: busybox cp -n skips a
+# directory that exists whole rather than merging into it. find lists a
+# directory before its contents, and a directory copied whole brings them along;
+# an entry <into> already holds, a directory included, is left as it is.
+copy_missing() { # <from> <into>
+    (cd "$1" && find . -mindepth 1 -exec sh -c '
+        into=$1; shift
+        for path do
+            [ -e "$into/$path" ] || [ -L "$into/$path" ] || cp -a "$path" "$into/$path"
+        done' copy_missing "$2" {} +)
+}
 data=${MICA_DATA_ROOT:-/mnt/data}
 template=${MICA_VAR_TEMPLATE:-/var}
 var=$data/var
@@ -9,7 +20,7 @@ var=$data/var
 [ ! -L "$var/.mica-initialized" ] || exit 1
 if [ ! -f "$var/.mica-initialized" ]; then
     # A first-boot interruption may leave part of the template copied already.
-    cp -an "$template/." "$var/"
+    copy_missing "$template" "$var"
     sync -f "$var"
     (umask 077; : >"$var/.mica-initialized")
     sync -f "$var"

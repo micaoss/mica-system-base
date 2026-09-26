@@ -1,8 +1,8 @@
 // The Debian pins of locks/upstream.lock and the selections a command works on.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { checkUpstream } from '@mica/build-tools'
 import { fail, Refusal } from './errors.ts'
-import { parseUpstream } from './release-lock.ts'
 
 export type Arch = 'amd64' | 'arm64'
 export const ARCHES: Arch[] = ['amd64', 'arm64']
@@ -41,7 +41,7 @@ export function lines(path: string): string[] {
 // Every source row of locks/upstream.lock: name, arch (amd64, arm64 or all),
 // version, sha256, url.
 export function sourceRows(repo: string): string[][] {
-  return parseUpstream(readFileSync(join(repo, UPSTREAM_LOCK), 'utf8'), UPSTREAM_LOCK).filter(row => row[0] === 'source').map(row => row.slice(1))
+  return checkUpstream(join(repo, UPSTREAM_LOCK)).filter(row => row[0] === 'source').map(row => row.slice(1))
 }
 
 // The Debian archives whose lock name starts with `prefix` (no prefix: the

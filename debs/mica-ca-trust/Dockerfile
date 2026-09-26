@@ -14,7 +14,7 @@ RUN --mount=type=bind,from=cache,target=/cache \
     --mount=type=bind,from=debs,target=/in/debs \
     --mount=type=bind,from=tooling,target=/tooling \
     set -eu; \
-    deb="/cache/debs/${MICA_INPUT_CA_CERTIFICATES}.deb"; \
+    deb="/cache/sha256/${MICA_INPUT_CA_CERTIFICATES}"; \
     [ "$(sha256sum "$deb" | cut -d' ' -f1)" = "${MICA_INPUT_CA_CERTIFICATES}" ] || { echo "error: $deb is not the pinned ca-certificates" >&2; exit 1; }; \
     . /in/debs/mica-ca-trust/recorded.env; \
     [ -n "${CA_CERTIFICATES_VERSION:-}" ] && [ -n "${CA_CERTIFICATES_ANCHORS_SHA256:-}" ] || { echo "error: recorded.env declares no version or anchor digest" >&2; exit 1; }; \
@@ -81,6 +81,6 @@ RUN --mount=type=bind,from=cache,target=/cache \
     } >/stage/usr/share/doc/mica-ca-trust/copyright; \
     chmod 0644 /stage/usr/share/doc/mica-ca-trust/copyright; \
     echo "mica-ca-trust: $certs certificates, $links hash links, anchors at the recorded sha256"; \
-    bun /tooling/debs/pack-cli.ts --stage /stage --control /in/debs/mica-ca-trust/control --out /out
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root /stage --control /in/debs/mica-ca-trust/control --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

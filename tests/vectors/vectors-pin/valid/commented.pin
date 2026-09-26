@@ -1,5 +1,0 @@
-# mica-vectors-pin v1
-# Known and deliberate at this commit: the vectors carry <defect>, inert and
-# pinned here rather than silently carried.
-REPOSITORY=mica
-COMMIT=0123456789abcdef0123456789abcdef01234567

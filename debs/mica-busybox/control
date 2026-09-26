@@ -1,6 +1,6 @@
 Package: mica-busybox
-Version: 1.38.0-mica1
-Source-Date-Epoch: 1789430400
+Version: 1.38.0-mica2
+Source-Date-Epoch: 1790460000
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin

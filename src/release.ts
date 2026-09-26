@@ -5,7 +5,7 @@
 // such tag is that release and its label is the tag. Any other checkout is
 // labelled <commit UTC minute>~git<commit12> (with .dirty for uncommitted
 // changes). The label names the root and the published artifacts; packages carry
-// their own declared versions (src/debs/pack.ts).
+// their own declared versions (mica-build-tools `deb pack`).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fail } from './errors.ts'

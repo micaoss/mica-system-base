@@ -13,7 +13,7 @@ export async function sha256File(path: string): Promise<string> {
 }
 
 export function archivePath(cacheDir: string, sha256: string): string {
-  return `${cacheDir}/debs/${sha256}.deb`
+  return `${cacheDir}/sha256/${sha256}`
 }
 
 export async function verifyRows(cacheDir: string, rows: Row[]): Promise<void> {

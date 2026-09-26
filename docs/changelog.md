@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-26 22:40 [progress]
+
+The switch to mica-build-tools (plan 20260926-2122), pinned at `5d0a5d9`, with mica-build-env
+moved to 20260926-2110. The repository's own lock reader, vectors copy, OCI client, packer,
+inputs hash, download path and pool publisher are gone: `src/` imports `@mica/build-tools`,
+each producer declares a `mica-inputs`, the Dockerfiles pack with `deb pack`, the source cache
+is `repos/sha256/` through `repos get` (`MICA_MIRROR`, `MICA_FETCH_DEADLINE`), and a release
+runs `release pool`, `pool gate`, `pool guard` and `release attach`; `src/publish.ts` keeps the
+root, the Base rows of the lock and the declared-package gate. Every package moves once, its
+`mica.inputs` taken the new way: mica-busybox 1.38.0-mica2, mica-ca-trust 20250419-mica3,
+mica-ssh 1.0.0-3, mica-system 1.1.0-2, mica-systemd-boot 257.13-mica2, mica-tzdata 2026c-mica2
+(no `Replaces`, which RULES section 6 refuses), mica-wifi and mica-wifi-ap 2.12-mica2.
+mica-seed-var and mica-seed-state no longer copy with `cp -an`: busybox's skips a directory
+that exists instead of merging into it, so a device's /var was seeded with nothing. A foreign
+root built under BuildKit's emulator mounts /dev and /proc while it is stripped.
+
 ## 2026-09-26 11:50 [release]
 
 Release 20260926-1135, built from 8610b35 on mica-build-env 20260916-0735: the lock at snapshot

@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "lib": ["esnext"],
+    "lib": [
+      "esnext"
+    ],
     "module": "preserve",
     "moduleResolution": "bundler",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "allowImportingTsExtensions": true,
     "strict": true,
     "exactOptionalPropertyTypes": true,
@@ -12,7 +16,15 @@
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@mica/build-tools": [
+        "./repos/mica-build-tools/src/index.ts"
+      ]
+    }
   },
-  "include": ["src", "tests"]
+  "include": [
+    "src",
+    "tests"
+  ]
 }

@@ -1,7 +1,7 @@
 # mica-deb: arches=all
 # mica-system: the payload/ tree, its empty mountpoints, the copyright and the
 # postinst. Built by `bun src/container.ts debs` with the named contexts
-# `payload`, `debs` and `tooling` (src/).
+# `payload`, `debs` and `tooling` (the pinned mica-build-tools checkout).
 ARG MICA_BUILD_IMAGE
 FROM ${MICA_BUILD_IMAGE} AS pack
 ARG MICA_DEB_ARCH
@@ -24,7 +24,8 @@ RUN --mount=type=bind,from=payload,target=/in/payload \
     done; \
     install -d -m 0700 "$S/root"; \
     install -D -m 0644 /in/debs/copyright "$S/usr/share/doc/mica-system/copyright"; \
-    bun /tooling/debs/pack-cli.ts --stage "$S" --control /in/debs/mica-system/control \
-        --postinst /in/debs/mica-system/postinst --out /out
+    install -D -m 0755 /in/debs/mica-system/postinst /in/scripts/postinst; \
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root "$S" --control /in/debs/mica-system/control \
+        --maintainer-scripts /in/scripts --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

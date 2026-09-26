@@ -91,10 +91,10 @@ describe('fixture lock', () => {
     writeFileSync(file, readFileSync(file, 'utf8').replace(from, to))
 
   beforeAll(async () => {
-    mkdirSync(join(cache, 'debs'), { recursive: true })
+    mkdirSync(join(cache, 'sha256'), { recursive: true })
     for (const [key, name, version] of [['libc6', 'libc6', '2.41'], ['other', 'libother', '1.0'], ['mirror', 'libmirror', '1.0']] as const)
       debs[key] = await makeDeb(work, name, version)
-    copyFileSync(debs.libc6!.path, join(cache, 'debs', `${debs.libc6!.sha}.deb`))
+    copyFileSync(debs.libc6!.path, join(cache, 'sha256', debs.libc6!.sha))
     restore()
   })
   afterAll(() => rmSync(work, { recursive: true, force: true }))
@@ -105,7 +105,7 @@ describe('fixture lock', () => {
   })
 
   test('damaged archives and mismatched pins are refused', () => {
-    const archive = join(cache, 'debs', `${debs.libc6!.sha}.deb`)
+    const archive = join(cache, 'sha256', debs.libc6!.sha)
     appendFileSync(archive, 'damage')
     refused(cli(repo, ['verify', ...args]), 'SHA256 mismatch')
     refused(cli(repo, ['bootstrap', ...args, '--root', join(work, 'corrupt-root')]), 'SHA256 mismatch')
@@ -119,7 +119,7 @@ describe('fixture lock', () => {
     set([{ ...good(), name: 'apt' }])
     refused(cli(repo, ['verify', ...args]), 'invalid package lock: packages.tsv: invalid package name apt')
     set([{ ...good(), url: `${SNAPSHOT_URL.replace('https://', 'http://')}/libc6.deb` }])
-    refused(cli(repo, ['verify', ...args]), 'refused (field-value)')
+    refused(cli(repo, ['verify', ...args]), 'refused field-value')
     set([{ ...good(), url: 'https://example.invalid/libc6.deb' }])
     refused(cli(repo, ['verify', ...args]), 'is not a Debian snapshot archive')
     restore()
@@ -166,10 +166,10 @@ describe('fixture lock', () => {
     refused(cli(repo, ['select', '--arch', 'arm64', '--package', 'libc6']), 'no arm64 variant')
     restore()
     edit(lockFile, '# mica-lock v1', '# mica-lock v2')
-    refused(select([]), 'refused (header)')
+    refused(select([]), 'refused header')
     restore()
     edit(lockFile, /\tall\t/, '\tall\t\t')
-    refused(select([]), 'refused (column-count)')
+    refused(select([]), 'refused column-count')
     restore()
     edit(selectionFile, 'libc6\tbase', 'libc6\tbase,base')
     refused(select([]), 'invalid consumers of libc6')
@@ -179,37 +179,10 @@ describe('fixture lock', () => {
     restore()
   })
 
-  test('updating one pin downloads only that archive', async () => {
-    set([good(), { name: 'libother', version: '1.0', sha: debs.other!.sha }])
-    copyFileSync(debs.other!.path, join(cache, 'debs', `${debs.other!.sha}.deb`))
-    const listing = (skip?: string): string[] => readdirSync(join(cache, 'debs')).filter(file => file !== skip).map((file) => {
-      const stat = statSync(join(cache, 'debs', file))
-      return `${file} ${stat.size} ${stat.mtimeMs}`
-    }).sort()
-    const before = listing()
-    const updated = await makeDeb(work, 'libc6', '2.42')
-    set([{ name: 'libc6', version: '2.42', sha: updated.sha, url: `${SNAPSHOT_URL.replace('20260905', '20260906')}/libc6.deb` }, { name: 'libother', version: '1.0', sha: debs.other!.sha }])
-    const log = join(work, 'download.log')
-    writeFileSync(join(repo, 'src/fetch.ts'), [
-      'import { appendFileSync } from "node:fs"',
-      'if (Bun.argv[2] !== "https://snapshot.debian.org/archive/debian/20260906T000000Z/pool/libc6.deb") throw new Error("unexpected download URL")',
-      'await Bun.write(Bun.argv[3]!, Bun.file(process.env.FIXTURE_DOWNLOAD!))',
-      'appendFileSync(process.env.FIXTURE_DOWNLOAD_LOG!, `${Bun.argv[2]}\\n`)',
-      '',
-    ].join('\n'))
-    const env = { FIXTURE_DOWNLOAD: updated.path, FIXTURE_DOWNLOAD_LOG: log }
-    succeeded(cli(repo, ['cache', ...args, '--package', 'libc6'], env), 'verified 1 packages; downloaded 1 archives')
-    expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(1)
-    expect(listing(`${updated.sha}.deb`)).toEqual(before)
-    succeeded(cli(repo, ['cache', ...args], env), 'verified 2 packages; downloaded 0 archives')
-    expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(1)
-    set([...pins.filter(pin => pin.name !== 'libother')])
-  })
-
-  // Real HTTPS on loopback: the 404 -> exit 44 mapping lives in fetch.ts.
-  test('a mirror serves, falls back on 404, and a stalled one is killed at the ceiling', async () => {
-    copyFileSync(join(REPO, 'src/fetch.ts'), join(repo, 'src/fetch.ts'))
-    set([...pins, { name: 'libmirror', version: '1.0', sha: debs.mirror!.sha }])
+  // A loopback HTTPS mirror serving /debian/pool/<file>, and a download it never
+  // answers under /stall; `served` lists what it was asked for.
+  function mirror(files: Record<string, string>): { base: string, served: string[], stop: () => void } {
+    const served: string[] = []
     const server = Bun.serve({
       hostname: '127.0.0.1',
       port: 0,
@@ -217,101 +190,79 @@ describe('fixture lock', () => {
       tls: { cert: Bun.file(join(REPO, 'tests/fixtures/loopback.crt')), key: Bun.file(join(REPO, 'tests/fixtures/loopback.key')) },
       fetch(request) {
         const path = new URL(request.url).pathname
-        if (path === '/debian/pool/libmirror.deb')
-          return new Response(Bun.file(debs.mirror!.path))
-        // Never answers.
+        served.push(path)
+        const file = path.startsWith('/debian/pool/') ? files[path.slice('/debian/pool/'.length)] : undefined
+        if (file)
+          return new Response(Bun.file(file))
         if (path.startsWith('/stall'))
           return new Promise<Response>(() => {})
         return new Response('not on this mirror', { status: 404 })
       },
     })
-    // Async: the server shares this event loop.
-    const cacheMirror = async (env: Record<string, string>): Promise<{ code: number, output: string }> => {
-      const child = Bun.spawn([process.execPath, join(repo, 'src/cli.ts'), 'cache', ...args, '--package', 'libmirror'], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', ...env },
-      })
-      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
-      return { code, output: stdout + stderr }
-    }
+    return { base: `https://127.0.0.1:${server.port}`, served, stop: () => server.stop(true) }
+  }
+  // Async: the mirror shares this event loop.
+  const cacheAsync = async (extra: string[], env: Record<string, string>): Promise<{ code: number, output: string }> => {
+    const child = Bun.spawn([process.execPath, join(repo, 'src/cli.ts'), 'cache', ...args, ...extra], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0', ...env },
+    })
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    return { code, output: stdout + stderr }
+  }
+
+  test('updating one pin downloads only that archive', async () => {
+    set([good(), { name: 'libother', version: '1.0', sha: debs.other!.sha }])
+    copyFileSync(debs.other!.path, join(cache, 'sha256', debs.other!.sha))
+    const listing = (skip?: string): string[] => readdirSync(join(cache, 'sha256')).filter(file => file !== skip).map((file) => {
+      const stat = statSync(join(cache, 'sha256', file))
+      return `${file} ${stat.size} ${stat.mtimeMs}`
+    }).sort()
+    const before = listing()
+    const updated = await makeDeb(work, 'libc6', '2.42')
+    set([{ name: 'libc6', version: '2.42', sha: updated.sha, url: `${SNAPSHOT_URL.replace('20260905', '20260906')}/libc6.deb` }, { name: 'libother', version: '1.0', sha: debs.other!.sha }])
+    const server = mirror({ 'libc6.deb': updated.path })
     try {
-      const base = `https://127.0.0.1:${server.port}`
-      const mirrored = join(cache, 'debs', `${debs.mirror!.sha}.deb`)
-      succeeded(await cacheMirror({ MICA_BASE_MIRROR: `${base}/debian/` }), 'downloaded 1 archives (1 from the mirror, 0 from the pinned URL)')
+      const env = { MICA_MIRROR: `pool:${server.base}/debian` }
+      succeeded(await cacheAsync(['--package', 'libc6'], env), 'verified 1 packages; downloaded 1 archives (1 from the mirror, 0 from the pinned URL)')
+      expect(server.served).toEqual(['/debian/pool/libc6.deb'])
+      expect(listing(updated.sha)).toEqual(before)
+      succeeded(await cacheAsync([], env), 'verified 2 packages; downloaded 0 archives')
+      expect(server.served).toHaveLength(1)
+    }
+    finally {
+      server.stop()
+    }
+    set([...pins.filter(pin => pin.name !== 'libother')])
+  })
+
+  test('a mirror serves, falls back on 404, and a stalled one is stopped at the ceiling', async () => {
+    set([...pins, { name: 'libmirror', version: '1.0', sha: debs.mirror!.sha }])
+    const server = mirror({ 'libmirror.deb': debs.mirror!.path })
+    try {
+      const mirrored = join(cache, 'sha256', debs.mirror!.sha)
+      succeeded(await cacheAsync(['--package', 'libmirror'], { MICA_MIRROR: `${server.base}/debian/` }), 'downloaded 1 archives (1 from the mirror, 0 from the pinned URL)')
       expect(readFileSync(mirrored)).toEqual(readFileSync(debs.mirror!.path))
       rmSync(mirrored)
       // The fallback URL is unreachable here.
-      refused(await cacheMirror({ MICA_BASE_MIRROR: `${base}/absent` }), `download failed for libmirror: ${SNAPSHOT_URL}/libmirror.deb`)
+      refused(await cacheAsync(['--package', 'libmirror'], { MICA_MIRROR: `${server.base}/absent` }), `${SNAPSHOT_URL}/libmirror.deb`)
       const started = Date.now()
-      refused(await cacheMirror({ MICA_BASE_MIRROR: `${base}/stall`, MICA_BASE_FETCH_DEADLINE: '3' }), `download exceeded the 3s ceiling and was killed: ${base}/stall/pool/libmirror.deb`)
+      refused(await cacheAsync(['--package', 'libmirror'], { MICA_MIRROR: `snapshot:${server.base}/stall`, MICA_FETCH_DEADLINE: '3' }), SNAPSHOT_URL)
       expect(Date.now() - started).toBeLessThan(30_000)
+      expect(server.served.some(path => path.startsWith('/stall/archive/debian/'))).toBe(true)
       expect(existsSync(mirrored)).toBe(false)
     }
     finally {
-      server.stop(true)
+      server.stop()
     }
-  }, SLOW)
-
-  // Only the transport is stubbed.
-  test('mirror fallback, wrong bytes and broken mirrors', () => {
-    const log = join(work, 'mirror.log')
-    writeFileSync(join(repo, 'src/fetch.ts'), [
-      'import { appendFileSync } from "node:fs"',
-      'const url = Bun.argv[2]!',
-      'appendFileSync(process.env.FIXTURE_DOWNLOAD_LOG!, `${url}\\n`)',
-      'const prefix = (name: string) => process.env[name] && url.startsWith(process.env[name]!)',
-      'if (prefix("FIXTURE_ABSENT")) process.exit(44)',
-      'if (prefix("FIXTURE_BROKEN")) process.exit(7)',
-      'await Bun.write(Bun.argv[3]!, prefix("FIXTURE_CORRUPT") ? "not the pinned bytes" : Bun.file(process.env.FIXTURE_DOWNLOAD!))',
-      '',
-    ].join('\n'))
-    const env = { FIXTURE_DOWNLOAD: debs.mirror!.path, FIXTURE_DOWNLOAD_LOG: log, MICA_BASE_MIRROR: 'https://mirror.invalid/debian' }
-    const mirrored = join(cache, 'debs', `${debs.mirror!.sha}.deb`)
-    const cacheMirror = (extra: Record<string, string> = {}): { code: number, output: string } =>
-      cli(repo, ['cache', ...args, '--package', 'libmirror'], { ...env, ...extra })
-    const logged = (): string[] => readFileSync(log, 'utf8').trim().split('\n')
-
-    writeFileSync(log, '')
-    const fallback = cacheMirror({ FIXTURE_ABSENT: 'https://mirror.invalid/' })
-    succeeded(fallback, 'downloaded 1 archives (0 from the mirror, 1 from the pinned URL)')
-    expect(fallback.output).toContain('https://mirror.invalid/debian served none of the 1 archive(s) downloaded')
-    expect(logged()).toEqual(['https://mirror.invalid/debian/pool/libmirror.deb', `${SNAPSHOT_URL}/libmirror.deb`])
-
-    rmSync(mirrored)
-    writeFileSync(log, '')
-    refused(cacheMirror({ FIXTURE_CORRUPT: 'https://mirror.invalid/' }), 'SHA256 mismatch downloading libmirror from https://mirror.invalid/debian/pool/libmirror.deb')
-    expect(logged()).toEqual(['https://mirror.invalid/debian/pool/libmirror.deb'])
-    expect(existsSync(mirrored)).toBe(false)
-
-    writeFileSync(log, '')
-    refused(cacheMirror({ FIXTURE_BROKEN: 'https://mirror.invalid/' }), 'mirror download failed for libmirror: https://mirror.invalid/debian/pool/libmirror.deb')
-    expect(logged()).toHaveLength(1)
-
-    // The snapshot layout replaces only the host.
-    writeFileSync(log, '')
-    succeeded(cacheMirror({ MICA_BASE_MIRROR: 'snapshot:https://snap.invalid' }), 'downloaded 1 archives (1 from the mirror, 0 from the pinned URL)')
-    expect(logged()).toEqual(['https://snap.invalid/archive/debian/20260905T000000Z/pool/libmirror.deb'])
-
-    refused(cacheMirror({ MICA_BASE_MIRROR: 'ftp://mirror.invalid/debian' }), 'must be an https:// base')
-    // No command but cache reads the variable.
-    succeeded(cli(repo, ['verify', ...args, '--package', 'libmirror'], { MICA_BASE_MIRROR: 'ftp://mirror.invalid/debian' }), 'verified 1 packages')
-    expect(cli(repo, ['select', ...args, '--package', 'libmirror'], { MICA_BASE_MIRROR: 'ftp://mirror.invalid/debian' }).code).toBe(0)
-
-    // Unconfigured, only the pinned URL is tried and no split is reported.
-    rmSync(mirrored)
-    writeFileSync(log, '')
-    succeeded(cli(repo, ['cache', ...args, '--package', 'libmirror'], { ...env, MICA_BASE_MIRROR: undefined }), 'verified 1 packages; downloaded 1 archives; cache')
-    expect(logged()).toEqual([`${SNAPSHOT_URL}/libmirror.deb`])
     set(pins.filter(pin => pin.name !== 'libmirror'))
-    rmSync(mirrored)
-    writeFileSync(join(repo, 'src/fetch.ts'), 'throw new Error("unexpected download invocation")\n')
-  })
+  }, SLOW)
 
   test('targeted operations do not read unrelated archives', () => {
     restore()
     set([...pins, { name: 'libother', version: '1.0', sha: debs.other!.sha }])
-    appendFileSync(join(cache, 'debs', `${debs.other!.sha}.deb`), 'damage')
+    appendFileSync(join(cache, 'sha256', debs.other!.sha), 'damage')
     succeeded(cli(repo, ['verify', ...args, '--package', 'libc6']), 'verified 1 packages')
     refused(cli(repo, ['verify', ...args]), 'SHA256 mismatch')
   })

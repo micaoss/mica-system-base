@@ -1,13 +1,12 @@
 Package: mica-tzdata
-Version: 2026c-mica1
-Source-Date-Epoch: 1790380800
+Version: 2026c-mica2
+Source-Date-Epoch: 1790460000
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: localization
 Priority: optional
 Provides: tzdata (= 2026c-0+deb13u1)
 Conflicts: tzdata
-Replaces: tzdata
 Description: Time zones for Mica OS, as data
  /usr/share/zoneinfo of the pinned tzdata archive, carried as payload with no
  maintainer script: tzdata's own postinst parses a date with GNU date, which

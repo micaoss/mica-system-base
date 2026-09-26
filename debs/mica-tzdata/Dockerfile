@@ -14,7 +14,7 @@ RUN --mount=type=bind,from=cache,target=/cache \
     --mount=type=bind,from=debs,target=/in/debs \
     --mount=type=bind,from=tooling,target=/tooling \
     set -eu; \
-    deb="/cache/debs/${MICA_INPUT_TZDATA}.deb"; \
+    deb="/cache/sha256/${MICA_INPUT_TZDATA}"; \
     [ "$(sha256sum "$deb" | cut -d' ' -f1)" = "${MICA_INPUT_TZDATA}" ] || { echo "error: $deb is not the pinned tzdata" >&2; exit 1; }; \
     version="$(dpkg-deb -f "$deb" Version)"; \
     declared="$(sed -n 's/^Version: //p' /in/debs/mica-tzdata/control)"; \
@@ -39,6 +39,6 @@ RUN --mount=type=bind,from=cache,target=/cache \
         cat /tz/usr/share/doc/tzdata/copyright; \
     } >/stage/usr/share/doc/mica-tzdata/copyright; \
     chmod 0644 /stage/usr/share/doc/mica-tzdata/copyright; \
-    bun /tooling/debs/pack-cli.ts --stage /stage --control /in/debs/mica-tzdata/control --out /out
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root /stage --control /in/debs/mica-tzdata/control --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

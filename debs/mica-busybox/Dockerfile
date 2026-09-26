@@ -80,6 +80,6 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
         cat /in/busybox/LICENSE; \
     } >/stage/usr/share/doc/mica-busybox/copyright; \
     chmod 0644 /stage/usr/share/doc/mica-busybox/copyright; \
-    bun /tooling/debs/pack-cli.ts --stage /stage --control /in/debs/mica-busybox/control --out /out
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root /stage --control /in/debs/mica-busybox/control --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

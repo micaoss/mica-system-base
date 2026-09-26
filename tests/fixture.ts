@@ -56,11 +56,11 @@ export function fixtureRepo(work: string): string {
   const repo = join(work, 'repo')
   cpSync(join(REPO, 'src'), join(repo, 'src'), { recursive: true })
   cpSync(join(REPO, 'locks'), join(repo, 'locks'), { recursive: true })
-  for (const file of ['environment.json', 'sources.json', 'ids.json'])
+  cpSync(join(REPO, 'repos/mica-build-tools/src'), join(repo, 'repos/mica-build-tools/src'), { recursive: true })
+  for (const file of ['environment.json', 'sources.json', 'ids.json', 'tsconfig.json'])
     cpSync(join(REPO, file), join(repo, file))
   mkdirSync(join(repo, 'debs'))
   writeFileSync(join(repo, 'debs/consumers.pkgs'), 'mica-system\n')
   writePins(repo, [])
-  writeFileSync(join(repo, 'src/fetch.ts'), 'throw new Error("unexpected download invocation")\n')
   return repo
 }

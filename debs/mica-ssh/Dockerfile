@@ -12,12 +12,13 @@ ARG MICA_DEB_ARCH
 ARG MICA_DEB_SOURCE_REPO
 ARG SOURCE_DATE_EPOCH
 ARG MICA_INPUT_DROPBEAR_BIN
-COPY dropbear.service mica-dropbear-prestart 50-mica-dropbear.preset postinst /in/ssh/
+COPY dropbear.service mica-dropbear-prestart 50-mica-dropbear.preset /in/ssh/
+COPY postinst /in/scripts/
 RUN --mount=type=bind,from=cache,target=/cache \
     --mount=type=bind,from=debs,target=/in/debs \
     --mount=type=bind,from=tooling,target=/tooling \
     set -eu; \
-    deb="/cache/debs/${MICA_INPUT_DROPBEAR_BIN}.deb"; \
+    deb="/cache/sha256/${MICA_INPUT_DROPBEAR_BIN}"; \
     [ "$(sha256sum "$deb" | cut -d' ' -f1)" = "${MICA_INPUT_DROPBEAR_BIN}" ] || { echo "error: $deb is not the pinned dropbear-bin" >&2; exit 1; }; \
     depends="$(dpkg-deb -f "$deb" Depends)"; \
     case "$depends" in *libpam*) echo "error: dropbear-bin depends on PAM: $depends. SSH authenticates through crypt(3) against /etc/shadow, and this would move every device onto the PAM stack" >&2; exit 1 ;; esac; \
@@ -28,6 +29,6 @@ RUN --mount=type=bind,from=cache,target=/cache \
     install -D -m 0755 /in/ssh/mica-dropbear-prestart /stage/usr/lib/mica/mica-dropbear-prestart; \
     install -D -m 0644 /in/ssh/50-mica-dropbear.preset /stage/usr/lib/systemd/system-preset/50-mica-dropbear.preset; \
     install -D -m 0644 /in/debs/copyright /stage/usr/share/doc/mica-ssh/copyright; \
-    bun /tooling/debs/pack-cli.ts --stage /stage --control /in/debs/mica-ssh/control --postinst /in/ssh/postinst --out /out
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root /stage --control /in/debs/mica-ssh/control --maintainer-scripts /in/scripts --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

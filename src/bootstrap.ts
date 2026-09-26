@@ -148,6 +148,31 @@ function cleanRoot(root: string, work: string, mirror: string, suite: string): v
 // maintainer scripts of the packages being purged. /usr/bin/sh is diverted to busybox
 // first, the way Debian lets /bin/sh be changed: dash's own postrm runs through it.
 function strip(root: string): void {
+  // A foreign root is run under BuildKit's emulator, which every exec finds at
+  // this path under /dev and re-enters through /proc/self/exe: the root can run
+  // its own programs only while /dev and a /proc are mounted in it.
+  if (!existsSync(EMULATOR)) {
+    stripRoot(root)
+    return
+  }
+  output(['mount', '--bind', '/dev', join(root, 'dev')], `binding /dev into ${root}`)
+  try {
+    output(['mount', '-t', 'proc', 'proc', join(root, 'proc')], `mounting /proc in ${root}`)
+    try {
+      stripRoot(root)
+    }
+    finally {
+      output(['umount', join(root, 'proc')], `unmounting /proc from ${root}`)
+    }
+  }
+  finally {
+    output(['umount', join(root, 'dev')], `unbinding /dev from ${root}`)
+  }
+}
+
+const EMULATOR = '/dev/.buildkit_qemu_emulator'
+
+function stripRoot(root: string): void {
   const inRoot = (command: string[], what: string): string => output(['chroot', root, ...command], what)
   const applets = new Set(inRoot(['/usr/bin/busybox', '--list'], 'listing the busybox applets').split('\n').filter(Boolean))
   const replaced = inRoot(['dpkg-query', '-L', ...STRIPPED], `listing ${STRIPPED.join(', ')}`).split('\n')

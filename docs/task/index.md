@@ -19,3 +19,4 @@ deleted. Only the marker changes; new tasks append to the end.
 - [x] [**20260926-0904-mica-wifi Build minimal wpa_supplicant and hostapd as mica-wifi and mica-wifi-ap**](20260926-0904-mica-wifi.md) `P2`
 - [x] [**20260926-1040-runtime-lock-security The runtime lock resolves without the security archive**](20260926-1040-runtime-lock-security.md) `P1`
 - [x] [**20260926-0938-rootfs-minimal Publish a minimal rootfs beside the default one**](20260926-0938-rootfs-minimal.md) `P2`
+- [-] [**20260926-2122-switch-to-mica-build-tools Switch to mica-build-tools and mica-build-env 20260926-2110**](20260926-2122-switch-to-mica-build-tools.md) `P1`

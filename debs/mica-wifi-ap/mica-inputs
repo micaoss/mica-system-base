@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-wifi-ap
+source build.mica-wifi-ap.*
+source source.hostapd

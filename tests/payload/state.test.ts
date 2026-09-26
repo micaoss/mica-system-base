@@ -129,6 +129,36 @@ describe('mica-seed-var', () => {
     symlinkSync(join(root, 'kept-var'), variable)
     expect(seed()).not.toBe(0)
   })
+
+  // busybox cp -n, the device's cp, skips a directory that exists whole instead of
+  // merging into it: a /var that DATA already holds would get nothing.
+  test('merges the template into directories DATA already holds, and keeps theirs', () => {
+    const root = join(box.dir, 'seed-var-merge')
+    const template = join(root, 'template')
+    const variable = join(root, 'data/var')
+    mkdirSync(join(variable, 'lib/other'), { recursive: true })
+    chmodSync(join(variable, 'lib'), 0o750)
+    mkdirSync(join(template, 'lib/service'), { recursive: true })
+    chmodSync(join(template, 'lib'), 0o755)
+    chmodSync(join(template, 'lib/service'), 0o700)
+    writeFileSync(join(template, 'lib/service/config'), 'factory\n')
+    writeFileSync(join(template, 'top'), 'factory\n')
+    symlinkSync('/run', join(template, 'run'))
+    expect(exec(['sh', join(MICA, 'mica-seed-var')], { PATH: SYSTEM_PATH, MICA_DATA_ROOT: join(root, 'data'), MICA_VAR_TEMPLATE: template }).code).toBe(0)
+    expect(readFileSync(join(variable, 'lib/service/config'), 'utf8')).toBe('factory\n')
+    expect(mode(join(variable, 'lib/service'))).toBe('700')
+    expect(readFileSync(join(variable, 'top'), 'utf8')).toBe('factory\n')
+    expect(readlinkSync(join(variable, 'run'))).toBe('/run')
+    expect(mode(join(variable, 'lib'))).toBe('750')
+    expect(existsSync(join(variable, 'lib/other'))).toBe(true)
+  })
+})
+
+// The device's cp is busybox, whose -n does not merge into a directory that exists.
+test('no payload script copies with cp -n', () => {
+  const scripts = readdirSync(MICA).map(name => join(MICA, name)).filter(path => lstatSync(path).isFile())
+  const offending = scripts.filter(path => readFileSync(path, 'utf8').split('\n').some(line => !/^\s*#/.test(line) && /\bcp\s+(?:-[A-Za-z]*n\b|--no-clobber|--update=none)/.test(line)))
+  expect(offending).toEqual([])
 })
 
 describe('mica-boot-failure', () => {

@@ -31,7 +31,7 @@ RUN --mount=type=bind,from=cache,target=/cache \
     [ -n "${MICA_BUILD_PINS}" ] || { echo 'error: no build packages were passed' >&2; exit 1; }; \
     set --; \
     for sha in ${MICA_BUILD_PINS}; do \
-        deb="/cache/debs/${sha}.deb"; \
+        deb="/cache/sha256/${sha}"; \
         [ "$(sha256sum "$deb" | cut -d' ' -f1)" = "$sha" ] || { echo "error: $deb is not the pinned build package" >&2; exit 1; }; \
         set -- "$@" "$deb"; \
     done; \
@@ -91,6 +91,6 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
         cat /in/LICENSE.LGPL2.1; \
     } >/stage/usr/share/doc/mica-systemd-boot/copyright; \
     chmod 0644 /stage/usr/share/doc/mica-systemd-boot/copyright; \
-    bun /tooling/debs/pack-cli.ts --stage /stage --control /in/debs/mica-systemd-boot/control --out /out
+    bun /tooling/src/cli.ts deb pack --arch "$MICA_DEB_ARCH" --root /stage --control /in/debs/mica-systemd-boot/control --out /out
 FROM scratch
 COPY --from=pack /out/*.deb /

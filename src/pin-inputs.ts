@@ -5,12 +5,12 @@ import type { Arch, Row } from './lock.ts'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { streamToFile } from '@mica/build-tools'
 import { declared } from './debs/docker.ts'
 import { fail } from './errors.ts'
 import { output } from './exec.ts'
 import { buildSnapshot, formatRows, lines, selectRuntime } from './lock.ts'
 import { REPO, sources } from './pins.ts'
-import { sha256File } from './verify.ts'
 
 // The inputs every package under debs/ declares; the archives themselves, never
 // their closure: nothing here is installed.
@@ -156,9 +156,10 @@ async function resolve(request: { what: string, lists: string[], roots: string[]
         continue
       const { url, file } = printedUri(line)
       const partial = join(work, file)
-      const fetched = Bun.spawnSync([process.execPath, join(import.meta.dir, 'fetch.ts'), url, partial], { stdio: ['ignore', 'inherit', 'inherit'] })
-      if (fetched.exitCode !== 0)
-        fail(`download failed: ${url}`)
+      const response = await fetch(url, { signal: AbortSignal.timeout(600_000) }).catch(() => undefined)
+      if (!response?.ok)
+        fail(`download failed: ${url}${response ? ` (HTTP ${response.status})` : ''}`)
+      const got = await streamToFile(response, partial)
       const [name = '', version = '', architecture = ''] = output(
         ['dpkg-deb', '-W', '--showformat=${Package}\t${Version}\t${Architecture}', partial],
         `reading ${file}`,
@@ -166,7 +167,7 @@ async function resolve(request: { what: string, lists: string[], roots: string[]
       // Checked against the signed index's SHA256; print-uris may report MD5.
       const record = output(['apt-cache', ...apt, 'show', '--no-all-versions', `${name}:${architecture}=${version}`], `reading the index record of ${file}`)
       const sha256 = /^SHA256: ([0-9a-f]{64})$/m.exec(record)?.[1]
-      if (!sha256 || await sha256File(partial) !== sha256)
+      if (!sha256 || got !== sha256)
         fail(`SHA256 mismatch downloading ${url}`)
       rows.push({ name, version, architecture, sha256, url: decodeURIComponent(url), consumers: (attribution.get(file) ?? []).sort() })
     }

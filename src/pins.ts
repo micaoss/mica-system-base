@@ -1,9 +1,9 @@
+import type { Input } from '@mica/build-tools'
 import type { Arch } from './lock.ts'
-import type { Lock, Pin } from './release-lock.ts'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { checkLocks, modeOf, resolveImage } from '@mica/build-tools'
 import { fail } from './errors.ts'
-import { readInputs, underCi } from './release-lock.ts'
 
 export const REPO = resolve(import.meta.dir, '..')
 
@@ -30,14 +30,14 @@ function text(record: Record<string, unknown>, key: string, file: string, patter
 // The build environment. environment.json holds the local tag of the environment
 // image per architecture and the Bun the base image carries; every image comes
 // from locks/mica-build-env.lock, that release's lock committed unchanged beside
-// its pin locks/pins/mica-build-env.pin: its own base image, and the C image for
-// the packages compiled from source, each by platform manifest; and from its
-// upstream rows, by original reference, the BuildKit Dockerfile frontend and the
-// BuildKit the builder runs.
+// its pin locks/pins/mica-build-env.pin, read by mica-build-tools: its own base
+// image, and the C image for the packages compiled from source, each by platform
+// manifest; and from its upstream rows the BuildKit Dockerfile frontend and the
+// BuildKit the builder runs. `mica-tools locks verify` holds the lock to its
+// release.
 export interface Environment {
   image: string
   bun: string
-  buildEnv: Pin
   base: Record<Arch, string>
   c: Record<Arch, string>
   frontend: string
@@ -48,56 +48,30 @@ export const BUILD_ENV = 'mica-build-env'
 const FRONTEND = 'docker/dockerfile:1-labs'
 const BUILDKIT = 'moby/buildkit:'
 
-// The images this repository takes out of the build-env lock.
-export function buildEnvImages(lock: Lock): Omit<Environment, 'image' | 'bun' | 'buildEnv'> {
-  const images = lock.rows.filter(row => row[0] === 'image')
-  const image = (name: string, platform: string): string => {
-    const found = images.filter(row => row[1] === BUILD_ENV && row[2] === name && row[3] === platform)
-    if (found.length !== 1)
-      fail(`locks/${BUILD_ENV}.lock names no image ${BUILD_ENV} ${name} ${platform}`)
-    return found[0]![4]!
-  }
-  const platforms = (name: string): Record<Arch, string> => ({ amd64: image(name, 'amd64'), arm64: image(name, 'arm64') })
-  // An upstream image by its name, or by its path when the tag is the lock's to choose.
-  const upstream = (name: string): string => {
-    const rows = images.filter(row => row[1] === 'upstream' && (name.endsWith(':') ? row[2]!.startsWith(name) : row[2] === name))
-    const references = new Set(rows.filter(row => row[3] === 'amd64' || row[3] === 'arm64').map(row => `${row[2]} ${row[4]}`))
-    if (references.size !== 1 || !['amd64', 'arm64'].every(platform => rows.some(row => row[3] === platform)))
-      fail(`locks/${BUILD_ENV}.lock does not name ${name.endsWith(':') ? `one ${name}<tag>` : name} as one upstream image for amd64 and arm64`)
-    return [...references][0]!.split(' ')[1]!
-  }
-  return { base: platforms('base'), c: platforms('c'), frontend: upstream(FRONTEND), buildkit: upstream(BUILDKIT) }
-}
-
-// Where an asset of the pinned mica-build-env release is downloaded from.
-export function buildEnvAsset(pin: Pin, asset: string): string {
-  return `https://github.com/micaoss/${pin.repository}/releases/download/${pin.release}/${asset}`
+// The images this repository takes out of the build-env lock. BuildKit is named by
+// its path: its tag is the lock's to choose, and there must be exactly one.
+export function buildEnvImages(inputs: Input[], locks: string): Omit<Environment, 'image' | 'bun'> {
+  const image = (selector: string): string => resolveImage(selector, inputs, locks)
+  const platforms = (name: string): Record<Arch, string> => ({ amd64: image(`${BUILD_ENV}:${name}@amd64`), arm64: image(`${BUILD_ENV}:${name}@arm64`) })
+  const input = inputs.find(entry => entry.lock.repository === BUILD_ENV)
+  if (!input)
+    fail(`locks/ has no ${BUILD_ENV}.lock`)
+  const buildkit = [...new Set(input.lock.rows.filter(row => row[0] === 'image' && row[1] === 'upstream' && row[2]!.startsWith(BUILDKIT)).map(row => row[2]!))]
+  if (buildkit.length !== 1)
+    fail(`locks/${BUILD_ENV}.lock does not name one ${BUILDKIT}<tag>`)
+  return { base: platforms('base'), c: platforms('c'), frontend: image(`upstream:${FRONTEND}`), buildkit: image(`upstream:${buildkit[0]}`) }
 }
 
 export function environment(): Environment {
   const record = readJson('environment.json')
   if (Object.keys(record).sort().join() !== 'bun,image')
     fail('environment.json: expected exactly image and bun')
-  const input = readInputs(join(REPO, 'locks'), underCi()).get(BUILD_ENV)
-  if (!input)
-    fail(`locks/ has no ${BUILD_ENV}.lock`)
+  const locks = join(REPO, 'locks')
   return {
     image: text(record, 'image', 'environment.json', /^[a-z0-9][\w./-]*$/),
     bun: text(record, 'bun', 'environment.json', /^\d+\.\d+\.\d+$/),
-    buildEnv: input.pin,
-    ...buildEnvImages(input.lock),
+    ...buildEnvImages(checkLocks(locks, modeOf()), locks),
   }
-}
-
-// The pinned mica-build-env release: its SHA256SUMS hashes to the pinned value
-// and lists exactly the committed lock, byte for byte.
-export function assertBuildEnvRelease(pin: Pin, sums: Uint8Array, lock: Uint8Array): void {
-  const hash = (bytes: Uint8Array): string => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
-  const release = `${pin.repository} ${pin.release}`
-  if (hash(sums) !== pin.sha256sums)
-    fail(`the SHA256SUMS of ${release} hashes to ${hash(sums)}, not the pinned ${pin.sha256sums}`)
-  if (new TextDecoder().decode(sums) !== `${hash(lock)}  ${pin.repository}.lock\n`)
-    fail(`locks/${pin.repository}.lock (sha256 ${hash(lock)}) is not the one file the SHA256SUMS of ${release} lists`)
 }
 
 // /etc/mica-build/base.env of a pulled environment image: the build-env base image

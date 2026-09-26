@@ -2,6 +2,17 @@
 # Create the DATA/state leaves and seed hostname and random-seed; existing
 # content is kept.
 set -eu
+# Copy what <into> lacks of <from>, entry by entry: busybox cp -n skips a
+# directory that exists whole rather than merging into it. find lists a
+# directory before its contents, and a directory copied whole brings them along;
+# an entry <into> already holds, a directory included, is left as it is.
+copy_missing() { # <from> <into>
+    (cd "$1" && find . -mindepth 1 -exec sh -c '
+        into=$1; shift
+        for path do
+            [ -e "$into/$path" ] || [ -L "$into/$path" ] || cp -a "$path" "$into/$path"
+        done' copy_missing "$2" {} +)
+}
 state=/mnt/data/state
 [ -d "$state" ] && [ ! -L "$state" ] || exit 1
 ensure_dir() {
@@ -14,7 +25,7 @@ ensure_dir mica 0711
 for name in ssh bluetooth wpa_supplicant hostapd; do ensure_dir "$name" 0700; done
 for name in systemd-units quadlet; do ensure_dir "$name" 0755; done
 for name in wpa_supplicant hostapd; do
-    if [ -d "/etc/$name" ]; then cp -an "/etc/$name/." "$state/$name/"; fi
+    if [ -d "/etc/$name" ]; then copy_missing "/etc/$name" "$state/$name"; fi
 done
 for name in hostname random-seed; do
     [ ! -L "$state/$name" ] || { echo "mica-seed-state: symbolic state file $name" >&2; exit 1; }

@@ -154,25 +154,28 @@ because a reader cannot reconstruct them from the files:
 | `sources.json`, `ids.json` | the Debian snapshot and suite the lock is resolved from (the release's `apt` row), and fixed system IDs |
 | `upstream.pkgs` | the Debian packages later stages install, pinned as the release lock's `upstream` rows |
 | `debs/consumers.pkgs` | the consumer registry: the local packages a selection may name |
-| `debs/<package>/` | a package: `control`, `Dockerfile`, optional `postinst`, and `build-sources.json` for the snapshot its build tools are resolved from |
+| `debs/<package>/` | a package: `control`, `Dockerfile`, `mica-inputs`, optional `postinst`, and `build-sources.json` for the snapshot its build tools are resolved from |
 | `payload/` | the files `mica-system` installs |
-| `src/`, `tests/` | the build tooling and its tests (Bun + TypeScript); `tests/vectors/` is a copy of the release lock test vectors |
+| `src/`, `tests/` | the build tooling and its tests (Bun + TypeScript), on `@mica/build-tools` |
 | `environment.json` | the local environment image tag and the Bun of the base image |
+| `locks/mica-build-tools.pin`, `bin/mica-tools` | the mica-build-tools commit this repository runs, checked out under `repos/mica-build-tools/`, and its bootstrap; `repos/sha256/` is the source cache |
 
 ## Commands
 
 ```sh
 bun install
+bin/mica-tools sync                          # check out the pinned mica-build-tools
 bun src/container.ts environment             # check locks/ against the mica-build-env release, pull its base image
 bun run check                                # lint, typecheck, tests in the environment image
-bun src/container.ts cache --arch amd64 --all   # download and verify the pinned archives
+bun src/container.ts cache --arch amd64 --all   # download (MICA_MIRROR first) and verify the pinned archives into repos/sha256
 bun src/container.ts debs [--arch amd64]    # build the packages into _out/debs/<arch>/pool
 bun src/container.ts rootfs --arch amd64     # assemble and gate _out/rootfs/<arch>
 bun src/publish.ts layer --arch amd64        # pack that root into _out/layers/<arch>
-bun src/publish.ts gate                      # both pools as one build (all archives identical)
+bun src/publish.ts gate                      # both pools as one build: the declared packages, pool gate, pool guard
 bun src/container.ts pin-inputs              # re-pin the input, build and upstream rows of locks/upstream.lock
 bun src/publish.ts lock --dry-run --tag 20260914-0130  # the release lock of this build
-bun src/publish.ts pool | rootfs | lock      # publish the pools, the layers and the lock (CI)
+bin/mica-tools release pool <tag> --arch amd64 --arch arm64  # publish the pools (CI)
+bun src/publish.ts rootfs <tag> | lock <tag>   # publish the root, then attach the lock (CI)
 ```
 
 CI builds each architecture on its own native runner (`ubuntu-latest`,
@@ -191,10 +194,12 @@ changes either, and no package carries a commit or a release. A packaging-only
 change bumps the Debian revision, an upstream change the upstream part; both
 bump the epoch. `bun src/publish.ts gate` (CI) and the release compare every
 package with the latest release: the same version must record the same
-`mica.inputs` (the sha256 over its files, the packer, its lock rows and its
-architecture; build-env images excluded) and rebuild to the published bytes,
-which the release then reuses; a lower version is refused.
+`mica.inputs` (mica-build-tools `inputs`: the sha256 over the files and lock
+rows its `mica-inputs` declares and its architecture; build-env images and the
+packer excluded) and rebuild to the published bytes, which the release then
+reuses; a lower version is refused (`pool guard`).
 
-A package is added by creating `debs/<package>/` with a `control` template and a
-`Dockerfile` whose first line declares `# mica-deb: arches=all|amd64,arm64
+A package is added by creating `debs/<package>/` with a `control` template, a
+`mica-inputs` declaring what decides its bytes, and a `Dockerfile` that packs
+with the tooling context's `deb pack` and whose first line declares `# mica-deb: arches=all|amd64,arm64
 [inputs=...] [build=...] [sources=...]`.

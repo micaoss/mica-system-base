@@ -4,7 +4,7 @@ import { defineConfig } from 'eslint/config'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig(
-  { ignores: ['docs/**', '_out/**'] },
+  { ignores: ['docs/**', '_out/**', 'repos/**'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   stylistic.configs.customize({ indent: 2, quotes: 'single', semi: false, jsx: false }),

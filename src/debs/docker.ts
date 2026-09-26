@@ -4,8 +4,10 @@
 // archives into the pools.
 //
 // A package is a directory under debs/ with a control template, which declares
-// the package's own Version and Source-Date-Epoch (src/debs/pack.ts), and a
-// Dockerfile whose first line declares what it is built for and from:
+// the package's own Version and Source-Date-Epoch (mica-build-tools `deb pack`),
+// a mica-inputs naming everything that decides its bytes (mica-build-tools
+// `inputs`), and a Dockerfile whose first line declares what it is built for and
+// from:
 //
 //   # mica-deb: arches=all|amd64,arm64 [inputs=<input>,...] [build=<package>,...] [sources=<name>,...]
 //
@@ -18,15 +20,16 @@
 // source archives pinned as source.<name>, passed as MICA_SOURCE_<NAME>_VERSION,
 // _URL and _SHA256 for the build to fetch and check. MICA_BUILD_IMAGE is the native environment image and
 // MICA_BUILD_C_IMAGE the C image of the package's architecture, both by digest;
-// the builder emulates a foreign architecture. An `all` package is built once and
-// filed into both pools.
+// the builder emulates a foreign architecture. The `tooling` context is the pinned
+// mica-build-tools checkout, whose `deb pack` makes the archive. An `all` package
+// is built once and filed into both pools.
 import type { Arch, Row } from '../lock.ts'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { packDeclaration } from '@mica/build-tools'
 import { fail } from '../errors.ts'
 import { attached } from '../exec.ts'
-import { ARCHES, selectBuild, selectInputs, selectSource, sourceRows } from '../lock.ts'
-import { declaration } from './pack.ts'
+import { ARCHES, selectBuild, selectInputs, selectSource } from '../lock.ts'
 
 export interface Declared {
   name: string
@@ -59,45 +62,9 @@ export function declared(repo: string): Declared[] {
     if (!arches.length || !(arches.join() === 'all' || arches.every(arch => (ARCHES as string[]).includes(arch))))
       fail(`debs/${name}/Dockerfile declares arches=${arches.join(',')}; use all, or amd64 and/or arm64`)
     const control = join(root, name, 'control')
-    const { version, epoch } = declaration(readFileSync(control, 'utf8'), `debs/${name}/control`)
+    const { version, epoch } = packDeclaration(readFileSync(control, 'utf8'), `debs/${name}/control`)
     return { name, arches: arches as Declared['arches'], inputs: fields.get('inputs') ?? [], build: fields.get('build') ?? [], sources: fields.get('sources') ?? [], version, epoch }
   })
-}
-
-// The packer and what it imports, run from the `tooling` context.
-const TOOLING = ['src/debs/pack.ts', 'src/debs/pack-cli.ts', 'src/errors.ts', 'src/exec.ts']
-
-function files(repo: string, path: string): string[] {
-  const stats = lstatSync(join(repo, path))
-  return stats.isDirectory() ? readdirSync(join(repo, path)).flatMap(name => files(repo, `${path}/${name}`)) : [path]
-}
-
-// mica.inputs of one package for one architecture: the sha256 of a sorted
-// manifest of everything in this repository that determines its bytes -- its
-// debs/<package>/ (the control template with the declared version and epoch),
-// debs/copyright and payload/ when its Dockerfile reads them, the packer, the
-// rows of locks/upstream.lock it builds from, and the architecture. The
-// build-env images are left out: a toolchain that changes the bytes fails the
-// byte-identical comparison with the published package instead.
-export function inputsHash(repo: string, entry: Declared, arch: Arch | 'all'): string {
-  const dockerfile = readFileSync(join(repo, 'debs', entry.name, 'Dockerfile'), 'utf8')
-  const paths = [
-    `debs/${entry.name}`,
-    ...(dockerfile.includes('debs/copyright') ? ['debs/copyright'] : []),
-    ...(dockerfile.includes('from=payload') ? ['payload'] : []),
-    ...(dockerfile.includes('from=tooling') ? TOOLING : []),
-  ].flatMap(path => files(repo, path))
-  const hash = (bytes: Uint8Array | string): string => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
-  const lines = paths.map((path) => {
-    const stats = lstatSync(join(repo, path))
-    const content = stats.isSymbolicLink() ? `link:${readlinkSync(join(repo, path))}` : new Uint8Array(readFileSync(join(repo, path)))
-    return `${hash(content)} ${stats.isSymbolicLink() ? 'l' : stats.mode & 0o111 ? 'x' : '-'} ${path}`
-  })
-  const wanted = (name: string): boolean => entry.inputs.some(input => name === `input.${input}`) || name.startsWith(`build.${entry.name}.`) || entry.sources.some(source => name === `source.${source}`)
-  const rows = sourceRows(repo).filter(([name = '', target]) => wanted(name) && (arch === 'all' || target === arch || target === 'all')).map(row => `row ${row.join(' ')}`)
-  const bytes = (value: string): Buffer => Buffer.from(value)
-  const manifest = [...lines.sort((a, b) => Buffer.compare(bytes(a.slice(67)), bytes(b.slice(67)))), ...rows.sort((a, b) => Buffer.compare(bytes(a), bytes(b))), `arch ${arch}`]
-  return hash(`${manifest.join('\n')}\n`)
 }
 
 const argName = (prefix: string, name: string): string => `${prefix}_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`
@@ -172,7 +139,7 @@ export function buildDebs(context: BuildContext, only: string[] = [], target?: A
         '--build-context',
         `debs=${join(context.repo, 'debs')}`,
         '--build-context',
-        `tooling=${join(context.repo, 'src')}`,
+        `tooling=${join(context.repo, 'repos/mica-build-tools')}`,
         '--build-context',
         `cache=${context.cacheDir}`,
         ...args,
