@@ -1,6 +1,6 @@
 // What pin-inputs reads out of `apt-get --print-uris`.
 import { expect, test } from 'bun:test'
-import { printedUri } from '../src/pin-inputs.ts'
+import { printedUri, tagPinnedRoots } from '../src/pin-inputs.ts'
 
 test('a --print-uris line gives its URL and file name, with or without the index hash', () => {
   const main = '\'https://snapshot.debian.org/archive/debian/20260905T000000Z/pool/main/p/pkgconf/pkg-config_1.8.1-4_amd64.deb\' pkg-config_1.8.1-4_amd64.deb 13768 SHA256:0a1b'
@@ -13,4 +13,21 @@ test('a --print-uris line gives its URL and file name, with or without the index
 test('a line that is not a --print-uris line is refused', () => {
   expect(() => printedUri('Reading package lists...')).toThrow('unexpected apt-get --print-uris line')
   expect(() => printedUri('\'https://example.invalid/x.deb\' x.deb size')).toThrow('unexpected apt-get --print-uris line')
+})
+
+test('a root of upstream.pkgs the base lock pins is tagged for later stages, and only while it is a root', () => {
+  const selected = new Map([
+    ['bash', 'base'],
+    ['coreutils', 'base,mica-system'],
+    ['iw', 'upstream-iw'],
+    ['sed', 'base,upstream-sed'],
+    ['systemd', 'base,mica-system'],
+  ])
+  expect(tagPinnedRoots(selected, ['bash', 'coreutils', 'iw'])).toEqual(new Map([
+    ['bash', 'base,upstream-bash'],
+    ['coreutils', 'base,mica-system,upstream-coreutils'],
+    ['iw', 'upstream-iw'],
+    ['sed', 'base'],
+    ['systemd', 'base,mica-system'],
+  ]))
 })

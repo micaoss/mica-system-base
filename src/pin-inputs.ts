@@ -74,6 +74,21 @@ export function printedUri(line: string): { url: string, file: string } {
   return { url: match[1]!, file: match[2]! }
 }
 
+// A root of upstream.pkgs that the base lock already pins -- a package the floor
+// installs and then purges, like coreutils -- resolves to no row of its own, yet a
+// later stage still needs it pinned: its line in packages.tsv carries
+// upstream-<root> beside its other consumers, for as long as it is a root. Lines
+// that are upstream-only are pin-inputs' own and pass through untouched.
+export function tagPinnedRoots(selected: Map<string, string>, roots: string[]): Map<string, string> {
+  return new Map([...selected].map(([name, list]) => {
+    const consumers = list.split(',')
+    if (consumers.every(consumer => consumer.startsWith('upstream-')))
+      return [name, list]
+    const kept = consumers.filter(consumer => !consumer.startsWith('upstream-'))
+    return [name, [...kept, ...(roots.includes(name) ? [`upstream-${name}`] : [])].join(',')]
+  }))
+}
+
 // `attribute` tags each resolved row upstream-<root> for every root whose own
 // closure contains it.
 async function resolve(request: { what: string, lists: string[], roots: string[], install: boolean, foreign?: boolean, attribute?: boolean, keep?: (row: Row) => boolean }, arch: Arch, destination: string | undefined): Promise<void> {

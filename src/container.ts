@@ -8,7 +8,8 @@ import { nonDirectories } from './bootstrap.ts'
 import { buildDebs, declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
-import { ARCHES, lockRows, parseRows, SELECTIONS, sourceRows, UPSTREAM_LOCK } from './lock.ts'
+import { ARCHES, lines as readLines, lockRows, parseRows, SELECTIONS, sourceRows, UPSTREAM_LOCK } from './lock.ts'
+import { tagPinnedRoots } from './pin-inputs.ts'
 import { assertBuildEnvRelease, assertEnvironmentImage, BUILD_ENV, buildEnvAsset, environment, REPO } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import { BASE_PACKAGES, ISSUE_ENV } from './rootfs.ts'
@@ -319,7 +320,7 @@ async function pinInputs(check: boolean): Promise<void> {
   resolved.push(...lockRows('', upstream))
   const lockFile = join(REPO, UPSTREAM_LOCK)
   const selectionFile = join(REPO, SELECTIONS)
-  const selected = new Map(readFileSync(selectionFile, 'utf8').split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t') as [string, string]))
+  const selected = tagPinnedRoots(new Map(readFileSync(selectionFile, 'utf8').split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t') as [string, string])), readLines(join(REPO, 'upstream.pkgs')))
   const upstreamOnly = (name: string): boolean => selected.get(name)?.split(',').every(consumer => consumer.startsWith('upstream-')) ?? false
   const regenerated = (name: string): boolean => name.startsWith('input.') || name.startsWith('build.') || upstreamOnly(name)
   const rows = [...sourceRows(REPO).filter(([name = '']) => !regenerated(name)).map(row => ['source', ...row]), ...resolved]
