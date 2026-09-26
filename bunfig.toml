@@ -1,0 +1,5 @@
+# Tests are found under tests/ only. A root built into _out/rootfs carries
+# dev/fd -> /proc/self/fd, and a discovery walk from the repository root follows it
+# into the host's /proc and never ends.
+[test]
+root = "tests"
