@@ -430,7 +430,9 @@ async function main(options: Options): Promise<number> {
   const native = hostArch()
   switch (options.command) {
     case 'test':
-      return dockerRun({ arch: native, network: 'none', mounts: [[REPO, IN_CONTAINER, 'ro']], workdir: IN_CONTAINER, command: ['bun', 'test'] })
+      // The checkout belongs to the host user and the tests run as root, so git --
+      // mica-build-tools' own calls included -- is told the mount is safe.
+      return dockerRun({ arch: native, network: 'none', mounts: [[REPO, IN_CONTAINER, 'ro']], workdir: IN_CONTAINER, command: ['env', 'GIT_CONFIG_COUNT=1', 'GIT_CONFIG_KEY_0=safe.directory', `GIT_CONFIG_VALUE_0=${IN_CONTAINER}`, 'bun', 'test'] })
     case 'test-bootstrap':
       await testBootstrap(options)
       return 0
