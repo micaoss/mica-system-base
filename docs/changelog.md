@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-26 11:05 [release]
+
+Release 20260926-1045, built from 4cd1a12 on mica-build-env 20260916-0735: the first release
+whose root is the floor. Breaking for composers; docs/floor-and-options.md says what to add.
+Verified from the published artefacts: SHA256SUMS checks the lock; its package rows add
+mica-ssh 1.0.0-1 and mica-tzdata 2026b-mica1 and move mica-system to 1.1.0-1 on both
+architectures, and the rows of mica-busybox, mica-ca-trust, mica-systemd-boot, mica-wifi and
+mica-wifi-ap are byte-identical to 20260926-0933; every option that is a Debian package
+(login, nftables, kmod, procps, dmsetup, dropbear-bin, bash and the GNU command set) is an
+upstream row tagged with its own name; both unowned-path assets list 189 paths, none without
+a named writer.
+
 ## 2026-09-26 10:45 [progress]
 
 The root is the floor (docs/floor-and-options.md, plan 20260926-0938-rootfs-minimal):

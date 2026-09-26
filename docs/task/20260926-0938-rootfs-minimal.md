@@ -1,6 +1,6 @@
 # 20260926-0938-rootfs-minimal Publish a minimal rootfs beside the default one
 
-- **status**: in_progress
+- **status**: completed
 - **priority**: P2
 - **owner**: claude/rootfs-minimal
 - **createdAt**: 2026-09-26 09:38
@@ -34,3 +34,8 @@ the release (CI builds arm64), and mica-build following docs/floor-and-options.m
 
 2026-09-26 11:20: dmsetup made an option at the user's request (plan Annotations, 8);
 rebuilt on amd64: 104.3 MB, 98 packages, `bun run check` 244 pass. Released next.
+
+2026-09-26 11:05: released as 20260926-1045 and verified from the published artefacts.
+mica-build follows docs/floor-and-options.md.
+
+- complete: Released as 20260926-1045.

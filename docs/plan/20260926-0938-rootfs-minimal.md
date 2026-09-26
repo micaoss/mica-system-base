@@ -1,6 +1,6 @@
 # 20260926-0938-rootfs-minimal One floor rootfs and optional packages
 
-- **status**: implementing
+- **status**: completed
 - **createdAt**: 2026-09-26 09:38
 - **approvedAt**: 2026-09-26 10:06
 - **relatedTask**: 20260926-0938-rootfs-minimal
