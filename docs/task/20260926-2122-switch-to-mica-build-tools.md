@@ -1,6 +1,6 @@
 # 20260926-2122-switch-to-mica-build-tools Switch to mica-build-tools and mica-build-env 20260926-2110
 
-- **status**: in_progress
+- **status**: completed
 - **priority**: P1
 - **owner**: claude/build-tools-switch
 - **createdAt**: 2026-09-26 21:22
@@ -23,3 +23,5 @@ Switching to mica-build-tools
 ## Notes
 
 (none)
+
+- complete: Released 20260926-2254 on mica-build-tools 5467dbc and mica-build-env 20260926-2110

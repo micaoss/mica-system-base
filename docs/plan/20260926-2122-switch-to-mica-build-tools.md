@@ -1,6 +1,6 @@
 # 20260926-2122-switch-to-mica-build-tools Switch to mica-build-tools and mica-build-env 20260926-2110
 
-- **status**: implementing
+- **status**: completed
 - **createdAt**: 2026-09-26 21:22
 - **approvedAt**: 2026-09-26 21:25
 - **relatedTask**: 20260926-2122-switch-to-mica-build-tools

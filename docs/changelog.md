@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-26 23:05 [release]
+
+Release 20260926-2254, built from 921bc9c on mica-build-env 20260926-2110 and mica-build-tools
+5467dbc, the first published through `release pool` and `release attach`. Verified from the
+published artefacts, read anonymously: SHA256SUMS checks the lock, which passes `lock check`;
+both data assets hash to their rows; the pools are indented JSON with a `mica.inputs` per
+layer equal to `mica-tools inputs` of this checkout; every package moved once (mica-busybox
+1.38.0-mica2, mica-ca-trust 20250419-mica3, mica-ssh 1.0.0-3, mica-system 1.1.0-2,
+mica-systemd-boot 257.13-mica2, mica-tzdata 2026c-mica2, mica-wifi and mica-wifi-ap 2.12-mica2),
+and every archive but mica-system is byte-identical to the local build of the same inputs; the
+amd64 root's /etc/issue names 20260926-2254 at 921bc9c, its mica-seed-var copies entry by
+entry, and it carries no bash.
+
 ## 2026-09-26 22:40 [progress]
 
 The switch to mica-build-tools (plan 20260926-2122), pinned at `5467dbc`, with mica-build-env
