@@ -1,11 +1,11 @@
 #!/bin/sh
-# Refuse a root in which dropbear.service or nftables.service is enabled, and
-# create the operator account mica (uid and gid 1000).
+# Refuse a root in which nftables.service is enabled, and create the operator
+# account mica (uid and gid 1000).
 #
-# Enablement is payload: this script links nothing and removes nothing. The
-# presets 50-mica-dropbear.preset and 50-mica-nftables.preset keep both units
-# disabled; the checks below turn a link that arrived anyway into a failed
-# build. useradd, groupadd and chage come from passwd, in Depends.
+# Enablement is payload: this script links nothing and removes nothing. The preset
+# 50-mica-nftables.preset keeps the unit disabled wherever a product adds the
+# firewall; the check below turns a link that arrived anyway into a failed build.
+# useradd, groupadd and chage come from passwd, in Depends.
 set -e
 
 case "$1" in
@@ -13,12 +13,6 @@ configure) ;;
 abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
 *) echo "error: postinst called with unknown argument '$1'" >&2; exit 1 ;;
 esac
-
-# micad enables dropbear.service at runtime scope after writing its arguments.
-DROPBEAR_LINK=/etc/systemd/system/multi-user.target.wants/dropbear.service
-[ ! -e "${DROPBEAR_LINK}" ] && [ ! -L "${DROPBEAR_LINK}" ] ||
-    { echo "error: ${DROPBEAR_LINK} exists, so dropbear.service would start at boot. SSH is disabled in the image and micad enables it at runtime; mica-system ships /usr/lib/systemd/system-preset/50-mica-dropbear.preset to keep it disabled, and something enabled it anyway" >&2; exit 1; }
-echo "dropbear.service left DISABLED in the image (micad owns the lifecycle)"
 
 # nftables.service runs `nft -f /etc/nftables.conf`, which begins with
 # `flush ruleset`: enabled, it would clear the container network's rules at boot.
@@ -30,7 +24,7 @@ echo "nftables.service left DISABLED in the image (the tool ships; no ruleset is
 NAME=mica
 ID=1000
 HOME_DIR=/home/mica
-LOGIN_SHELL=/bin/bash
+LOGIN_SHELL=/bin/sh
 COMMENT="mica operator"
 
 test -x "${LOGIN_SHELL}" ||

@@ -1,5 +1,5 @@
-// The base-root invariants, against a minimal root that satisfies them and the
-// one change that breaks each.
+// The floor's invariants, against a minimal root that satisfies them and the one
+// change that breaks each.
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterAll, expect, test } from 'bun:test'
@@ -10,6 +10,11 @@ import { workdir } from './fixture.ts'
 const work = workdir('rootfs')
 afterAll(() => rmSync(work, { recursive: true, force: true }))
 
+// The commands the lifecycle helpers call: busybox applets, except the four a
+// floor package provides.
+const APPLETS = ['awk', 'basename', 'cat', 'chmod', 'chown', 'cp', 'df', 'dirname', 'grep', 'head', 'mkdir', 'mount', 'mv', 'printf', 'readlink', 'rm', 'sed', 'sleep', 'stat', 'sync', 'test', 'tr', 'umount']
+const PROVIDED = ['usr/bin/findmnt', 'usr/sbin/setquota', 'usr/bin/systemctl', 'usr/bin/systemd-repart']
+
 function root(name: string): string {
   const path = join(work, name)
   const put = (file: string, content = ''): void => {
@@ -19,24 +24,22 @@ function root(name: string): string {
   put('etc/hostname', 'mica\n')
   put('etc/issue', issue('20260914-0130', 'c'.repeat(40), '2026-09-14T01:40:00Z'))
   put('etc/machine-id')
+  put('etc/passwd', 'root:x:0:0:root:/root:/bin/sh\nsystemd-network:x:998:998::/:/usr/sbin/nologin\nmica:x:1000:1000:mica operator:/home/mica:/bin/sh\n')
   put('etc/shadow', 'root:*:18262:0:99999:7:::\nsystemd-network:*:18262:0:99999:7:::\nmica:!:18262:0:99999:7:::\n')
   put('etc/gshadow', 'root:*::\nnetdev:*::\nmica:!::\n')
-  put('etc/systemd/system/dropbear.service', '[Unit]\nRequires=mica-shadow-reconcile.service\nAfter=network.target mica-shadow-reconcile.service\n')
-  put('usr/lib/systemd/system/nftables.service', '[Unit]\n')
-  put('usr/lib/systemd/system-preset/50-mica-dropbear.preset', 'disable dropbear.service\n')
   put('usr/lib/systemd/system-preset/50-mica-nftables.preset', 'disable nftables.service\n')
-  for (const tool of ['usr/bin/busybox', 'usr/sbin/nft', 'usr/sbin/dmsetup'])
+  // No getty starts without the console option's login.
+  for (const unit of ['getty@', 'serial-getty@'])
+    put(`etc/systemd/system/${unit}.service.d/10-mica-console.conf`, '[Unit]\nConditionPathExists=/usr/bin/login\n')
+  // busybox is the command set: /usr/bin/sh and every applet the helpers call link to it.
+  put('usr/bin/busybox')
+  symlinkSync('busybox', join(path, 'usr/bin/sh'))
+  for (const applet of APPLETS)
+    symlinkSync('/usr/bin/busybox', join(path, 'usr/bin', applet))
+  for (const tool of PROVIDED)
     put(tool)
-  // dropbear reaches an account through crypt(3), not through PAM: neither its
-  // Depends nor its binary may name libpam.
-  put('usr/sbin/dropbear', 'ELF\0libtomcrypt.so.1\0libc.so.6\0')
-  put('var/lib/dpkg/status', 'Package: busybox\nStatus: install ok installed\n\nPackage: dropbear-bin\nStatus: install ok installed\nDepends: libc6, libcrypt1, libtomcrypt1, libtommath1, zlib1g\n\n')
+  put('var/lib/dpkg/status', 'Package: systemd\nStatus: install ok installed\n\nPackage: mica-busybox\nStatus: install ok installed\n\n')
   mkdirSync(join(path, 'etc/systemd/system/multi-user.target.wants'), { recursive: true })
-  // The Base root ships the tty1 enablement link; systemd's preset writes it.
-  // Whether the device runs a getty there is the product's decision, not this
-  // root's -- the products disable getty@.service so tty1 stays idle.
-  mkdirSync(join(path, 'etc/systemd/system/getty.target.wants'), { recursive: true })
-  symlinkSync('/usr/lib/systemd/system/getty@.service', join(path, 'etc/systemd/system/getty.target.wants/getty@tty1.service'))
   mkdirSync(join(path, 'mica'))
   return path
 }
@@ -47,7 +50,7 @@ test('a root that keeps every promise passes', () => {
 
 test('each broken promise is refused by name', () => {
   const linked = root('wants-link')
-  symlinkSync('/etc/systemd/system/dropbear.service', join(linked, 'etc/systemd/system/multi-user.target.wants/dropbear.service'))
+  symlinkSync('/usr/lib/systemd/system/nftables.service', join(linked, 'etc/systemd/system/multi-user.target.wants/nftables.service'))
   expect(() => assertBase(linked)).toThrow('enables or aliases a governed unit')
 
   const alias = root('alias')
@@ -107,21 +110,49 @@ test('each broken promise is refused by name', () => {
     expect(() => assertBase(dated)).toThrow(`/${file} has last-change days other than 18262: systemd-network:${day}`)
   }
 
-  const pamDepends = root('dropbear-pam-depends')
-  writeFileSync(join(pamDepends, 'var/lib/dpkg/status'), 'Package: dropbear-bin\nStatus: install ok installed\nDepends: libc6, libpam0g (>= 0.99.7.1)\n\n')
-  expect(() => assertBase(pamDepends)).toThrow('dropbear-bin depends on PAM')
+  // The options are not in the floor.
+  for (const option of ['dropbear-bin', 'nftables', 'procps', 'dmsetup', 'kmod', 'login', 'tzdata']) {
+    const installed = root(`option-${option}`)
+    writeFileSync(join(installed, 'var/lib/dpkg/status'), `Package: ${option}\nStatus: install ok installed\n\n`)
+    expect(() => assertBase(installed)).toThrow(`the floor has the option ${option} installed`)
+  }
+  // Nor the command set busybox replaces.
+  for (const gnu of ['bash', 'coreutils', 'dash', 'diffutils', 'findutils', 'grep', 'gzip', 'sed']) {
+    const installed = root(`gnu-${gnu}`)
+    writeFileSync(join(installed, 'var/lib/dpkg/status'), `Package: ${gnu}\nStatus: install ok installed\n\n`)
+    expect(() => assertBase(installed)).toThrow(`the floor has ${gnu} installed`)
+  }
+  const bash = root('bash-binary')
+  writeFileSync(join(bash, 'usr/bin/bash'), '')
+  expect(() => assertBase(bash)).toThrow('/usr/bin/bash')
 
-  const pamLinked = root('dropbear-pam-linked')
-  writeFileSync(join(pamLinked, 'usr/sbin/dropbear'), 'ELF\0libpam.so.0\0libc.so.6\0')
-  expect(() => assertBase(pamLinked)).toThrow('/usr/sbin/dropbear names libpam')
+  const dashSh = root('sh-not-busybox')
+  rmSync(join(dashSh, 'usr/bin/sh'))
+  symlinkSync('dash', join(dashSh, 'usr/bin/sh'))
+  expect(() => assertBase(dashSh)).toThrow('/usr/bin/sh is not busybox')
 
-  const noDropbear = root('no-dropbear-status')
-  writeFileSync(join(noDropbear, 'var/lib/dpkg/status'), 'Package: busybox\nStatus: install ok installed\n\n')
-  expect(() => assertBase(noDropbear)).toThrow('no installed dropbear-bin')
+  const noStat = root('no-stat')
+  rmSync(join(noStat, 'usr/bin/stat'))
+  expect(() => assertBase(noStat)).toThrow('no stat for the lifecycle helpers')
+  const noFindmnt = root('no-findmnt')
+  rmSync(join(noFindmnt, 'usr/bin/findmnt'))
+  expect(() => assertBase(noFindmnt)).toThrow('no findmnt for the lifecycle helpers')
 
-  const noTty1 = root('no-tty1')
-  rmSync(join(noTty1, 'etc/systemd/system/getty.target.wants/getty@tty1.service'))
-  expect(() => assertBase(noTty1)).toThrow('the Base root ships the tty1 enablement link')
+  for (const account of ['root', 'mica']) {
+    const shell = root(`shell-${account}`)
+    writeFileSync(join(shell, 'etc/passwd'), `root:x:0:0:root:/root:${account === 'root' ? '/bin/bash' : '/bin/sh'}\nmica:x:1000:1000:mica operator:/home/mica:${account === 'mica' ? '/bin/bash' : '/bin/sh'}\n`)
+    expect(() => assertBase(shell)).toThrow(`${account} logs in with /bin/bash, not /bin/sh`)
+  }
+
+  const gconv = root('gconv')
+  writeFileSync(join(gconv, 'usr/bin/placeholder'), '')
+  mkdirSync(join(gconv, 'usr/lib/x86_64-linux-gnu/gconv'), { recursive: true })
+  writeFileSync(join(gconv, 'usr/lib/x86_64-linux-gnu/gconv/UTF-16.so'), '')
+  expect(() => assertBase(gconv)).toThrow('gconv')
+
+  const getty = root('getty-unconditioned')
+  rmSync(join(getty, 'etc/systemd/system/serial-getty@.service.d/10-mica-console.conf'))
+  expect(() => assertBase(getty)).toThrow('serial-getty@.service')
 
   const openssh = root('openssh')
   mkdirSync(join(openssh, 'usr/sbin'), { recursive: true })

@@ -50,6 +50,12 @@ function root(name: string): string {
   mkdirSync(join(path, 'etc/alternatives'), { recursive: true })
   symlinkSync('/usr/bin/mawk', join(path, 'etc/alternatives/awk'))
   symlinkSync('default/keyboard', join(path, 'etc/vconsole.conf'))
+  // The floor's command set: links to busybox where the purged GNU packages had
+  // their commands, /usr/bin/sh among them.
+  put('usr/bin/busybox')
+  put('var/lib/dpkg/info/mica-busybox.list', '/usr/bin/busybox\n')
+  symlinkSync('/usr/bin/busybox', join(path, 'usr/bin/cp'))
+  symlinkSync('busybox', join(path, 'usr/bin/sh'))
   // Skipped: the dpkg database, documentation and the runtime directories.
   put('var/lib/dpkg/status', 'Package: login\n')
   put('usr/share/doc/login/copyright')
@@ -72,6 +78,8 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
     '/etc/subuid',
     '/etc/vconsole.conf',
     '/usr/bin/awk',
+    '/usr/bin/cp',
+    '/usr/bin/sh',
     '/var/lib/pam/auth',
     '/var/lib/systemd/deb-systemd-helper-enabled/dbus.service.dsh-also',
   ])
@@ -94,6 +102,8 @@ test('an unowned path is listed with its writer, and an owned one is not', () =>
   // An alternative names the tool and the package that installed the link.
   expect(writers.get('/etc/alternatives/awk')).toBe('update-alternatives (mawk.postinst)')
   expect(writers.get('/usr/bin/awk')).toBe('mawk.postinst')
+  expect(writers.get('/usr/bin/cp')).toBe('src/bootstrap.ts strip (a command of a purged GNU package, now busybox)')
+  expect(writers.get('/usr/bin/sh')).toBe('src/bootstrap.ts strip (a command of a purged GNU package, now busybox)')
   // What cannot be established says so; a guess would be a wrong rule downstream.
   expect(writers.get('/etc/nowhere.conf')).toBe('unknown')
   // The file is sorted, tab-separated and has one row per path.

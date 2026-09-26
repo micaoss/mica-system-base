@@ -2,14 +2,14 @@
 import type { Options } from './args.ts'
 import type { Row } from './lock.ts'
 import type { Ids } from './pins.ts'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fail } from './errors.ts'
 import { attached, capture, need, output } from './exec.ts'
 import { ids, sources } from './pins.ts'
 import { renderRepo } from './repo.ts'
-import { assertBase, HOSTNAME, localRows, OPERATOR_ACCOUNTS, SHADOW_FILES, SHADOW_LAST_CHANGE, writeRelease } from './rootfs.ts'
+import { assertBase, HOSTNAME, localRows, lstatExists, OPERATOR_ACCOUNTS, SHADOW_FILES, SHADOW_LAST_CHANGE, STRIPPED, writeRelease } from './rootfs.ts'
 import { archivePath, verifyRows } from './verify.ts'
 
 // Kept out of the root, as the slim Debian image did; copyright files stay.
@@ -20,6 +20,9 @@ const SLIM = [
   'path-exclude=/usr/share/lintian/overrides/*',
   'path-exclude=/usr/share/locale/*',
   'path-exclude=/usr/share/man/*',
+  // Nothing in the root converts character sets or builds locales.
+  'path-exclude=/usr/lib/*/gconv/*',
+  'path-exclude=/usr/share/i18n/*',
 ]
 
 function passwdLine(user: Ids['users'][number], password = 'x'): string {
@@ -136,6 +139,40 @@ function cleanRoot(root: string, work: string, mirror: string, suite: string): v
   }
 }
 
+// The floor's command set is busybox. The GNU packages (STRIPPED) were installed
+// with the rest, so every maintainer script ran with the tools it was written for;
+// here they are purged and each command of theirs that busybox has becomes a link to
+// it, at the path the package had it: the replacement is exactly what was removed,
+// and no applet busybox merely has (login, getty, telnetd) appears. While they go,
+// the same links bridge in /usr/local/bin, ahead of /usr/bin on dpkg's PATH, for the
+// maintainer scripts of the packages being purged. /usr/bin/sh is diverted to busybox
+// first, the way Debian lets /bin/sh be changed: dash's own postrm runs through it.
+function strip(root: string): void {
+  const inRoot = (command: string[], what: string): string => output(['chroot', root, ...command], what)
+  const applets = new Set(inRoot(['/usr/bin/busybox', '--list'], 'listing the busybox applets').split('\n').filter(Boolean))
+  const replaced = inRoot(['dpkg-query', '-L', ...STRIPPED], `listing ${STRIPPED.join(', ')}`).split('\n')
+    .filter(path => /^\/(?:usr\/)?s?bin\/[^/]+$/.test(path) && applets.has(basename(path)))
+  const bridge = join(root, 'usr/local/bin')
+  const bridged = [...new Set(replaced.map(path => basename(path)))]
+  for (const command of bridged)
+    symlinkSync('/usr/bin/busybox', join(bridge, command))
+  inRoot(['dpkg-divert', '--quiet', '--local', '--rename', '--divert', '/usr/bin/sh.distrib', '--add', '/usr/bin/sh'], 'diverting /usr/bin/sh')
+  symlinkSync('busybox', join(root, 'usr/bin/sh'))
+  const gnu = STRIPPED.filter(name => name !== 'dash')
+  inRoot(['dpkg', '--purge', '--force-remove-essential', '--force-depends', ...gnu], `purging ${gnu.join(', ')}`)
+  inRoot(['dpkg', '--purge', '--force-remove-essential', '--force-depends', 'dash'], 'purging dash')
+  inRoot(['dpkg-divert', '--quiet', '--local', '--no-rename', '--remove', '/usr/bin/sh'], 'removing the /usr/bin/sh diversion')
+  for (const path of replaced.filter(path => path !== '/usr/bin/sh' && path !== '/bin/sh')) {
+    const target = join(root, path)
+    if (!existsSync(target) && !lstatExists(target))
+      symlinkSync('/usr/bin/busybox', target)
+  }
+  for (const command of bridged)
+    rmSync(join(bridge, command))
+  // Nobody logs in with a shell the floor does not have.
+  inRoot(['usermod', '--shell', '/bin/sh', 'root'], 'giving root /bin/sh')
+}
+
 export async function bootstrap(options: Options, selected: Row[]): Promise<void> {
   const root = options.root!
   const arch = options.arch!
@@ -173,7 +210,9 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
     if (code !== 0)
       fail(`mmdebstrap failed (exit ${code}); the partial root is left at ${root}`)
     cleanRoot(root, work, mirror, suite)
-    assertInventory(root, installing)
+    if (local.length)
+      strip(root)
+    assertInventory(root, local.length ? installing.filter(row => !STRIPPED.includes(row.name)) : installing)
     assertIds(root, pinned, master)
     if (local.length) {
       writeRelease(root)

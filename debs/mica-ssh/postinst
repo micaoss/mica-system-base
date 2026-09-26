@@ -1,0 +1,19 @@
+#!/bin/sh
+# Refuse a root in which dropbear.service is enabled.
+#
+# Enablement is payload: this script links nothing and removes nothing. The preset
+# 50-mica-dropbear.preset keeps the unit disabled; the check below turns a link
+# that arrived anyway into a failed build.
+set -e
+
+case "$1" in
+configure) ;;
+abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+*) echo "error: postinst called with unknown argument '$1'" >&2; exit 1 ;;
+esac
+
+# micad enables dropbear.service at runtime scope after writing its arguments.
+DROPBEAR_LINK=/etc/systemd/system/multi-user.target.wants/dropbear.service
+[ ! -e "${DROPBEAR_LINK}" ] && [ ! -L "${DROPBEAR_LINK}" ] ||
+    { echo "error: ${DROPBEAR_LINK} exists, so dropbear.service would start at boot. SSH is disabled in the image and micad enables it at runtime; mica-ssh ships /usr/lib/systemd/system-preset/50-mica-dropbear.preset to keep it disabled, and something enabled it anyway" >&2; exit 1; }
+echo "dropbear.service left DISABLED in the image (micad owns the lifecycle)"

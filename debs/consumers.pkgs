@@ -3,8 +3,10 @@
 # nothing by itself. Unknown names are refused.
 mica-busybox
 mica-ca-trust
+mica-ssh
 mica-system
 mica-systemd-boot
+mica-tzdata
 mica-wifi
 mica-wifi-ap
 # The Debian packages of upstream.pkgs, pinned for later stages and never in the

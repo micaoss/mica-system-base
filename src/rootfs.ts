@@ -13,6 +13,19 @@ import { sha256File } from './verify.ts'
 // the EFI loader the product signs, not part of a root.
 export const BASE_PACKAGES = ['mica-system', 'mica-busybox', 'mica-ca-trust']
 
+// The floor's command set is busybox: these packages are installed with the rest,
+// so that maintainer scripts run with the tools they were written for, and purged
+// once the root is in place (src/bootstrap.ts strip). A product that wants them
+// back selects them; the release pins them for it.
+export const STRIPPED = ['bash', 'coreutils', 'dash', 'diffutils', 'findutils', 'grep', 'gzip', 'sed']
+
+// Debian packages a product may add to the floor, none of which the floor carries.
+export const OPTIONS = ['dmsetup', 'dropbear-bin', 'kmod', 'login', 'nftables', 'procps', 'tzdata']
+
+// What the lifecycle helpers under /usr/lib/mica call: busybox applets, and the
+// few a floor package provides (util-linux, quota, systemd).
+export const HELPER_COMMANDS = ['awk', 'basename', 'cat', 'chmod', 'chown', 'cp', 'df', 'dirname', 'findmnt', 'grep', 'head', 'mkdir', 'mount', 'mv', 'printf', 'readlink', 'rm', 'sed', 'setquota', 'sleep', 'stat', 'sync', 'systemctl', 'systemd-repart', 'test', 'tr', 'umount']
+
 // The build identity the host passes into the bootstrap for /etc/issue.
 export const ISSUE_ENV = ['MICA_BASE_LABEL', 'MICA_BASE_COMMIT', 'MICA_BUILD_TIME']
 
@@ -33,7 +46,7 @@ export const HOSTNAME = 'mica'
 // Accounts a package of this repository creates itself: mica-system's postinst
 // pins the operator account at uid and gid 1000, whose home outlives every root.
 export const OPERATOR_ACCOUNTS: { users: PinnedUser[], groups: PinnedGroup[] } = {
-  users: [{ name: 'mica', uid: 1000, gid: 1000, gecos: 'mica operator', home: '/home/mica', shell: '/bin/bash' }],
+  users: [{ name: 'mica', uid: 1000, gid: 1000, gecos: 'mica operator', home: '/home/mica', shell: '/bin/sh' }],
   groups: [{ name: 'mica', gid: 1000 }],
 }
 
@@ -64,7 +77,7 @@ export async function localRows(directory: string, arch: string): Promise<{ row:
   return found
 }
 
-function lstatExists(path: string): boolean {
+export function lstatExists(path: string): boolean {
   try {
     lstatSync(path)
     return true
@@ -81,27 +94,24 @@ function walk(root: string, directory: string): string[] {
   return readdirSync(full, { recursive: true }).map(entry => join(directory, String(entry)))
 }
 
-// What every product inherits and none may have to repair.
+// What every product inherits and none may have to repair: the floor.
 export function assertBase(root: string): void {
-  // SSH and the firewall are micad's to start. Read from the tree, not from a
-  // systemctl run: a foreign-architecture root cannot run its own systemctl here.
-  // A unit is enabled by a link -- under any *.wants/ or *.requires/, or an alias --
-  // that names it; none may exist, and the presets that keep a preset-all from
-  // making one must be in place.
+  // The firewall is an option; if a product adds it, nothing enables it at boot.
+  // Read from the tree, not from a systemctl run: a foreign-architecture root cannot
+  // run its own systemctl here. A unit is enabled by a link -- under any *.wants/ or
+  // *.requires/, or an alias -- that names it.
   for (const directory of ['etc/systemd/system', 'usr/lib/systemd/system']) {
     for (const path of walk(root, directory)) {
       const full = join(root, path)
       if (!lstatSync(full).isSymbolicLink())
         continue
-      if (/(?:^|\/)(?:dropbear|nftables)\.service$/.test(path) || /(?:^|\/)(?:dropbear|nftables)\.service$/.test(readlinkSync(full)))
+      if (/(?:^|\/)nftables\.service$/.test(path) || /(?:^|\/)nftables\.service$/.test(readlinkSync(full)))
         fail(`the base root enables or aliases a governed unit: /${path} -> ${readlinkSync(full)}`)
     }
   }
-  for (const unit of ['dropbear', 'nftables']) {
-    const preset = join(root, 'usr/lib/systemd/system-preset', `50-mica-${unit}.preset`)
-    if (!existsSync(preset) || readFileSync(preset, 'utf8') !== `disable ${unit}.service\n`)
-      fail(`the base root has no 50-mica-${unit}.preset disabling ${unit}.service`)
-  }
+  const preset = join(root, 'usr/lib/systemd/system-preset/50-mica-nftables.preset')
+  if (!existsSync(preset) || readFileSync(preset, 'utf8') !== 'disable nftables.service\n')
+    fail('the base root has no 50-mica-nftables.preset disabling nftables.service')
   // Keys are made on the device, on STATE; a key in a signed root is one the fleet shares.
   const keys = [...walk(root, 'etc'), ...walk(root, 'usr')].filter(path => /(?:^|\/)(?:dropbear_\w+_host_key|ssh_host_\w+_key)(?:\.pub)?$/.test(path))
   if (keys.length)
@@ -134,46 +144,47 @@ export function assertBase(root: string): void {
     if (dated.length)
       fail(`the base root's /${file} has last-change days other than ${SHADOW_LAST_CHANGE}: ${dated.map(line => `${line.split(':')[0]}:${line.split(':')[2]}`).join(', ')}`)
   }
-  // The shadow file is built before any login can read it.
-  const unit = readFileSync(join(root, 'etc/systemd/system/dropbear.service'), 'utf8')
-  if (!/^Requires=mica-shadow-reconcile\.service$/m.test(unit) || !/^After=.*\bmica-shadow-reconcile\.service\b/m.test(unit))
-    fail('dropbear.service in the base root does not require and follow mica-shadow-reconcile.service')
   // The system namespace is mounted at /mica.
   if (!existsSync(join(root, 'mica')))
     fail('the base root has no /mica mountpoint')
-  for (const tool of ['usr/sbin/dropbear', 'usr/bin/busybox', 'usr/sbin/nft', 'usr/sbin/dmsetup']) {
-    if (!existsSync(join(root, tool)))
-      fail(`the base root has no /${tool}`)
+  // The options are not in the floor, and neither is the command set busybox replaces.
+  const installed = readFileSync(join(root, 'var/lib/dpkg/status'), 'utf8').split('\n\n')
+    .filter(stanza => /^Status: install ok installed$/m.test(stanza))
+    .map(stanza => /^Package: (\S+)$/m.exec(stanza)?.[1] ?? '')
+  for (const option of OPTIONS.filter(name => installed.includes(name)))
+    fail(`the floor has the option ${option} installed`)
+  for (const gnu of STRIPPED.filter(name => installed.includes(name)))
+    fail(`the floor has ${gnu} installed; busybox is its command set`)
+  if (lstatExists(join(root, 'usr/bin/bash')))
+    fail('the floor carries /usr/bin/bash')
+  const sh = join(root, 'usr/bin/sh')
+  if (!lstatExists(sh) || !lstatSync(sh).isSymbolicLink() || !/(?:^|\/)busybox$/.test(readlinkSync(sh)))
+    fail(`/usr/bin/sh is not busybox${lstatExists(sh) && lstatSync(sh).isSymbolicLink() ? `: it links to ${readlinkSync(sh)}` : ''}`)
+  if (!existsSync(join(root, 'usr/bin/busybox')))
+    fail('the base root has no /usr/bin/busybox')
+  for (const command of HELPER_COMMANDS) {
+    if (!['usr/bin', 'usr/sbin'].some(directory => lstatExists(join(root, directory, command))))
+      fail(`the floor has no ${command} for the lifecycle helpers`)
   }
-  // THE SUBJECT OF THIS ASSERTION IS THE ROOT THIS REPOSITORY PUBLISHES, NOT THE
-  // DEVICE. systemd's preset enables getty@tty1.service and the Base root ships
-  // that link; the products disable getty@.service on purpose, so tty1 stays
-  // idle for the boot logo and the login is on tty2 (user, 2026-09-20, uniform
-  // across boards). What is gated here is that the link is present in what Base
-  // hands to the composition -- a deliberate removal one layer up is a decision
-  // somebody states, and a link going missing because nothing owns it is not.
-  const tty1 = join(root, 'etc/systemd/system/getty.target.wants/getty@tty1.service')
-  if (!lstatExists(tty1))
-    fail('the base root has no getty.target.wants/getty@tty1.service: the Base root ships the tty1 enablement link, whatever the product then does with it')
-  // SSH is the only way into a fielded device, and dropbear reaches an account
-  // through crypt(3) against /etc/shadow, not through PAM: Debian's dropbear-bin
-  // depends on no libpam and its binary links none. That is a packaging default
-  // nobody chose, and a rebuild that picked up libpam would move every device
-  // onto the PAM stack silently -- the stack this root also carries the libraries
-  // for, and whose configuration a composer has already been seen to drop
-  // (2026-09-20). Both halves are checked: the dependency, and the binary, which
-  // is the half that still fails when libpam merely appears in a build image.
-  const stanza = readFileSync(join(root, 'var/lib/dpkg/status'), 'utf8').split('\n\n').find(entry => /^Package: dropbear-bin$/m.test(entry)) ?? ''
-  const depends = /^Depends: (.*)$/m.exec(stanza)?.[1] ?? ''
-  if (!stanza)
-    fail('the base root has no installed dropbear-bin to check')
-  if (/\blibpam/.test(depends))
-    fail(`dropbear-bin depends on PAM: ${depends}. SSH authenticates through crypt(3) against /etc/shadow, and this would move every device onto the PAM stack`)
-  if (readFileSync(join(root, 'usr/sbin/dropbear')).includes('libpam'))
-    fail('/usr/sbin/dropbear names libpam: it was built against PAM, and SSH is the only route into a fielded device')
+  // Nobody logs in with a shell the floor does not have.
+  for (const line of readFileSync(join(root, 'etc/passwd'), 'utf8').split('\n')) {
+    const [name = '', , , , , , shell = ''] = line.split(':')
+    if ((name === 'root' || name === 'mica') && shell !== '/bin/sh')
+      fail(`${name} logs in with ${shell}, not /bin/sh`)
+  }
+  // Nothing in the root converts character sets.
+  const gconv = walk(root, 'usr/lib').filter(path => /(?:^|\/)gconv\/[^/]+$/.test(path))
+  if (gconv.length)
+    fail(`the floor carries gconv modules: /${gconv.slice(0, 3).join(', /')}`)
+  // A getty starts only where the console option put login.
+  for (const unit of ['getty@', 'serial-getty@']) {
+    const dropIn = join(root, `etc/systemd/system/${unit}.service.d/10-mica-console.conf`)
+    if (!existsSync(dropIn) || !/^ConditionPathExists=\/usr\/bin\/login$/m.test(readFileSync(dropIn, 'utf8')))
+      fail(`${unit}.service in the floor does not wait for /usr/bin/login`)
+  }
   for (const absent of ['usr/sbin/sshd', 'usr/bin/ssh', 'usr/lib/openssh', 'usr/bin/curl', 'usr/sbin/iptables']) {
     if (existsSync(join(root, absent)))
       fail(`the base root carries /${absent}`)
   }
-  console.log('rootfs: dropbear and nftables disabled, no host keys or state, every account locked, shadow before dropbear, no OpenSSH, curl or iptables')
+  console.log('rootfs: the floor -- busybox the command set, no option installed, nftables never enabled, no host keys or state, every account locked and on /bin/sh, no gconv, no getty without login, no OpenSSH, curl or iptables')
 }

@@ -1,38 +1,36 @@
 Package: mica-system
-Version: 1.0.1-1
-Source-Date-Epoch: 1789603200
+Version: 1.1.0-1
+Source-Date-Epoch: 1790380800
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
 Priority: optional
-Depends: systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, udev, dbus, kmod, dropbear-bin, procps, nftables, passwd, quota, e2fsprogs, dmsetup
+Depends: systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, udev, dbus, passwd, quota, e2fsprogs
 Description: Mica OS board-independent system policy
- The system half of every Mica OS root: the DATA layout and project quotas,
- the seed and reconcile tools under /usr/lib/mica with their units, the bind
- mounts of /mica, /mica/containers, /srv, /home, /root, /var, /var/lib/mica,
- /etc/hostname and /usr/local/lib/systemd/system, the health gate and the
- boot-failure handler, the offline provisioning import, the default DHCP
- network, volatile journald storage and the network time policy.
+ The system half of every Mica OS root, and of the floor: the DATA layout and
+ project quotas, the seed and reconcile tools under /usr/lib/mica with their
+ units, the bind mounts of /mica, /mica/containers, /srv, /home, /root, /var,
+ /var/lib/mica, /etc/hostname and /usr/local/lib/systemd/system, the health
+ gate and the boot-failure handler, the offline provisioning import, the
+ default DHCP network, volatile journald storage and the network time policy.
  .
  Enablement is payload: the wants-links and /dev/null masks this package ships
- are the whole of it, and no maintainer script enables a unit. The presets
- 50-mica-dropbear.preset and 50-mica-nftables.preset keep dropbear.service and
- nftables.service disabled; the postinst refuses a root in which either is
- linked.
+ are the whole of it, and no maintainer script enables a unit. The preset
+ 50-mica-nftables.preset keeps nftables.service disabled wherever a product
+ adds the firewall; the postinst refuses a root in which it is linked.
  .
- SSH is dropbear.service, started by micad at runtime scope once it has written
- /run/mica/dropbear.env. The unit requires that file and a listener in it, runs
- after mica-shadow-reconcile.service, and keeps the ed25519 host key on
- DATA/state, made at its first start.
+ SSH and the console are options, not part of this package: mica-ssh carries
+ dropbear, and getty@.service and serial-getty@.service start only once the
+ console option has installed /usr/bin/login.
  .
  /etc/shadow is built in RAM at every boot from the image's factory copy, every
  account locked; a transient root password set through micad lasts until the
  next boot.
  .
  The postinst creates the operator account mica, uid and gid 1000, home
- /home/mica on DATA, shell /bin/bash, with no supplementary groups and no
+ /home/mica on DATA, shell /bin/sh, with no supplementary groups and no
  password.
  .
- nftables is the firewall tooling; this package ships no ruleset. dmsetup is
- the device-mapper tool and udev rules for the verity root. procps provides ps,
- top, free and kill. passwd provides the tools the postinst runs.
+ passwd provides the tools the postinst runs. The verity root needs no
+ userspace: the kernel assembles it from the dm-mod.create= table on its
+ command line.

@@ -1,6 +1,6 @@
 // Access: /etc/shadow built in RAM (payload/usr/lib/mica/mica-shadow-reconcile)
-// and dropbear.service's prestart (payload/usr/lib/mica/mica-dropbear-prestart)
-// with the static half of the dropbear contract.
+// and dropbear.service's prestart (debs/mica-ssh/mica-dropbear-prestart) with the
+// static half of the dropbear contract.
 import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
@@ -123,7 +123,7 @@ describe('mica-shadow-reconcile', () => {
 })
 
 describe('mica-dropbear-prestart', () => {
-  const script = join(MICA, 'mica-dropbear-prestart')
+  const script = join(REPO, 'debs/mica-ssh/mica-dropbear-prestart')
   const bin = join(box.dir, 'dropbear-bin')
   const trace = join(box.dir, 'dropbear-trace')
   // The fakes refuse an existing output file and write <file>.pub beside the key,
@@ -229,9 +229,8 @@ describe('mica-dropbear-prestart', () => {
   })
 })
 
-describe('the dropbear contract in the payload and the package', () => {
-  const unit = readFileSync(join(PAYLOAD, 'etc/systemd/system/dropbear.service'), 'utf8').split('\n')
-  const control = readFileSync(join(REPO, 'debs/mica-system/control'), 'utf8')
+describe('the dropbear contract in mica-ssh', () => {
+  const unit = readFileSync(join(REPO, 'debs/mica-ssh/dropbear.service'), 'utf8').split('\n')
 
   test('the unit needs its arguments, the shadow file and STATE, and keeps sessions', () => {
     for (const line of [
@@ -246,15 +245,12 @@ describe('the dropbear contract in the payload and the package', () => {
     expect(unit.some(line => /^After=.*\bmica-shadow-reconcile\.service\b/.test(line))).toBe(true)
     // -R writes the compiled-in /etc/dropbear paths, on the read-only root.
     expect(unit.some(line => /\s-R(?:\s|$)/.test(line))).toBe(false)
-    expect(readFileSync(join(MICA, 'mica-dropbear-prestart'), 'utf8')).toContain('state=${MICA_SSH_STATE:-/mnt/data/state/ssh}')
+    expect(readFileSync(join(REPO, 'debs/mica-ssh/mica-dropbear-prestart'), 'utf8')).toContain('state=${MICA_SSH_STATE:-/mnt/data/state/ssh}')
   })
 
-  test('the postinst refuses the link, and no OpenSSH remains in the base', () => {
-    expect(readFileSync(join(REPO, 'debs/mica-system/postinst'), 'utf8')).toMatch(/^DROPBEAR_LINK=\/etc\/systemd\/system\/multi-user\.target\.wants\/dropbear\.service$/m)
+  test('the postinst refuses the link, and no OpenSSH is anywhere', () => {
+    expect(readFileSync(join(REPO, 'debs/mica-ssh/postinst'), 'utf8')).toMatch(/^DROPBEAR_LINK=\/etc\/systemd\/system\/multi-user\.target\.wants\/dropbear\.service$/m)
     expect(existsSync(join(PAYLOAD, 'etc/ssh'))).toBe(false)
     expect(existsSync(join(PAYLOAD, 'etc/systemd/system/etc-ssh.mount'))).toBe(false)
-    const depends = /^Depends: (.*)$/m.exec(control)?.[1] ?? ''
-    expect(depends.split(', ')).toContain('dropbear-bin')
-    expect(depends).not.toMatch(/openssh/)
   })
 })

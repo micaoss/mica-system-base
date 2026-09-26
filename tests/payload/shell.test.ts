@@ -1,10 +1,12 @@
 // The interactive shell profile: payload/etc/profile.d/mica-shell.sh, sourced by
 // /etc/profile for every login shell.
 import { join } from 'node:path'
-import { describe, expect, test } from 'bun:test'
-import { exec, PAYLOAD, SYSTEM_PATH } from './harness.ts'
+import { afterAll, describe, expect, test } from 'bun:test'
+import { exec, fake, PAYLOAD, sandbox, SYSTEM_PATH } from './harness.ts'
 
 const PROFILE = join(PAYLOAD, 'etc/profile.d/mica-shell.sh')
+const box = sandbox('shell')
+afterAll(box.done)
 const REPORT = 'printf "PS1=%s\\nLS_COLORS=%s\\n" "$PS1" "${LS_COLORS:+set}"; alias'
 
 const source = (shell: string[], term: string): ReturnType<typeof exec> =>
@@ -41,5 +43,16 @@ describe('mica-shell.sh', () => {
     expect(r.code).toBe(0)
     expect(r.out).not.toContain('\\u@\\h')
     expect(r.out).not.toContain('--color=auto')
+  })
+
+  // Without the GNU tools there is no dircolors; a login must not print an error for it.
+  test('bash without dircolors still gets the prompt and the aliases, silently', () => {
+    const bin = join(box.dir, 'no-dircolors')
+    fake(bin, 'id', 'echo 0')
+    const r = exec(['/usr/bin/bash', '--norc', '--noprofile', '-i', '-c', `. "$1" && ${REPORT}`, 'sh', PROFILE], { PATH: bin, HOME: '/nonexistent', TERM: 'xterm-256color' })
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain('dircolors')
+    expect(r.out).toContain('\\u@\\h')
+    expect(r.out).toContain('alias ls=\'ls --color=auto\'')
   })
 })

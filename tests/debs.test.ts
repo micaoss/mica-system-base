@@ -4,7 +4,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { buildPlan, declared, inputsHash } from '../src/debs/docker.ts'
-import { selectBuild, selectRuntime, selectSource } from '../src/lock.ts'
+import { selectBuild, selectInputs, selectRuntime, selectSource } from '../src/lock.ts'
 import { controlFields, declaration, pack, renderControl } from '../src/debs/pack.ts'
 import { REPO, run, sha256, workdir } from './fixture.ts'
 
@@ -122,11 +122,11 @@ test('a build for one architecture takes its own and the all packages, filed int
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
-    expect(packages.map(entry => entry.name)).toEqual(['mica-busybox', 'mica-ca-trust', 'mica-system', 'mica-systemd-boot', 'mica-wifi', 'mica-wifi-ap'])
+    expect(packages.map(entry => entry.name)).toEqual(['mica-busybox', 'mica-ca-trust', 'mica-ssh', 'mica-system', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
     expect(packages.find(entry => entry.name === 'mica-busybox')).toEqual({ name: 'mica-busybox', arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'], version: '1.38.0-mica1', epoch: 1789430400 })
-    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-system': '1.0.1-1', 'mica-systemd-boot': '257.13-mica1', 'mica-wifi': '2.12-mica1', 'mica-wifi-ap': '2.12-mica1' })
+    expect(Object.fromEntries(packages.map(entry => [entry.name, entry.version]))).toEqual({ 'mica-busybox': '1.38.0-mica1', 'mica-ca-trust': '20250419-mica1', 'mica-ssh': '1.0.0-1', 'mica-system': '1.1.0-1', 'mica-systemd-boot': '257.13-mica1', 'mica-tzdata': '2026b-mica1', 'mica-wifi': '2.12-mica1', 'mica-wifi-ap': '2.12-mica1' })
   })
 
   // systemd-boot is compiled from the source of the systemd the lock pins, with the patch that
@@ -305,10 +305,61 @@ describe('the mica-system payload', () => {
     }
   })
 
-  test('disables dropbear.service and nftables.service by preset', () => {
+  test('disables nftables.service by preset, and carries nothing of SSH', () => {
     const presets = join(payload, 'usr/lib/systemd/system-preset')
-    expect(readFileSync(join(presets, '50-mica-dropbear.preset'), 'utf8')).toBe('disable dropbear.service\n')
     expect(readFileSync(join(presets, '50-mica-nftables.preset'), 'utf8')).toBe('disable nftables.service\n')
+    for (const moved of ['usr/lib/systemd/system-preset/50-mica-dropbear.preset', 'etc/systemd/system/dropbear.service', 'usr/lib/mica/mica-dropbear-prestart'])
+      expect(existsSync(join(payload, moved))).toBe(false)
+  })
+
+  // The console is an option: no getty starts until login is installed.
+  test('holds every getty until the console option installs login', () => {
+    for (const unit of ['getty@', 'serial-getty@'])
+      expect(readFileSync(join(payload, `etc/systemd/system/${unit}.service.d/10-mica-console.conf`), 'utf8')).toMatch(/^ConditionPathExists=\/usr\/bin\/login$/m)
+  })
+
+  test('depends on the floor and on no option', () => {
+    const depends = /^Depends: (.*)$/m.exec(readFileSync(join(REPO, 'debs/mica-system/control'), 'utf8'))?.[1] ?? ''
+    expect(depends.split(', ')).toEqual(['systemd', 'systemd-sysv', 'systemd-resolved', 'systemd-repart', 'systemd-timesyncd', 'udev', 'dbus', 'passwd', 'quota', 'e2fsprogs'])
+    expect(readFileSync(join(REPO, 'debs/mica-system/postinst'), 'utf8')).toMatch(/^LOGIN_SHELL=\/bin\/sh$/m)
+  })
+})
+
+describe('mica-ssh', () => {
+  const directory = join(REPO, 'debs/mica-ssh')
+
+  test('carries SSH: dropbear, its unit, prestart and preset, on top of mica-system', () => {
+    const depends = /^Depends: (.*)$/m.exec(readFileSync(join(directory, 'control'), 'utf8'))?.[1] ?? ''
+    expect(depends.split(', ')).toEqual(['dropbear-bin', 'mica-system'])
+    expect(depends).not.toMatch(/openssh/)
+    expect(readFileSync(join(directory, '50-mica-dropbear.preset'), 'utf8')).toBe('disable dropbear.service\n')
+    for (const file of ['dropbear.service', 'mica-dropbear-prestart'])
+      expect(existsSync(join(directory, file))).toBe(true)
+  })
+
+  // dropbear reaches an account through crypt(3) against /etc/shadow, not through
+  // PAM; the build refuses the pinned dropbear-bin if either half says otherwise.
+  test('refuses a dropbear-bin that depends on PAM or whose binary names libpam', () => {
+    const dockerfile = readFileSync(join(directory, 'Dockerfile'), 'utf8')
+    expect(declared(REPO).find(entry => entry.name === 'mica-ssh')).toMatchObject({ arches: ['all'], inputs: ['dropbear-bin'] })
+    expect(dockerfile).toContain('dropbear-bin depends on PAM')
+    expect(dockerfile).toContain('names libpam')
+  })
+})
+
+describe('mica-tzdata', () => {
+  const directory = join(REPO, 'debs/mica-tzdata')
+
+  // tzdata's postinst parses a date with GNU date, which the floor does not have;
+  // the zones are carried as payload instead, from the pinned archive.
+  test('carries the zoneinfo of the pinned tzdata, with no maintainer script', () => {
+    expect(declared(REPO).find(entry => entry.name === 'mica-tzdata')).toMatchObject({ arches: ['all'], inputs: ['tzdata'] })
+    const input = selectInputs(REPO, 'amd64').find(row => row.name === 'tzdata')!
+    const control = readFileSync(join(directory, 'control'), 'utf8')
+    expect(control).toMatch(new RegExp(`^Version: ${input.version.replace(/-[^-]*$/, '').replaceAll('.', '\\.')}-mica\\d+$`, 'm'))
+    for (const field of ['Provides', 'Conflicts', 'Replaces'])
+      expect(control).toMatch(new RegExp(`^${field}: tzdata\\b`, 'm'))
+    expect(existsSync(join(directory, 'postinst'))).toBe(false)
   })
 })
 

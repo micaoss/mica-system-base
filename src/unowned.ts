@@ -8,7 +8,7 @@
 // maintainer scripts that name the path, the generators those scripts run, and
 // the few paths this repository writes with its own code. A path whose writer
 // cannot be established says `unknown`, which is a work item, not a guess.
-import { readdirSync, readFileSync, lstatSync } from 'node:fs'
+import { readdirSync, readFileSync, readlinkSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
 
 // What the build of this repository writes itself, with the code that writes it.
@@ -100,6 +100,14 @@ function tmpfilesEntries(root: string): Map<string, string> {
 
 export interface UnownedPath { path: string, writer: string }
 
+// The floor's command set: src/bootstrap.ts strip links each command of a purged
+// GNU package to busybox, where the package had it.
+const STRIP_WRITER = 'src/bootstrap.ts strip (a command of a purged GNU package, now busybox)'
+function busyboxLink(root: string, path: string): boolean {
+  const full = join(root, path)
+  return lstatSync(full).isSymbolicLink() && /^(?:\/usr\/bin\/)?busybox$/.test(readlinkSync(full))
+}
+
 export function unownedPaths(root: string): UnownedPath[] {
   const info = join(root, 'var/lib/dpkg/info')
   const owned = new Set<string>()
@@ -120,6 +128,7 @@ export function unownedPaths(root: string): UnownedPath[] {
     const unit = PER_UNIT.find(rule => rule.match.test(path))
     const caller = unit ? scripts.filter(script => script.text.includes(unit.name(path))).map(script => script.name) : []
     const writer = OURS[path]
+      ?? (busyboxLink(root, path) ? STRIP_WRITER : undefined)
       ?? generated?.writer
       ?? (tmpfiles.has(path) ? `systemd-tmpfiles (${tmpfiles.get(path)})` : undefined)
       ?? (link ? `update-alternatives (${alternatives.filter(script => script.text.includes(`/etc/alternatives/${link}`) || script.text.includes(` ${link} `)).map(script => script.name).join(', ') || 'unknown caller'})` : undefined)

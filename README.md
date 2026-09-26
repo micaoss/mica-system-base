@@ -1,7 +1,10 @@
 # mica-system-base
 
 The board-independent base system of Mica OS: the pinned Debian lock, the
-packages built from this repository, and the base root assembled from both.
+packages built from this repository, and the base root assembled from both. The
+root is the **floor** -- what every device needs and nothing else, with busybox
+as its only command set -- and everything else is an option a product adds
+(docs/floor-and-options.md).
 
 ## Published artifacts
 
@@ -15,7 +18,7 @@ pushes and pull requests and publishes nothing):
 | Tag | Content |
 | --- | --- |
 | `pool.<arch>.20260914-0130` | this repository's packages for amd64 or arm64, one layer per `.deb` titled with its file name and annotated `mica.inputs`; the manifest names only the repository and the architecture, so an unchanged pool is the same digest under the next release's tag |
-| `rootfs.20260914-0130` | the base root, an OCI image index for `linux/amd64` and `linux/arm64` |
+| `rootfs.20260914-0130` | the base root, the floor, an OCI image index for `linux/amd64` and `linux/arm64` |
 
 The GitHub Release carries exactly two assets, never replaced, in the release
 lock format of `mica:docs/design/release-lock.md`:
@@ -74,8 +77,9 @@ root is byte-identical on every device, so a password inside it would be one
 secret shared by the fleet; `mica-shadow-reconcile` rebuilds the shadow file in
 RAM at every boot and re-locks anything that is not locked. The only password
 that can exist is a transient root password set through micad, and it is gone at
-the next boot. The console is for reading; interactive access is micad's to
-grant, and it is also what enables `dropbear` at runtime.
+the next boot. Both log in with `/bin/sh`, busybox: the floor has no other
+shell. Interactive access is micad's to grant, and it is also what enables
+`dropbear` at runtime where a product carries SSH (mica-ssh).
 
 Three consequences of that account, decided on 2026-09-20 and recorded here
 because a reader cannot reconstruct them from the files:
@@ -92,32 +96,27 @@ because a reader cannot reconstruct them from the files:
   containers are deliberately unsupported (`mica-podman`). If a later stage ever
   wants rootless, `uidmap` is a row of `upstream.pkgs` -- pinned for later stages
   and not installed in the root -- rather than a change to the base root.
-- **The Base root ships the tty1 enablement link; the device does not run a
-  getty there.** systemd's preset enables `getty@tty1.service` and the root
-  ships that link, and the gate asserts it -- of this root, which is the only
-  thing this repository can assert of. On a device tty1 stays idle for the boot
-  logo and the login prompt is on tty2 (user decision, 2026-09-20, uniform
-  across boards): the products disable `getty@.service` and say so. The
-  distinction is the point. The link is an unowned path, written by systemd's
-  postinst, so a composer that proves a declaration by package ownership drops
-  it silently -- and a deliberate removal that is stated survives a composer
-  repair, while an accidental one reverses the behaviour the day the composer
-  learns to keep unowned enablement links.
-- **SSH does not go through PAM, and the base-root gate now says so.** Debian's
+- **The console is an option; no getty runs on the floor.** `getty@.service` and
+  `serial-getty@.service` carry a drop-in, `ConditionPathExists=/usr/bin/login`,
+  so a getty starts only where a product installed `login`; on the floor alone
+  agetty would exec a login that is not there and restart (user decision,
+  2026-09-26). systemd's tty1 enablement link is still in the root; where the
+  console is installed, the products that keep tty1 idle for the boot logo
+  disable `getty@.service` and say so, as before.
+- **SSH does not go through PAM, and mica-ssh's build says so.** Debian's
   `dropbear-bin` depends on no `libpam` and `/usr/sbin/dropbear` links none: it
   reaches an account through `crypt(3)` against `/etc/shadow`. That is a
-  packaging default nobody chose, and it is the only route into a fielded device,
-  so `assertBase` refuses a root whose `dropbear-bin` depends on PAM or whose
-  binary names `libpam`. The binary half reads the bytes rather than asking a
-  tool, so it holds in an image without `readelf` and it is strictly stronger
-  than "links `libpam`": a binary that merely mentioned the string would fail it.
-  That is a false positive and not a false negative, which is the right direction
-  for the only route into a fielded device, and it is sound because a `DT_NEEDED`
-  entry stores its soname literally. A root with no installed `dropbear-bin` is
-  refused outright, so the check cannot pass by finding nothing.
-  The root does carry the PAM libraries (`libpam0g`,
-  `libpam-modules`, `libpam-runtime` are selected on purpose), so a root without
-  a PAM configuration is a root that lost one, not a root designed without it.
+  packaging default nobody chose, and SSH is the only route into a fielded
+  device, so the build of mica-ssh reads the pinned `dropbear-bin` (its
+  `input.dropbear-bin`) and refuses it if it depends on PAM or its binary names
+  `libpam`. The binary half reads the bytes rather than asking a tool, so it is
+  strictly stronger than "links `libpam`": a binary that merely mentioned the
+  string would fail it. That is a false positive and not a false negative, which
+  is the right direction for the only route into a fielded device, and it is
+  sound because a `DT_NEEDED` entry stores its soname literally. The root does
+  carry the PAM libraries (`libpam0g`, `libpam-modules`, `libpam-runtime`, which
+  `passwd` needs), so a root without a PAM configuration is a root that lost
+  one, not a root designed without it.
 - **The container graphroot's mount options are a default, not a boundary.**
   `mica-containers.mount` binds `/mnt/data/containers` onto `/mica/containers`
   with `bind,private,nosuid,nodev` and no `noexec`, and `mica-podman`'s

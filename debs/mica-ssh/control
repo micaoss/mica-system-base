@@ -1,0 +1,19 @@
+Package: mica-ssh
+Version: 1.0.0-1
+Source-Date-Epoch: 1790380800
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: net
+Priority: optional
+Depends: dropbear-bin, mica-system
+Description: Mica OS SSH: dropbear, disabled until micad enables it
+ SSH as an option on the floor: dropbear.service, its prestart
+ /usr/lib/mica/mica-dropbear-prestart and the preset that keeps the unit
+ disabled. micad enables and starts it at runtime scope after writing
+ /run/mica/dropbear.env; the prestart makes the ed25519 host key on the STATE
+ partition at the first start. The unit requires mica-shadow-reconcile.service,
+ so the shadow file is built in RAM before a login can read it.
+ .
+ dropbear authenticates through crypt(3) against /etc/shadow, not through PAM:
+ the build refuses a pinned dropbear-bin that depends on PAM or whose binary
+ names libpam. No OpenSSH.

@@ -19,3 +19,20 @@ readline-common
 rfkill
 # board audio
 alsa-utils
+# options on the floor: SSH (mica-ssh depends on dropbear-bin), the console, the
+# firewall, module loading, the process tools and the device-mapper tools
+dmsetup
+dropbear-bin
+kmod
+login
+nftables
+procps
+# the GNU command set the floor installs and purges: busybox replaces it there,
+# and a product that wants it back installs these
+bash
+coreutils
+diffutils
+findutils
+grep
+gzip
+sed

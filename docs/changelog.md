@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-26 10:45 [progress]
+
+The root is the floor (docs/floor-and-options.md, plan 20260926-0938-rootfs-minimal):
+systemd, udev, dbus, networkd, resolved and timesyncd, mica-system, mica-ca-trust and
+busybox as the only command set. bash, dash, coreutils, findutils, grep, sed, diffutils
+and gzip are installed with the rest and purged by the bootstrap (`strip`), each of their
+commands busybox has becoming a link to it; root and mica log in with `/bin/sh`; gconv and
+i18n are path-excluded. Everything else is an option: mica-ssh (dropbear, its unit,
+prestart and preset, and the PAM check, now of the pinned `input.dropbear-bin` at build),
+mica-tzdata (the zoneinfo of the pinned tzdata as payload; tzdata's postinst needs GNU
+date), and login, nftables, kmod, procps, dmsetup, bash and the GNU command set as `upstream` rows.
+mica-system 1.1.0-1 depends on the floor only and holds every getty until `/usr/bin/login`
+exists. `pin-inputs` tags a root of upstream.pkgs the base lock already pins, so the purged
+GNU packages are published for the products that want them back. amd64 built, gated,
+composed with every option and booted under systemd-nspawn; 104.3 MB and 98 packages.
+
 ## 2026-09-26 09:45 [release]
 
 Release 20260926-0933, built from cb2d61b on mica-build-env 20260916-0735: the release of

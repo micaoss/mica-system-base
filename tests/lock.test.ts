@@ -4,7 +4,7 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { ARCHES, lines, selectRuntime } from '../src/lock.ts'
-import { BASE_PACKAGES } from '../src/rootfs.ts'
+import { BASE_PACKAGES, STRIPPED } from '../src/rootfs.ts'
 import { REPO, workdir } from './fixture.ts'
 
 const work = workdir('debian-lock')
@@ -27,10 +27,20 @@ describe.each(ARCHES)('%s', (arch) => {
       expect(base).not.toContain(optional)
   })
 
-  test('mica-system adds the system services to the base', () => {
+  test('mica-system adds the system services to the base, and no option', () => {
     const system = names(arch, ['mica-system'])
     expect(system.length).toBeGreaterThan(names(arch).length)
-    expect(system).toEqual(expect.arrayContaining(['systemd', 'dropbear-bin', 'nftables', 'procps', 'dmsetup']))
+    expect(system).toEqual(expect.arrayContaining(['systemd', 'systemd-sysv', 'udev', 'dbus', 'systemd-resolved', 'systemd-timesyncd', 'systemd-repart', 'quota', 'e2fsprogs']))
+    for (const option of ['dropbear-bin', 'nftables', 'procps', 'dmsetup', 'kmod', 'login', 'tzdata'])
+      expect(system).not.toContain(option)
+  })
+
+  // Every option is pinned for later stages, the GNU command set the floor purges
+  // included: each is an upstream row of its own name.
+  test('the options are pinned for later stages', () => {
+    const rows = selectRuntime(REPO, arch, { kind: 'all' })
+    for (const option of ['bash', 'coreutils', 'diffutils', 'dmsetup', 'dropbear-bin', 'findutils', 'grep', 'gzip', 'kmod', 'login', 'nftables', 'procps', 'sed'])
+      expect(rows.find(row => row.name === option)?.consumers ?? []).toContain(`upstream-${option}`)
   })
 
   test('the static mica-busybox consumes no row of the lock', () => {
@@ -57,21 +67,21 @@ test.each(ARCHES)('%s: only registered families consume the lock, and no board f
 
 // upstream.pkgs names the Debian packages later stages install on the base root;
 // their closure beyond the root is pinned here, each row selected as
-// upstream-<root> for every root it is pinned for, never installed into the
-// root, and published as the upstream rows of mica-system-base.lock.
-test.each(ARCHES)('%s: every upstream package is pinned for the roots that need it and stays out of the base root', (arch) => {
+// upstream-<root> for every root it is pinned for, and published as the upstream
+// rows of mica-system-base.lock. None is in the floor, except the GNU command set
+// the floor installs and purges (STRIPPED): pinned for the product that wants it back.
+test.each(ARCHES)('%s: every upstream package is pinned for the roots that need it and stays out of the floor', (arch) => {
   const roots = lines(join(REPO, 'upstream.pkgs'))
   expect(roots.length).toBeGreaterThan(0)
   const upstream = selectRuntime(REPO, arch, { kind: 'all' }).filter(row => row.consumers.some(consumer => consumer.startsWith('upstream-')))
   for (const name of roots)
     expect(upstream.find(row => row.name === name)?.consumers).toContain(`upstream-${name}`)
   for (const row of upstream) {
-    expect(row.consumers.length).toBeGreaterThan(0)
-    for (const consumer of row.consumers)
+    for (const consumer of row.consumers.filter(consumer => consumer.startsWith('upstream-')))
       expect(roots).toContain(consumer.replace(/^upstream-/, ''))
   }
   const root = new Set(names(arch, BASE_PACKAGES))
-  expect(upstream.filter(row => root.has(row.name))).toEqual([])
+  expect(upstream.filter(row => root.has(row.name)).map(row => row.name).sort()).toEqual([...STRIPPED].filter(name => name !== 'dash').sort())
 })
 
 // The base floor: no curl, iproute2 or iptables.
@@ -81,12 +91,13 @@ test.each(ARCHES)('%s: curl, iproute2 and iptables stay out of the lock', (arch)
     expect(all).not.toContain(removed)
 })
 
-// The SSH server is dropbear; OpenSSH is not in the lock.
-test.each(ARCHES)('%s: mica-system gets dropbear, never OpenSSH', (arch) => {
-  const all = selectRuntime(REPO, arch, { kind: 'all' }).map(row => row.name)
+// The SSH server is dropbear, an option pinned for later stages; OpenSSH is not in the lock.
+test.each(ARCHES)('%s: SSH is dropbear, pinned for later stages, never OpenSSH', (arch) => {
+  const rows = selectRuntime(REPO, arch, { kind: 'all' })
   for (const removed of ['openssh-server', 'openssh-client', 'openssh-sftp-server', 'libfido2-1'])
-    expect(all).not.toContain(removed)
-  expect(names(arch, ['mica-system'])).toEqual(expect.arrayContaining(['dropbear-bin', 'libtomcrypt1', 'libtommath1']))
+    expect(rows.map(row => row.name)).not.toContain(removed)
+  for (const name of ['dropbear-bin', 'libtomcrypt1', 'libtommath1'])
+    expect(rows.find(row => row.name === name)?.consumers ?? []).toContain('upstream-dropbear-bin')
 })
 
 // Registration is not installation: a registered package that tags no row is
