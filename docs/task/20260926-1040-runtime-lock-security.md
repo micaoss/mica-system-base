@@ -1,8 +1,8 @@
 # 20260926-1040-runtime-lock-security The runtime lock resolves without the security archive
 
-- **status**: pending
+- **status**: in_progress
 - **priority**: P1
-- **owner**: (unassigned)
+- **owner**: claude/lock-security
 - **createdAt**: 2026-09-26 10:40
 
 ## Description
@@ -35,3 +35,6 @@ Checking the runtime lock against the security archive
 ## Notes
 
 (none)
+
+2026-09-26 11:30: scanned; 33 of 173 pinned names are behind, all current in trixie main at
+20260926T000000Z. Plan: docs/plan/20260926-1130-snapshot-20260926.md.

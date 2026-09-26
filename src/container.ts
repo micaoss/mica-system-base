@@ -8,8 +8,8 @@ import { nonDirectories } from './bootstrap.ts'
 import { buildDebs, declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
-import { ARCHES, lines as readLines, lockRows, parseRows, SELECTIONS, sourceRows, UPSTREAM_LOCK } from './lock.ts'
-import { tagPinnedRoots } from './pin-inputs.ts'
+import { ARCHES, lines as readLines, lockRows, parseRows, SELECTIONS, selectRuntime, sourceRows, UPSTREAM_LOCK } from './lock.ts'
+import { addedNames, runtimeNames, tagPinnedRoots } from './pin-inputs.ts'
 import { assertBuildEnvRelease, assertEnvironmentImage, BUILD_ENV, buildEnvAsset, environment, REPO } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import { BASE_PACKAGES, ISSUE_ENV } from './rootfs.ts'
@@ -286,9 +286,10 @@ const byBytes = (a: string, b: string): number => Buffer.compare(Buffer.from(a),
 
 // Rewrites what pin-inputs resolves: in locks/upstream.lock the input.<name> rows
 // of the inputs debs/ declares, the build.<package>.<name> rows of each package's
-// build closure, and the runtime rows of the closure of upstream.pkgs beyond the
-// base, with their packages.tsv lines, each tagged upstream-<root> for the roots
-// that need it; every other row and line stays. --check only compares.
+// build closure, the runtime rows of the root at the snapshot of sources.json, and
+// the rows of the closure of upstream.pkgs beyond the root, with their
+// packages.tsv lines, each tagged upstream-<root> for the roots that need it; the
+// source rows stay. --check only compares.
 async function pinInputs(check: boolean): Promise<void> {
   const resolved: string[][] = []
   const inputs = new Map<Arch, Row[]>()
@@ -305,10 +306,22 @@ async function pinInputs(check: boolean): Promise<void> {
       build.set(arch, await resolveInputs(arch, entry.name))
     resolved.push(...lockRows(`build.${entry.name}.`, build))
   }
+  // The runtime rows, again at the snapshot: the same names, whose versions may move
+  // but whose closure may not grow without packages.tsv naming the new package.
+  const runtime = new Map<Arch, Row[]>()
+  for (const arch of ARCHES) {
+    const rows = await resolveForeign(arch, 'runtime packages', ['--all'])
+    const added = addedNames(runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })), rows.map(row => row.name))
+    if (added.length)
+      fail(`the snapshot's versions add ${added.join(', ')} to the ${arch} root; name their consumer in ${SELECTIONS} first`)
+    runtime.set(arch, rows)
+  }
+  resolved.push(...lockRows('', runtime))
+  const root = new Set(ARCHES.flatMap(arch => runtimeNames(selectRuntime(REPO, arch, { kind: 'all' }))))
   const upstream = new Map<Arch, Row[]>()
   const roots = new Map<string, string>()
   for (const arch of ARCHES) {
-    upstream.set(arch, await resolveUpstream(arch))
+    upstream.set(arch, await resolveForeign(arch, 'upstream packages', ['--packages', `${IN_CONTAINER}/upstream.pkgs`]))
     for (const { name, consumers } of upstream.get(arch)!) {
       if (!consumers.length)
         fail(`the ${arch} upstream package ${name} was resolved for no root of upstream.pkgs`)
@@ -322,7 +335,7 @@ async function pinInputs(check: boolean): Promise<void> {
   const selectionFile = join(REPO, SELECTIONS)
   const selected = tagPinnedRoots(new Map(readFileSync(selectionFile, 'utf8').split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t') as [string, string])), readLines(join(REPO, 'upstream.pkgs')))
   const upstreamOnly = (name: string): boolean => selected.get(name)?.split(',').every(consumer => consumer.startsWith('upstream-')) ?? false
-  const regenerated = (name: string): boolean => name.startsWith('input.') || name.startsWith('build.') || upstreamOnly(name)
+  const regenerated = (name: string): boolean => name.startsWith('input.') || name.startsWith('build.') || upstreamOnly(name) || root.has(name)
   const rows = [...sourceRows(REPO).filter(([name = '']) => !regenerated(name)).map(row => ['source', ...row]), ...resolved]
     .sort((a, b) => byBytes(a[1]!, b[1]!) || byBytes(a[2]!, b[2]!))
   const lock = `${[...header(lockFile), ...rows.map(row => row.join('\t'))].join('\n')}\n`
@@ -344,19 +357,21 @@ async function pinInputs(check: boolean): Promise<void> {
 
 // Resolves the closure of upstream.pkgs for one architecture in the native
 // environment image.
-async function resolveUpstream(arch: Arch): Promise<Row[]> {
+// Runs pin-inputs in the environment image for rows any architecture resolves from
+// any image: the upstream closure, or the runtime rows.
+async function resolveForeign(arch: Arch, what: string, selection: string[]): Promise<Row[]> {
   mkdirSync(join(REPO, '_out'), { recursive: true })
-  const work = mkdtempSync(join(REPO, '_out', `.upstream-${arch}.`))
+  const work = mkdtempSync(join(REPO, '_out', `.foreign-${arch}.`))
   try {
     mkdirSync(join(work, 'out'))
     const code = dockerRun({
       arch: hostArch(),
       network: 'default',
       mounts: [[REPO, IN_CONTAINER, 'ro'], [join(work, 'out'), '/out', 'rw']],
-      command: cli('pin-inputs', '--arch', arch, '--packages', `${IN_CONTAINER}/upstream.pkgs`, '--output', '/out/pins.tsv'),
+      command: cli('pin-inputs', '--arch', arch, ...selection, '--output', '/out/pins.tsv'),
     })
     if (code !== 0)
-      fail(`resolving the ${arch} upstream packages failed`)
+      fail(`resolving the ${arch} ${what} failed`)
     return parseRows(readFileSync(join(work, 'out/pins.tsv'), 'utf8'))
   }
   finally {

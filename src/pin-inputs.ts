@@ -43,11 +43,11 @@ export async function resolveBuild(name: string, arch: Arch, destination: string
 
 // The Debian packages of upstream.pkgs and their closure, resolved for `arch` from
 // nothing installed at all (any architecture can be resolved from any image),
-// less the packages the lock already pins for the base, which must be the same
-// versions.
+// less the packages the lock pins for the root, which the runtime rows carry: they
+// are resolved again in the same run, from the same snapshot.
 export async function resolveUpstream(file: string, arch: Arch, destination: string | undefined): Promise<void> {
   const { mirror, suite } = sources()
-  const locked = new Map(selectRuntime(REPO, arch, { kind: 'all' }).filter(row => row.consumers.some(consumer => !consumer.startsWith('upstream-'))).map(row => [row.name, row]))
+  const root = new Set(runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })))
   await resolve({
     what: 'upstream packages',
     lists: [`deb [arch=${arch} check-valid-until=no] ${mirror} ${suite} main`],
@@ -55,13 +55,35 @@ export async function resolveUpstream(file: string, arch: Arch, destination: str
     install: true,
     foreign: true,
     attribute: true,
-    keep: (row) => {
-      const pinned = locked.get(row.name)
-      if (pinned && pinned.version !== row.version)
-        fail(`${row.name} ${row.version} resolves for upstream.pkgs but the lock pins ${pinned.version}`)
-      return !pinned
-    },
+    keep: row => !root.has(row.name),
   }, arch, destination)
+}
+
+// The runtime rows: the archives pinned for the root -- the floor and this
+// repository's packages -- as opposed to those pinned for later stages only. The
+// GNU command set the floor installs and purges is both.
+export function runtimeNames(rows: Row[]): string[] {
+  return [...new Set(rows.filter(row => row.consumers.some(consumer => !consumer.startsWith('upstream-'))).map(row => row.name))].sort()
+}
+
+// The runtime rows again, at the snapshot of sources.json: every name the lock pins
+// for the root, resolved from the one source the release's apt row names.
+export async function resolveRuntime(arch: Arch, destination: string | undefined): Promise<void> {
+  const { mirror, suite } = sources()
+  await resolve({
+    what: 'runtime packages',
+    lists: [`deb [arch=${arch} check-valid-until=no] ${mirror} ${suite} main`],
+    roots: runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })),
+    install: true,
+    foreign: true,
+  }, arch, destination)
+}
+
+// A package a snapshot's versions add to the root's closure: packages.tsv has to
+// name its consumer before the lock can pin it.
+export function addedNames(pinned: string[], resolved: string[]): string[] {
+  const before = new Set(pinned)
+  return [...new Set(resolved)].filter(name => !before.has(name)).sort()
 }
 
 // One `apt-get --print-uris` line: the quoted URL, the file name, the size and,

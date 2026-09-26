@@ -7,7 +7,7 @@ import { populate } from './cache.ts'
 import { fail, report } from './errors.ts'
 import { need } from './exec.ts'
 import { formatRows, selectBuild, selectInputs, selectRuntime } from './lock.ts'
-import { resolveBuild, resolveInputs, resolveUpstream } from './pin-inputs.ts'
+import { resolveBuild, resolveInputs, resolveRuntime, resolveUpstream } from './pin-inputs.ts'
 import { REPO, requireBun } from './pins.ts'
 import { formatUnowned, unownedPaths } from './unowned.ts'
 import { verifyRows } from './verify.ts'
@@ -37,6 +37,8 @@ async function main(options: Options): Promise<number> {
       await resolveBuild(options.selection.name, arch, options.output)
     else if (options.selection.kind === 'consumers')
       await resolveUpstream(options.selection.file, arch, options.output)
+    else if (options.selection.kind === 'all')
+      await resolveRuntime(arch, options.output)
     else
       await resolveInputs(arch, options.output)
     return 0

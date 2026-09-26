@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { declared, inputsHash } from '../src/debs/docker.ts'
 import { assertBanner, assertPools, assertVersions, dataAssets, dryRunLock, poolManifest, priorRelease, publishLock, publishPool, publishRootfs, readLayers, rootfsImages, writeLayer } from '../src/publish.ts'
 import { Registry, sha256 } from '../src/registry.ts'
+import { sources } from '../src/pins.ts'
 import { parseLock } from '../src/release-lock.ts'
 import { issue, releaseOf } from '../src/release.ts'
 import { REPO, run, workdir, writePins } from './fixture.ts'
@@ -332,7 +333,7 @@ describe('publication', () => {
       `package\tfixture-tool\tarm64\t${version}\t${archive('arm64', `fixture-tool_${version}_arm64.deb`)}`,
       `upstream\tlibfixture\tamd64\t1.0-1\t${'a'.repeat(64)}\t${UPSTREAM_URL}_amd64.deb\tlibfixture,tool`,
       `upstream\tlibfixture\tarm64\t1.0-1\t${'b'.repeat(64)}\t${UPSTREAM_URL}_arm64.deb\tlibfixture,tool`,
-      'apt\thttps://snapshot.debian.org/archive/debian/20260905T000000Z\ttrixie\tmain\t/usr/share/keyrings/debian-archive-keyring.gpg',
+      `apt\t${sources().mirror}\t${sources().suite}\tmain\t/usr/share/keyrings/debian-archive-keyring.gpg`,
       ...dataAssets(repo, releaseOf(repo)).map(asset => `data\t${asset.name}\t${asset.file}\t${asset.sha256}`),
       '',
     ].join('\n')

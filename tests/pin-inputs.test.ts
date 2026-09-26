@@ -1,6 +1,6 @@
 // What pin-inputs reads out of `apt-get --print-uris`.
 import { expect, test } from 'bun:test'
-import { printedUri, tagPinnedRoots } from '../src/pin-inputs.ts'
+import { addedNames, printedUri, runtimeNames, tagPinnedRoots } from '../src/pin-inputs.ts'
 
 test('a --print-uris line gives its URL and file name, with or without the index hash', () => {
   const main = '\'https://snapshot.debian.org/archive/debian/20260905T000000Z/pool/main/p/pkgconf/pkg-config_1.8.1-4_amd64.deb\' pkg-config_1.8.1-4_amd64.deb 13768 SHA256:0a1b'
@@ -30,4 +30,19 @@ test('a root of upstream.pkgs the base lock pins is tagged for later stages, and
     ['sed', 'base'],
     ['systemd', 'base,mica-system'],
   ]))
+})
+
+test('the runtime rows are the ones pinned for the root, the purged GNU set included', () => {
+  const row = (name: string, consumers: string[]) => ({ name, version: '1', architecture: 'amd64', sha256: '', url: '', consumers })
+  expect(runtimeNames([
+    row('systemd', ['base', 'mica-system']),
+    row('coreutils', ['base', 'upstream-coreutils']),
+    row('iw', ['upstream-iw']),
+    row('libc6', ['base']),
+  ])).toEqual(['coreutils', 'libc6', 'systemd'])
+})
+
+test('a dependency the versions of a snapshot add to the root is named', () => {
+  expect(addedNames(['a', 'b', 'c'], ['c', 'b', 'a'])).toEqual([])
+  expect(addedNames(['a', 'b'], ['libnew', 'a', 'b'])).toEqual(['libnew'])
 })

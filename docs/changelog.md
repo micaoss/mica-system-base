@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-26 12:10 [progress]
+
+The lock moves to snapshot 20260926T000000Z (plan 20260926-1130-snapshot-20260926). A scan of
+every pinned Debian package against main, updates and security found 33 of 173 behind; at
+20260926 all are in trixie main after the point release, with libc6 2.41-12+deb13u4, OpenSSL
+3.5.7-1~deb13u2, libexpat1 2.8.3-1~deb13u1, util-linux 2.41.5-0+deb13u1 and its libraries,
+perl-base, libsqlite3-0, gzip, libaudit, libglib2.0, alsa, libpcre2, base-files and binNMUs
+of bash, e2fsprogs and libcap2. `pin-inputs` now resolves the runtime rows too: every name
+pinned for the root again at the snapshot, refusing a version that would add a package the
+selection does not name (`--check` at the old snapshot reproduced the lock row for row).
+tzdata 2026c: mica-tzdata 2026c-mica1. The floor on amd64 is 104.5 MB, 98 packages. Between
+point releases security fixes reach trixie-security first; resolving from it needs one
+`apt` row per source, a release-lock format change planned in mica.
+
 ## 2026-09-26 11:05 [release]
 
 Release 20260926-1045, built from 4cd1a12 on mica-build-env 20260916-0735: the first release
