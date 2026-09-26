@@ -10,7 +10,9 @@ perl-base, libsqlite3-0, gzip, libaudit, libglib2.0, alsa, libpcre2, base-files 
 of bash, e2fsprogs and libcap2. `pin-inputs` now resolves the runtime rows too: every name
 pinned for the root again at the snapshot, refusing a version that would add a package the
 selection does not name (`--check` at the old snapshot reproduced the lock row for row).
-tzdata 2026c: mica-tzdata 2026c-mica1. The floor on amd64 is 104.5 MB, 98 packages. Between
+tzdata 2026c: mica-tzdata 2026c-mica1; mica-ca-trust 20250419-mica2 and mica-ssh 1.0.0-2,
+whose input rows name the new snapshot's URLs (same archives), which the inputs hash covers.
+The floor on amd64 is 104.5 MB, 98 packages. Between
 point releases security fixes reach trixie-security first; resolving from it needs one
 `apt` row per source, a release-lock format change planned in mica.
 
