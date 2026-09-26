@@ -64,6 +64,16 @@ export async function resolveUpstream(file: string, arch: Arch, destination: str
   }, arch, destination)
 }
 
+// One `apt-get --print-uris` line: the quoted URL, the file name, the size and,
+// except on the security archive's lines, the index hash, which is not used: the
+// download is checked against the signed index's SHA256.
+export function printedUri(line: string): { url: string, file: string } {
+  const match = /^'([^']+)' (\S+) \d+(?: \S+)? *$/.exec(line)
+  if (!match)
+    fail(`unexpected apt-get --print-uris line: ${line}`)
+  return { url: match[1]!, file: match[2]! }
+}
+
 // `attribute` tags each resolved row upstream-<root> for every root whose own
 // closure contains it.
 async function resolve(request: { what: string, lists: string[], roots: string[], install: boolean, foreign?: boolean, attribute?: boolean, keep?: (row: Row) => boolean }, arch: Arch, destination: string | undefined): Promise<void> {
@@ -107,10 +117,7 @@ async function resolve(request: { what: string, lists: string[], roots: string[]
     for (const line of uris.split('\n').filter(Boolean)) {
       if (request.keep && !request.keep({ name: /^'[^']*' ([^_]+)_/.exec(line)?.[1] ?? '', version: decodeURIComponent(/^'[^']*' [^_]+_([^_]+)_/.exec(line)?.[1] ?? ''), architecture: '', sha256: '', url: '', consumers: [] }))
         continue
-      const match = /^'([^']+)' (\S+) \d+ \S+$/.exec(line)
-      if (!match)
-        fail(`unexpected apt-get --print-uris line: ${line}`)
-      const [, url = '', file = ''] = match
+      const { url, file } = printedUri(line)
       const partial = join(work, file)
       const fetched = Bun.spawnSync([process.execPath, join(import.meta.dir, 'fetch.ts'), url, partial], { stdio: ['ignore', 'inherit', 'inherit'] })
       if (fetched.exitCode !== 0)
