@@ -1,0 +1,13 @@
+# The hostapd build configuration of mica-wifi-ap, the whole .config: every option
+# not set here is off. nl80211 is the only driver; libnl-3 and libnl-genl-3 are the
+# root's. OpenSSL is the root's libcrypto and gives a WPA3 (SAE) access point beside
+# WPA2. No RADIUS client, accounting or dynamic VLANs.
+CONFIG_DRIVER_NL80211=y
+CONFIG_LIBNL32=y
+CONFIG_CTRL_IFACE=y
+CONFIG_TLS=openssl
+CONFIG_SAE=y
+CONFIG_NO_RADIUS=y
+CONFIG_NO_ACCOUNTING=y
+CONFIG_NO_VLAN=y
+CONFIG_GETRANDOM=y

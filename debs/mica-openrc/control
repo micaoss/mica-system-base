@@ -1,0 +1,37 @@
+Package: mica-openrc
+Version: 0.56-mica1
+Source-Date-Epoch: 1790638915
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: mica-system, mica-mdev, openrc, fdisk
+Provides: mica-init-system
+Conflicts: mica-systemd, systemd-sysv, udev, ifupdown, ifupdown-ng, iproute2, udhcpc, busybox-syslogd
+Description: Mica OS on OpenRC
+ The init half of a Mica OS root that runs OpenRC, one of the two a product
+ chooses (the other is mica-systemd): openrc-init as /usr/sbin/init, and the
+ services that run mica-system's tools in the order mica-systemd's units give
+ them -- the kernel file systems, DATA grown, checked, mounted and laid out, the
+ binds of /mica, /mica/containers, /srv, /etc/hostname, /var, /var/lib/mica,
+ /root and /home with their seeds, the tmpfiles entries, the system bus, the
+ shadow reconcile, the offline provisioning import, the network of
+ /etc/network/interfaces (busybox ifupdown and udhcpc, DNS under /run/mica;
+ the file on DATA, where micad writes it, DHCP on every wired interface until
+ it has), network time (busybox ntpd on the servers micad renders in
+ /run/mica/ntpd.conf), the system log in RAM (busybox syslogd and klogd), the hardware
+ watchdog and, last, the health gate; /usr/lib/mica/mica-init for OpenRC; and
+ mica-grow-data, which grows DATA with sfdisk. Devices come from mica-mdev.
+ .
+ No daemon keeps CAP_SYS_RESOURCE (/etc/rc.conf.d/mica.conf). Membership of the
+ runlevels is payload, as enablement is in mica-systemd: the postinst removes
+ the links no package owns -- what openrc imported from the SysV links -- and
+ keeps every link a package ships, and OpenRC's cgroups. No getty
+ starts; a product that installs the console adds one.
+ .
+ ifup, ifdown, ip and udhcpc are busybox's, linked in /usr/sbin, and logread,
+ which reads the RAM log, in /usr/bin; the packages that ship them otherwise
+ conflict with this one. /etc/mtab links to /proc/self/mounts, as systemd's
+ tmpfiles make it on the other init. mica-kernfs mounts securityfs only where
+ the kernel has it, and DATA is checked only when mica-deploy's runkit has not
+ mounted it already.

@@ -1,0 +1,28 @@
+Package: mica-bluetooth
+Version: 5.82-mica1
+Source-Date-Epoch: 1790638915
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: bluez, rfkill
+Description: Mica OS Bluetooth support
+ The generic HCI-attach program /usr/lib/mica/hwinit-bt and the bind of
+ /var/lib/bluetooth from the STATE partition, for either init.
+ .
+ Under systemd: mica-bt.service, enabled by the multi-user.target.wants link
+ this package owns and inert without /etc/mica/bt.conf
+ (ConditionPathExists=), and var-lib-bluetooth.mount with its
+ local-fs.target.wants link. Under OpenRC: /etc/init.d/mica-bt, which starts
+ nothing without /etc/mica/bt.conf, and /etc/init.d/mica-bluetoothd, which
+ binds the pairing keys and runs bluetoothd under supervise-daemon; both in no
+ runlevel -- the product links mica-bt, micad starts mica-bluetoothd.
+ .
+ The UART, the host-controller protocol and the link speed hwinit-bt reads
+ from /etc/mica/bt.conf, the radio kernel modules and the firmware are board
+ facts and live in the board's package. The bind keeps pairings on STATE:
+ bluez writes link keys under /var/lib/bluetooth, /var is disposable, and a
+ pairing is a credential. rfkill is required because the radio is
+ soft-blocked out of the box on the boards Mica OS targets.
+ .
+ Wi-Fi is mica-wifi and mica-wifi-ap; this package pulls bluez alone.

@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+# The hardware watchdog, fed every 30 s with a 90 s reboot timeout: mica-systemd's
+# RuntimeWatchdogSec=90s. A machine without /dev/watchdog runs without one.
+
+description="Hardware watchdog"
+command=/usr/bin/busybox
+command_args="watchdog -F -T 90 -t 30 /dev/watchdog"
+supervisor=supervise-daemon
+
+depend() {
+    need dev
+}
+
+start() {
+    if [ ! -c /dev/watchdog ]; then
+        einfo "No /dev/watchdog; running without a hardware watchdog"
+        return 0
+    fi
+    default_start
+}

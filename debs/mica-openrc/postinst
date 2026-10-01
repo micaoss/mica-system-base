@@ -1,0 +1,23 @@
+#!/bin/sh
+# Runlevel membership is payload, as enablement is in mica-systemd: remove the links no
+# package owns -- what openrc's own postinst imported from the SysV links (/etc/rc?.d),
+# Debian's dbus script beside mica-dbus, and anything else update-rc.d added -- and keep
+# every link a package ships, this one's or another's, and OpenRC's cgroups.
+set -e
+
+case "$1" in
+configure) ;;
+abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+*) echo "error: postinst called with unknown argument '$1'" >&2; exit 1 ;;
+esac
+
+for runlevel in sysinit boot default; do
+    for link in /etc/runlevels/"$runlevel"/*; do
+        [ -e "$link" ] || [ -L "$link" ] || continue
+        service=${link##*/}
+        [ "$service" != cgroups ] || continue
+        dpkg-query -S "$link" >/dev/null 2>&1 && continue
+        rm -f "$link"
+        echo "mica-openrc: removed ${service} from the ${runlevel} runlevel; no package ships that link"
+    done
+done

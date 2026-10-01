@@ -1,0 +1,36 @@
+Package: mica-system
+Version: 13.8+deb13u7-mica1
+Source-Date-Epoch: 1790638915
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: dbus, passwd, e2fsprogs
+Description: Mica OS board-independent system policy
+ The system half of every Mica OS root, and of the floor, whatever its init:
+ the DATA layout, the seed and reconcile tools under
+ /usr/lib/mica, the health gate and the boot-failure handler, the offline
+ provisioning import, the mountpoints of /mica, /srv, /home, /root and
+ /var/lib/mica, and the /var the tmpfiles entries describe.
+ .
+ It runs under neither init by itself: a product installs mica-systemd or
+ mica-openrc, which wire these tools into its boot and provide
+ /usr/lib/mica/mica-init, the one command the tools ask the init system
+ through. micad is reached on the system bus with dbus-send. DATA's project
+ quotas are mica-deploy's: its runkit sets them when it mounts DATA.
+ .
+ SSH and the console are options, not part of this package: mica-ssh carries
+ dropbear, and a getty starts only once the console option has installed
+ /usr/bin/login.
+ .
+ /etc/shadow is built in RAM at every boot from the image's factory copy, every
+ account locked; a transient root password set through micad lasts until the
+ next boot.
+ .
+ The postinst creates the operator account mica, uid and gid 1000, home
+ /home/mica on DATA, shell /bin/sh, with no supplementary groups and no
+ password.
+ .
+ passwd provides the tools the postinst runs. The verity root needs no
+ userspace: the kernel assembles it from the dm-mod.create= table on its
+ command line.

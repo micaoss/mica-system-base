@@ -1,0 +1,47 @@
+#!/bin/sh
+# dropbear.service's ExecStartPre.
+#
+# Refuses DROPBEAR_ARGS without a -p listener (dropbear would otherwise listen on
+# port 22 on every address). Makes the ed25519 host key on DATA/state at the
+# first start -- written to a temporary name and renamed, so an interrupted start
+# leaves no truncated key. An existing key is kept. Symbolic links,
+# foreign owners, a group/world-writable directory and group/world-readable keys
+# are refused.
+set -eu
+
+state=${MICA_SSH_STATE:-/mnt/data/state/ssh}
+owner=${MICA_SSH_OWNER:-0}
+key=$state/dropbear_ed25519_host_key
+
+refuse() { echo "mica-dropbear-prestart: $*" >&2; exit 1; }
+
+case " ${DROPBEAR_ARGS:-} " in
+*" -p "*) ;;
+*) refuse "DROPBEAR_ARGS from /run/mica/dropbear.env names no -p listener; dropbear would listen on port 22 on every address" ;;
+esac
+
+# $1: a path owned by $owner with none of the permission bits in $2 (octal).
+private() {
+    [ ! -L "$1" ] || refuse "$1 is a symbolic link"
+    set -- "$1" "$2" "$(stat -c '%u %a' "$1")"
+    [ "${3%% *}" = "$owner" ] || refuse "$1 is owned by uid ${3%% *}, not $owner"
+    [ $((0${3#* } & $2)) -eq 0 ] || refuse "$1 has mode ${3#* }"
+}
+
+[ -d "$state" ] && [ ! -L "$state" ] || refuse "$state is not a directory; mica-seed-state creates it"
+private "$state" 022
+if [ -e "$key" ] || [ -L "$key" ]; then
+    private "$key" 077
+    [ -f "$key" ] || refuse "$key is not a regular file"
+    exit 0
+fi
+
+rm -f "$key.new" "$key.new.pub"
+dropbearkey -t ed25519 -f "$key.new" >/dev/null ||
+    { rm -f "$key.new" "$key.new.pub"; exit 1; }
+rm -f "$key.new.pub"
+echo "mica-dropbear-prestart: generated $key"
+chmod 0600 "$key.new"
+sync "$key.new"
+mv "$key.new" "$key"
+sync -f "$state"

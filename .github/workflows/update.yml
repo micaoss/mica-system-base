@@ -1,0 +1,101 @@
+name: update
+# Monthly, and on demand: every pin moved to its upstream's latest (src/update.ts) --
+# mica-build-tools, mica-build-env, the Debian snapshot, the upstream sources, the
+# trust anchors of ca-certificates -- and every package whose inputs or build moved
+# bumped. The commit goes to update/<date> and is built and gated like any change
+# (build.yml). When it passes, main moves to it, a fast-forward (a main that moved
+# meanwhile fails the run), and the release is cut and published (release.yml,
+# started by workflow_dispatch: a release this token creates starts nothing). Nothing
+# new upstream, no commit. A manual run with publish off stops after the build and
+# leaves update/<date> for a look.
+on:
+  schedule:
+    - cron: '0 3 1 * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: move main to the update and release it
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: update
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.commit.outputs.commit }}
+      branch: ${{ steps.commit.outputs.branch }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Dependencies
+        run: bun install --frozen-lockfile
+      # pin-inputs resolves the arm64 build closures inside the arm64 build images.
+      - uses: docker/setup-qemu-action@v3
+      - name: mica-build-tools to the head of its main
+        run: bin/mica-tools sync && bun src/update.ts tools && bin/mica-tools sync
+      - name: The build environment, the Debian snapshot and the upstream sources
+        run: bun src/update.ts pins
+      - name: The trust anchors, tzdata and the package versions
+        run: bun src/update.ts versions
+      - name: Commit to update/<date>
+        id: commit
+        run: |
+          cat _out/update-summary.md
+          if [ -z "$(git status --porcelain)" ]; then
+            echo 'update: nothing new upstream'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -q -F _out/update-summary.md
+          branch="update/$(date -u +%Y%m%d)"
+          git push --force origin "HEAD:refs/heads/$branch"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+  build:
+    needs: update
+    if: needs.update.outputs.commit != ''
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.update.outputs.commit }}
+  release:
+    needs: [update, build]
+    if: github.event_name == 'schedule' || inputs.publish
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      COMMIT: ${{ needs.update.outputs.commit }}
+      BRANCH: ${{ needs.update.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.update.outputs.commit }}
+          fetch-depth: 0
+      - name: main to the update
+        run: |
+          git push origin "$COMMIT:refs/heads/main"
+          git push origin --delete "$BRANCH"
+      - name: Cut the release and publish it
+        run: |
+          tag=$(date -u +%Y%m%d-%H%M)
+          git log -1 --format=%B "$COMMIT" >"$RUNNER_TEMP/notes"
+          gh release create "$tag" --target "$COMMIT" --title "$tag" --notes-file "$RUNNER_TEMP/notes"
+          gh workflow run release.yml --ref main -f tag="$tag"
+          echo "update: released $tag"

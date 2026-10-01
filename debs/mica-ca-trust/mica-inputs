@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-ca-trust
+path debs/copyright
+source input.ca-certificates

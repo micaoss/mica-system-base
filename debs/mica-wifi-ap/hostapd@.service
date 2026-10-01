@@ -1,0 +1,18 @@
+# One hostapd per interface, started by micad's access-point reconciler with the
+# configuration it renders to /etc/hostapd/<interface>.conf. Debian's template,
+# less its /etc/default/hostapd: the only arguments are the ones here.
+[Unit]
+Description=Wi-Fi access point on %I
+After=network.target
+BindsTo=sys-subsystem-net-devices-%i.device
+ConditionFileNotEmpty=/etc/hostapd/%i.conf
+
+[Service]
+Type=forking
+PIDFile=/run/hostapd.%i.pid
+Restart=on-failure
+RestartSec=2
+ExecStart=/usr/sbin/hostapd -B -P /run/hostapd.%i.pid /etc/hostapd/%i.conf
+
+[Install]
+WantedBy=multi-user.target sys-subsystem-net-devices-%i.device

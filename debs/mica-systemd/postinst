@@ -1,0 +1,21 @@
+#!/bin/sh
+# Refuse a root in which nftables.service is enabled.
+#
+# Enablement is payload: this script links nothing and removes nothing. The preset
+# 50-mica-nftables.preset keeps the unit disabled wherever a product adds the
+# firewall; the check below turns a link that arrived anyway into a failed build.
+set -e
+
+case "$1" in
+configure) ;;
+abort-upgrade | abort-remove | abort-deconfigure) exit 0 ;;
+*) echo "error: postinst called with unknown argument '$1'" >&2; exit 1 ;;
+esac
+
+# nftables.service runs `nft -f /etc/nftables.conf`, which begins with
+# `flush ruleset`: enabled, it would clear the container network's rules at boot.
+NFT_LINK=/etc/systemd/system/sysinit.target.wants/nftables.service
+[ ! -e "${NFT_LINK}" ] ||
+    { echo "error: ${NFT_LINK} exists, so nftables.service would run at boot and its ExecStart 'nft -f /etc/nftables.conf' begins with 'flush ruleset' -- it would clear the container network's rules on every boot. mica-systemd ships /usr/lib/systemd/system-preset/50-mica-nftables.preset to keep the unit disabled; something enabled it anyway" >&2; exit 1; }
+echo "nftables.service left DISABLED in the image (the tool ships; no ruleset is loaded at boot)"
+

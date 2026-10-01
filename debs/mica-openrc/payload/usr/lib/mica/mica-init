@@ -1,0 +1,63 @@
+#!/bin/sh
+# What the lifecycle helpers ask of the init system, so that none of them names
+# one: this is OpenRC's. A service is named without a suffix (mica-data-layout,
+# micad), as its /etc/init.d script is.
+#
+#   mica-init reboot | poweroff    start it and return
+#   mica-init is-active <service>  exit 0 when it is started
+#   mica-init installed <service>  exit 0 when this root ships it
+#   mica-init state                the boot's state: starting, running, degraded
+#                                  or stopping
+#   mica-init jobs                 the services still starting, one a line
+#   mica-init failed               the failed and crashed services, one a line
+set -eu
+
+SVCDIR=${MICA_RC_SVCDIR:-/run/openrc}
+
+# The services in one of OpenRC's state directories.
+listed() {
+    for path in "$SVCDIR/$1"/*; do
+        [ -e "$path" ] && echo "${path##*/}"
+    done
+    return 0
+}
+
+failed() {
+    { listed failed; rc-status --crashed 2>/dev/null || true; } | sort -u
+}
+
+case "${1:-}" in
+reboot)
+    exec openrc-shutdown --reboot now
+    ;;
+poweroff)
+    exec openrc-shutdown --poweroff now
+    ;;
+is-active)
+    exec rc-service --quiet "${2:?service required}" status
+    ;;
+installed)
+    [ -x "/etc/init.d/${2:?service required}" ]
+    ;;
+state)
+    if [ -n "$(listed stopping)" ] && [ "$(cat "$SVCDIR/softlevel" 2>/dev/null)" != default ]; then
+        echo stopping
+    elif [ -n "$(listed starting)" ]; then
+        echo starting
+    elif [ -n "$(failed)" ]; then
+        echo degraded
+    else
+        echo running
+    fi
+    ;;
+jobs)
+    listed starting
+    ;;
+failed)
+    failed
+    ;;
+*)
+    echo "usage: mica-init reboot|poweroff|is-active <service>|installed <service>|state|jobs|failed" >&2
+    exit 2
+    ;;
+esac

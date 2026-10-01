@@ -1,0 +1,47 @@
+#!/sbin/openrc-run
+# hostapd@<interface>.service and networkd's DHCPServer= on an OpenRC root: the
+# link addressed, hostapd on micad's configuration and busybox udhcpd serving the
+# pool. micad names the interface, configuration, address and udhcpd configuration
+# in /run/mica/wifi-ap.env, renders them and starts it; it is in no runlevel.
+
+description="Wi-Fi access point"
+
+ENV=/run/mica/wifi-ap.env
+HOSTAPD_PID=/run/mica-wifi-ap.hostapd.pid
+UDHCPD_PID=/run/mica-wifi-ap.udhcpd.pid
+
+depend() {
+    need mica-mounts
+    after mica-network
+}
+
+load() {
+    if [ ! -r "$ENV" ]; then
+        eerror "$ENV is absent: micad has not configured the access point"
+        return 1
+    fi
+    . "$ENV"
+}
+
+start() {
+    load || return 1
+    if [ -s /usr/lib/firmware/regulatory.db ] && command -v iw >/dev/null; then
+        iw reg reload >/dev/null 2>&1 || :
+    fi
+    ebegin "Starting the Wi-Fi access point on $interface"
+    busybox ip link set "$interface" up &&
+        busybox ip -4 addr replace "$address" dev "$interface" &&
+        start-stop-daemon --start --pidfile "$HOSTAPD_PID" --exec /usr/sbin/hostapd -- \
+            -B -P "$HOSTAPD_PID" "$config" &&
+        busybox udhcpd "$udhcpd"
+    eend $?
+}
+
+stop() {
+    load || return 0
+    ebegin "Stopping the Wi-Fi access point on $interface"
+    start-stop-daemon --stop --quiet --pidfile "$UDHCPD_PID" 2>/dev/null
+    start-stop-daemon --stop --quiet --pidfile "$HOSTAPD_PID"
+    busybox ip -4 addr del "$address" dev "$interface" 2>/dev/null
+    eend 0
+}

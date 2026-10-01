@@ -1,0 +1,15 @@
+name: ci
+# Every push to main and pull request: the checks, both architectures built on
+# their native runners and the pools gated (build.yml). Publishes nothing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

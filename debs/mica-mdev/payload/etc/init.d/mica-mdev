@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# Device nodes without udev: populate /dev from /sys once, then follow the kernel's
+# uevents with the netlink daemon, both by busybox mdev with /etc/mdev.conf.
+
+description="Device nodes from /sys and kernel uevents, by mdev"
+command=/usr/bin/busybox
+command_args="mdev -d -f"
+command_background=true
+# -f keeps mdev in the foreground with -d semantics: it is the netlink daemon.
+pidfile=/run/mica-mdev.pid
+
+depend() {
+    need mica-kernfs
+    provide dev
+    before *
+}
+
+start_pre() {
+    # The kernel runs no hotplug helper: the daemon hears every uevent itself. A
+    # kernel built without CONFIG_UEVENT_HELPER has no such file and runs none.
+    [ ! -e /proc/sys/kernel/hotplug ] || echo "" >/proc/sys/kernel/hotplug
+}
+
+start_post() {
+    ebegin "Populating /dev from /sys"
+    /usr/bin/busybox mdev -s
+    eend $?
+}

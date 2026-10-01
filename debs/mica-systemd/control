@@ -1,0 +1,32 @@
+Package: mica-systemd
+Version: 257.13-mica1
+Source-Date-Epoch: 1790638915
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: mica-system, systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, udev
+Provides: mica-init-system
+Conflicts: mica-openrc
+Description: Mica OS on systemd
+ The init half of a Mica OS root that runs systemd, one of the two a product
+ chooses (the other is mica-openrc): the units that run mica-system's tools --
+ the DATA layout, the bind mounts of /mica, /mica/containers, /srv, /home,
+ /root, /var, /var/lib/mica, /etc/hostname and /usr/local/lib/systemd/system,
+ the seed and reconcile services, the health gate and the boot-failure handler,
+ the offline provisioning import -- with the default DHCP network, volatile
+ journald storage, the network time policy, the hardware watchdog and the drop
+ of CAP_SYS_RESOURCE that keeps services inside DATA's project quotas;
+ /usr/lib/mica/mica-init for systemd; and mica-grow-data, which grows DATA with
+ systemd-repart.
+ .
+ Enablement is payload: the wants-links and /dev/null masks this package ships
+ are the whole of it, and no maintainer script enables a unit. The preset
+ 50-mica-nftables.preset keeps nftables.service disabled wherever a product
+ adds the firewall; the postinst refuses a root in which it is linked.
+ .
+ getty@.service and serial-getty@.service start only once the console option
+ has installed /usr/bin/login. The console policy of every board: getty@tty1 is
+ masked, so the VT the boot logo lands on stays idle even for logind's
+ on-demand autovt, and logind reserves tty2 as the one login VT (NAutoVTs=0,
+ ReserveVT=2).

@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# An offline provisioning document staged from the boot medium or removable media.
+
+description="Stage an offline provisioning document"
+
+depend() {
+    need mica-mounts
+    before micad
+}
+
+start() {
+    ebegin "Importing offline provisioning"
+    /usr/lib/mica/mica-provisioning-import
+    eend $?
+}
+
+stop() {
+    /usr/lib/mica/mica-provisioning-import --release
+}

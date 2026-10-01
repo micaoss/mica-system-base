@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# mica-bt.service on an OpenRC root: hwinit-bt attaches the HCI that
+# /etc/mica/bt.conf (a board file) names and execs btattach. On a board without the
+# file it starts nothing and is not failed, as the unit's ConditionPathExists= is.
+# In no runlevel; a product with Bluetooth links it into default.
+
+description="Attach Bluetooth HCI over UART"
+PIDFILE=/run/mica-bt.pid
+
+depend() {
+    after mica-modules
+}
+
+start() {
+    if [ ! -r /etc/mica/bt.conf ]; then
+        einfo "/etc/mica/bt.conf is absent: no Bluetooth HCI to attach"
+        return 0
+    fi
+    ebegin "Attaching the Bluetooth HCI"
+    start-stop-daemon --start --background --make-pidfile --pidfile "$PIDFILE" \
+        --exec /bin/sh -- /usr/lib/mica/hwinit-bt
+    eend $?
+}
+
+stop() {
+    [ -e "$PIDFILE" ] || return 0
+    ebegin "Detaching the Bluetooth HCI"
+    start-stop-daemon --stop --quiet --pidfile "$PIDFILE"
+    eend 0
+}

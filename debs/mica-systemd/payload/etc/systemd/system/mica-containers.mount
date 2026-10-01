@@ -1,0 +1,17 @@
+[Unit]
+Description=Container data with independent DATA project accounting
+DefaultDependencies=no
+Requires=mica-data-layout.service mica.mount
+After=mica-data-layout.service mica.mount
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Mount]
+What=/mnt/data/containers
+Where=/mica/containers
+Type=none
+# Container mounts must not propagate into the physical reset backing tree.
+Options=bind,private,nosuid,nodev
+
+[Install]
+WantedBy=local-fs.target

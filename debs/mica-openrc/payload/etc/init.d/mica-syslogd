@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# The system log in RAM, read with `logread`: the counterpart of mica-systemd's
+# volatile journal. Nothing is written to DATA.
+
+description="System log in a RAM ring buffer"
+command=/usr/bin/busybox
+command_args="syslogd -n -C1024"
+supervisor=supervise-daemon
+
+depend() {
+    need mica-kernfs
+    provide logger
+}

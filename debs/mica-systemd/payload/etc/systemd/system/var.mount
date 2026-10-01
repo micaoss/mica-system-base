@@ -1,0 +1,17 @@
+[Unit]
+Description=Writable var on bounded DATA storage
+DefaultDependencies=no
+Requires=mica-seed-var.service
+After=mica-seed-var.service
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Mount]
+What=/mnt/data/var
+Where=/var
+Type=none
+# Protected state mounts must not propagate into DATA/var.
+Options=bind,private,nosuid,nodev
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,180 @@
+name: build
+# Called by ci.yml and release.yml: the checks, then for amd64 and arm64, each on
+# its native runner, the pinned archives, the packages, the base root and its
+# layer, kept as the artifacts base-<arch>; then the two pools checked as one
+# build. One build time, chosen once, goes into both roots. Nothing is emulated.
+# Every job first checks out the mica-build-tools commit locks/mica-build-tools.pin
+# names (`bin/mica-tools sync`), which src/ imports as @mica/build-tools.
+# Caches only save downloads: the Bun install cache and the pinned Debian
+# archives, each keyed exactly on the files that pin them, restored by every run
+# and saved only by pushes to main, so a pull request never writes what a
+# release reads. The packages are always built with no cache, and every archive
+# is verified against its pin, so a release is the same without the caches.
+on:
+  workflow_call:
+    inputs:
+      # The commit to build: the caller's own when empty (ci.yml), the release tag
+      # (release.yml), or the commit update.yml has just made.
+      ref:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-26.04
+    outputs:
+      build-time: ${{ steps.time.outputs.value }}
+    steps:
+      - id: time
+        name: One build time for both roots
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+  check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Restore the Bun install cache
+        id: bun-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock', 'package.json') }}
+      - name: Dependencies
+        run: bun install --frozen-lockfile
+      - name: Save the Bun install cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
+      - name: mica-build-tools at its pin, and bin/mica-tools its bootstrap
+        run: bin/mica-tools sync && bin/mica-tools self-check
+      - name: locks/ against the pinned releases
+        run: bun src/container.ts environment
+      - name: Lint, typecheck and tests
+        run: bun run check
+  base:
+    needs: [plan, check]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      MICA_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Restore the Bun install cache
+        id: bun-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock', 'package.json') }}
+      - name: Dependencies
+        run: bun install --frozen-lockfile
+      - name: Save the Bun install cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bun-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
+      - name: mica-build-tools at its pin
+        run: bin/mica-tools sync
+      - name: locks/ against the pinned releases
+        run: bun src/container.ts environment
+      # The archives are named by the sha256 the committed pins record, and the cache
+      # step verifies every one of them whether it came from the cache or the mirror.
+      - name: Restore the pinned archives
+        id: archives-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: repos/sha256
+          key: debian-archives-${{ matrix.arch }}-${{ hashFiles('locks/sources.json', 'locks/upstream.lock', 'debs/*/build-sources.json') }}
+      # The res download host mirrors the pinned pool paths; an archive it does not
+      # have fails there and the row's own snapshot.debian.org URL is used instead.
+      # The sha256 of the committed pin is checked either way, so the mirror can
+      # only make the download faster, never change what is built.
+      - name: Pinned archives
+        run: bun src/container.ts cache --arch ${{ matrix.arch }} --all
+        env:
+          MICA_MIRROR: pool:https://dl.res.micaos.dev/upstream/debian
+      - name: Save the pinned archives
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.archives-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: repos/sha256
+          key: ${{ steps.archives-cache.outputs.cache-primary-key }}
+      - name: Every locked package, the upstream ones included, bootstraps together
+        run: bun src/container.ts test-bootstrap --arch ${{ matrix.arch }}
+      - name: Packages
+        run: bun src/container.ts debs --arch ${{ matrix.arch }}
+      - name: Base root
+        run: bun src/container.ts rootfs --arch ${{ matrix.arch }}
+      # The floor carries no init; a product installs one. Each init is composed
+      # from the floor as a product composes it, and held to its invariants.
+      - name: The floor with mica-systemd
+        run: bun src/container.ts rootfs --arch ${{ matrix.arch }} --init systemd
+      - name: The floor with mica-openrc
+        run: bun src/container.ts rootfs --arch ${{ matrix.arch }} --init openrc
+      # Under QEMU, with the Debian kernel the lock pins for it: the OpenRC root boots,
+      # lays out DATA, confirms its deployment through the health gate and shuts down.
+      - name: The OpenRC root boots (x64)
+        if: matrix.arch == 'amd64'
+        run: bun src/container.ts boot-test --init openrc
+      - name: The boot test's serial log
+        if: always() && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-test-log
+          path: _out/boot-test.log
+          if-no-files-found: ignore
+      - name: Root layer
+        run: bun src/publish.ts layer --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: base-${{ matrix.arch }}
+          path: |
+            _out/debs/${{ matrix.arch }}/pool/*.deb
+            _out/layers/${{ matrix.arch }}/
+            _out/rootfs/${{ matrix.arch }}.unowned.tsv
+          if-no-files-found: error
+  gate:
+    needs: base
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: base-*
+          path: _out
+          merge-multiple: true
+      - name: mica-build-tools at its pin
+        run: bin/mica-tools sync
+      # The declared packages, pool gate, then pool guard: reads the latest release's
+      # lock and pools and refuses a package whose inputs or bytes changed without a
+      # version bump.
+      - name: Both pools as one build, each package against the latest release
+        run: bun src/publish.ts gate
+        env:
+          GH_TOKEN: ${{ github.token }}

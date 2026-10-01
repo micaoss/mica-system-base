@@ -1,0 +1,17 @@
+[Unit]
+Description=Stage an offline provisioning document from the boot medium or removable media
+Documentation=file:/usr/lib/mica/mica-provisioning-import
+# After local-fs.target (udev has named the partitions) and before micad, which
+# applies the staged document at startup. Media must be attached at power-on.
+After=local-fs.target
+Before=micad.service
+
+[Service]
+Type=oneshot
+# The mounts stay until ExecStop releases them.
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-provisioning-import
+ExecStop=/usr/lib/mica/mica-provisioning-import --release
+
+[Install]
+WantedBy=multi-user.target

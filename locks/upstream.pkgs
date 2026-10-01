@@ -1,0 +1,50 @@
+# The Debian packages later stages install on the base root, pinned so every consumer
+# takes the same archives. `bun src/container.ts pin-inputs` pins each one and its
+# closure beyond the floor in locks/upstream.lock, selected in locks/packages.tsv as
+# upstream-<root> for the roots that need it; they are never installed into the base
+# root and are published as the upstream rows of the release's mica-system-base.lock.
+#
+# A later stage may take any upstream row of the release by its package name: every
+# row's dependencies are rows too, or in the floor. A package the lock does not pin at
+# all is added under options.
+
+# The init a product chooses. systemd: mica-systemd's Debian half.
+systemd
+systemd-sysv
+udev
+systemd-resolved
+systemd-timesyncd
+systemd-repart
+# OpenRC: mica-openrc's Debian half.
+openrc
+fdisk
+
+# options: what boards, engines and products add beside the floor.
+alsa-utils
+bash
+bluez
+coreutils
+diffutils
+dmsetup
+dropbear-bin
+findutils
+grep
+gzip
+iw
+kmod
+libasound2t64
+libatomic1
+libdw1t64
+libglib2.0-0t64
+libjson-c5
+libnl-genl-3-200
+libreadline8t64
+libseccomp2
+libssl3t64
+libsubid5
+login
+nftables
+procps
+readline-common
+rfkill
+sed

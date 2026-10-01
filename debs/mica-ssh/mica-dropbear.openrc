@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# dropbear.service on an OpenRC root: the arguments micad renders in
+# /run/mica/dropbear.env, the host-key check of mica-dropbear-prestart. In no
+# runlevel; micad starts and stops it from access.ssh. Named apart from the
+# dropbear script Debian's dropbear package would ship.
+
+description="SSH server (dropbear)"
+command=/usr/sbin/dropbear
+supervisor=supervise-daemon
+respawn_delay=2
+
+depend() {
+    need mica-mounts mica-shadow-reconcile
+    after net
+}
+
+start_pre() {
+    if [ ! -r /run/mica/dropbear.env ]; then
+        eerror "/run/mica/dropbear.env is absent: micad has not configured SSH"
+        return 1
+    fi
+    . /run/mica/dropbear.env
+    export DROPBEAR_ARGS
+    /usr/lib/mica/mica-dropbear-prestart || return 1
+    command_args="-F -E -r /mnt/data/state/ssh/dropbear_ed25519_host_key ${DROPBEAR_ARGS}"
+}

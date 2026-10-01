@@ -1,0 +1,16 @@
+[Unit]
+Description=Hostname from DATA/state
+# The hostname set through micad (systemd-hostnamed writes /etc/hostname) lives
+# on DATA/state; /etc itself is read-only.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+
+[Mount]
+What=/mnt/data/state/hostname
+Where=/etc/hostname
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Attach the Bluetooth HCI configured in /etc/mica/bt.conf (uart=, proto=,
+# speed=). Unblocks the bluetooth rfkill, then execs btattach (long-running;
+# the unit is Type=simple). speed= is only passed when set: the Broadcom
+# patchram path negotiates its own rate, while the AIC8800 H:4 path needs the
+# link speed stated explicitly. Best-effort: a missing conf or UART exits 0
+# silently; a failed btattach fails only the mica-bt unit, which nothing
+# depends on.
+CONF=/etc/mica/bt.conf
+[ -r "$CONF" ] || exit 0
+conf_get() { sed -n "s/^$1=//p" "$CONF" | head -n1; }
+uart=$(conf_get uart)
+proto=$(conf_get proto)
+speed=$(conf_get speed)
+[ -n "$uart" ] && [ -e "$uart" ] || exit 0
+rfkill unblock bluetooth 2>/dev/null || true
+set -- -B "$uart" -P "${proto:-bcm}"
+[ -n "$speed" ] && set -- "$@" -S "$speed"
+exec btattach "$@"

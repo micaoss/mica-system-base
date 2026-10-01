@@ -1,0 +1,27 @@
+#!/bin/sh
+# Grow only the board-declared DATA partition on the authenticated SYSTEM disk:
+# mica-systemd's mica-grow-data, with sfdisk in place of systemd-repart. The
+# board's layout keeps DATA the last partition of the disk.
+set -eu
+system_uuid=${1:?SYSTEM partition UUID required}
+disk_uuid=${2:?disk UUID required}
+source=$(findmnt -rn -M /mnt/system -o SOURCE)
+[ "$(blkid -s PARTUUID -o value "$source")" = "$system_uuid" ]
+node=$(basename "$source")
+[ "$(cat "/sys/class/block/$node/partition")" = 2 ]
+physical=$(readlink -f "/sys/class/block/$node")
+name=$(basename "$(dirname "$physical")")
+disk=/dev/$name
+[ -b "$disk" ]
+[ "$(blkid -p -s PTUUID -o value "$disk")" = "$disk_uuid" ]
+last=0
+for partition in /sys/class/block/"$name"/*/partition; do
+    number=$(cat "$partition")
+    [ "$number" -gt "$last" ] && last=$number
+done
+[ "$last" -gt 2 ]
+# A disk image written to a larger medium keeps its backup GPT where the image
+# ended; move it to the end first, then take everything after DATA's start.
+sfdisk --quiet --relocate gpt-bak-std "$disk"
+echo ', +' | sfdisk --quiet --no-reread --no-tell-kernel -N "$last" "$disk"
+partx --update --nr "$last" "$disk"

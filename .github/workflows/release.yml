@@ -1,0 +1,75 @@
+name: release
+# A published GitHub release YYYYMMDD-HHMM (cut with `gh release create
+# <YYYYMMDD-HHMM> --target <commit of main>`, which creates the tag) builds that
+# tag through build.yml, both architectures on their native runners, then
+# publishes the gated pools (mica-build-tools `release pool`) and the two root
+# layers as one index to ghcr.io/micaoss/mica-system-base:
+# pool.<arch>.<YYYYMMDD-HHMM> and rootfs.<YYYYMMDD-HHMM>, and attaches
+# (`release attach`) the unowned-path data assets, mica-system-base.lock (those
+# artifacts, the packages and the Debian pins for later stages) and SHA256SUMS,
+# and nothing else, to the release: a consumer commits the lock unchanged as
+# locks/mica-system-base.lock with its pin locks/pins/mica-system-base.pin. Re-running the
+# workflow finishes an interrupted publication: an existing rootfs tag keeps its
+# first build time and is verified, not rebuilt, and an existing asset must hold
+# the same bytes.
+# update.yml publishes its release through workflow_dispatch with the tag: a release
+# its token creates does not start this workflow.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: the release tag, YYYYMMDD-HHMM
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: release-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ inputs.tag || github.event.release.tag_name }}
+  publish:
+    needs: build
+    runs-on: ubuntu-26.04
+    # packages: the OCI pool and rootfs; contents: the release's assets and notes.
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: base-*
+          path: _out
+          merge-multiple: true
+      - name: mica-build-tools at its pin
+        run: bin/mica-tools sync
+      - name: Publish the pools
+        run: bin/mica-tools release pool "$TAG" --arch amd64 --arch arm64
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MICA_REGISTRY_USER: ${{ github.actor }}
+      - name: Publish the root
+        run: bun src/publish.ts rootfs "$TAG"
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MICA_REGISTRY_USER: ${{ github.actor }}
+      - name: Attach mica-system-base.lock, its data assets and SHA256SUMS to the release
+        run: bun src/publish.ts lock "$TAG"
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,16 @@
+[Unit]
+Description=Attach Bluetooth HCI over UART
+ConditionPathExists=/etc/mica/bt.conf
+# The BT core of a combo chip only answers once its WiFi/BT modules are
+# loaded, so attach after mica-modules has run.
+After=mica-modules.service
+
+[Service]
+# btattach is long-running, so this is a plain simple service. Best-effort:
+# nothing depends (or may depend) on it, so a failed attach fails only this
+# unit and never the boot. No Restart= — one attempt per boot, no retry loop.
+Type=simple
+ExecStart=/usr/lib/mica/hwinit-bt
+
+[Install]
+WantedBy=multi-user.target

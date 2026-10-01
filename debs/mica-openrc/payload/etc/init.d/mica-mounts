@@ -1,0 +1,80 @@
+#!/sbin/openrc-run
+# The binds of DATA and the seeds they wait for, in the order mica-systemd's units
+# give them: /mica, /mica/containers, /srv; STATE's hostname; the var tree, then
+# /var/lib/mica on it; /root and /home. Then the tmpfiles entries (mica-system's
+# /etc/tmpfiles.d). Stopped at shutdown, the binds come down in reverse and DATA is
+# left read-only.
+
+description="Bind DATA into the root and seed it"
+
+depend() {
+    need mica-data-layout
+}
+
+# bind <source> <target> [<extra mount options>]
+bind() {
+    mountinfo -q "$2" && return 0
+    mount -n --bind "$1" "$2" || return 1
+    [ -z "${3:-}" ] || mount -n -o "remount,bind,$3" "$2"
+}
+
+seed() {
+    ebegin "Running $1"
+    "/usr/lib/mica/$1"
+    eend $?
+}
+
+# systemd-tmpfiles' d, e and f lines: a directory or a file with its mode and owner.
+tmpfiles() {
+    for conf in /etc/tmpfiles.d/*.conf; do
+        [ -e "$conf" ] || continue
+        while read -r type path mode user group _; do
+            case "$type" in
+            d | e) [ -d "$path" ] || mkdir -p "$path" ;;
+            f) [ -e "$path" ] || { mkdir -p "${path%/*}" && : >"$path"; } ;;
+            *) continue ;;
+            esac
+            [ "$mode" = - ] || chmod "$mode" "$path"
+            chown "${user:-root}:${group:-root}" "$path"
+        done <"$conf"
+    done
+}
+
+start() {
+    ebegin "Binding /mica, /mica/containers and /srv"
+    bind /mnt/data/mica /mica &&
+        mount --make-private /mica &&
+        bind /mnt/data/containers /mica/containers nosuid,nodev &&
+        mount --make-private /mica/containers &&
+        bind /mnt/data/srv /srv
+    eend $? || return 1
+    seed mica-seed-state || return 1
+    ebegin "Binding STATE's hostname"
+    bind /mnt/data/state/hostname /etc/hostname && hostname -F /etc/hostname
+    eend $? || return 1
+    seed mica-seed-var || return 1
+    # /var first: a bind over /var would hide one made beneath it.
+    ebegin "Binding /var and /var/lib/mica"
+    bind /mnt/data/var /var nosuid,nodev &&
+        mount --make-private /var &&
+        bind /mnt/data/state/mica /var/lib/mica
+    eend $? || return 1
+    seed mica-seed-root || return 1
+    seed mica-seed-home || return 1
+    ebegin "Binding /root and /home"
+    bind /mica/root /root && bind /mica/home /home
+    eend $? || return 1
+    ebegin "Applying /etc/tmpfiles.d"
+    tmpfiles
+    eend $?
+}
+
+stop() {
+    ebegin "Unbinding DATA"
+    for target in /home /root /var/lib/mica /var /etc/hostname /srv /mica/containers /mica; do
+        mountinfo -q "$target" && umount -n "$target"
+    done
+    sync
+    mountinfo -q /mnt/data && mount -n -o remount,ro /mnt/data
+    eend 0
+}

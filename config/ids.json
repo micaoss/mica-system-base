@@ -1,0 +1,22 @@
+{
+  "users": [
+    { "name": "systemd-network", "uid": 998, "gid": 998, "gecos": "systemd Network Management", "home": "/", "shell": "/usr/sbin/nologin" },
+    { "name": "systemd-timesync", "uid": 997, "gid": 997, "gecos": "systemd Time Synchronization", "home": "/", "shell": "/usr/sbin/nologin" },
+    { "name": "messagebus", "uid": 996, "gid": 996, "gecos": "System Message Bus", "home": "/nonexistent", "shell": "/usr/sbin/nologin" },
+    { "name": "systemd-resolve", "uid": 990, "gid": 990, "gecos": "systemd Resolver", "home": "/", "shell": "/usr/sbin/nologin" }
+  ],
+  "groups": [
+    { "name": "systemd-journal", "gid": 999 },
+    { "name": "systemd-network", "gid": 998 },
+    { "name": "systemd-timesync", "gid": 997 },
+    { "name": "messagebus", "gid": 996 },
+    { "name": "input", "gid": 995 },
+    { "name": "sgx", "gid": 994 },
+    { "name": "clock", "gid": 993 },
+    { "name": "kvm", "gid": 992 },
+    { "name": "render", "gid": 991 },
+    { "name": "systemd-resolve", "gid": 990 },
+    { "name": "bluetooth", "gid": 989 },
+    { "name": "netdev", "gid": 988 }
+  ]
+}

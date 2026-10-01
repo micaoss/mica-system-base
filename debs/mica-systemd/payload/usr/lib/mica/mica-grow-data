@@ -1,0 +1,14 @@
+#!/bin/sh
+# Grow only the board-declared DATA partition on the authenticated SYSTEM disk.
+set -eu
+system_uuid=${1:?SYSTEM partition UUID required}
+disk_uuid=${2:?disk UUID required}
+source=$(findmnt -rn -M /mnt/system -o SOURCE)
+[ "$(blkid -s PARTUUID -o value "$source")" = "$system_uuid" ]
+node=$(basename "$source")
+[ "$(cat "/sys/class/block/$node/partition")" = 2 ]
+physical=$(readlink -f "/sys/class/block/$node")
+disk=/dev/$(basename "$(dirname "$physical")")
+[ -b "$disk" ]
+[ "$(blkid -p -s PTUUID -o value "$disk")" = "$disk_uuid" ]
+exec /usr/bin/systemd-repart --dry-run=no "$disk"

@@ -1,0 +1,22 @@
+[Unit]
+Description=hostapd configuration from DATA state
+# The access-point reconciler renders /etc/hostapd/<iface>.conf at runtime, and
+# that path is the ExecStart argument of the hostapd@.service template this package ships. On
+# Mica OS /etc is inside the read-only dm-verity squashfs, so without this bind the
+# reconciler's write fails on device and nowhere else — the provisioning AP,
+# which is the path to a device's configuration, never comes up.
+# The file carries the AP pre-shared key in the clear, so the DATA state directory is
+# 0700 (mica-seed-state) and must survive an A/B update.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+Before=hostapd@.service
+
+[Mount]
+What=/mnt/data/state/hostapd
+Where=/etc/hostapd
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target
