@@ -1,8 +1,27 @@
 #!/bin/sh
 # Grow only the board-declared DATA partition on the authenticated SYSTEM disk.
+# usage: mica-grow-data <SYSTEM_GUID> <DISK_GUID> [--discard=yes|no]
 set -eu
+
+die() {
+    echo "mica-grow-data: $*" >&2
+    exit 2
+}
+
 system_uuid=${1:?SYSTEM partition UUID required}
 disk_uuid=${2:?disk UUID required}
+# Media whose unpartitioned gaps carry bootloader copies pass --discard=no. With no
+# policy the helper runs the command it has always run, on repart's own discard
+# default; an unreadable policy is refused instead of falling back to it.
+discard=
+if [ "$#" -ge 3 ]; then
+    case $3 in
+        --discard=yes | --discard=no) discard=$3 ;;
+        *) die "unsupported discard policy: $3" ;;
+    esac
+fi
+[ "$#" -le 3 ] || die "unexpected argument: $4"
+
 source=$(findmnt -rn -M /mnt/system -o SOURCE)
 [ "$(blkid -s PARTUUID -o value "$source")" = "$system_uuid" ]
 node=$(basename "$source")
@@ -11,4 +30,7 @@ physical=$(readlink -f "/sys/class/block/$node")
 disk=/dev/$(basename "$(dirname "$physical")")
 [ -b "$disk" ]
 [ "$(blkid -p -s PTUUID -o value "$disk")" = "$disk_uuid" ]
+if [ -n "$discard" ]; then
+    exec /usr/bin/systemd-repart --dry-run=no "$discard" "$disk"
+fi
 exec /usr/bin/systemd-repart --dry-run=no "$disk"
