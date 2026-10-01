@@ -15,9 +15,15 @@ disk=/dev/$name
 [ -b "$disk" ]
 [ "$(blkid -p -s PTUUID -o value "$disk")" = "$disk_uuid" ]
 last=0
+last_end=0
 for partition in /sys/class/block/"$name"/*/partition; do
     number=$(cat "$partition")
-    [ "$number" -gt "$last" ] && last=$number
+    directory=${partition%/partition}
+    end=$(($(cat "$directory/start") + $(cat "$directory/size")))
+    if [ "$end" -gt "$last_end" ]; then
+        last=$number
+        last_end=$end
+    fi
 done
 [ "$last" -gt 2 ]
 # A disk image written to a larger medium keeps its backup GPT where the image
