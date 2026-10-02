@@ -78,9 +78,9 @@ describe('the package definitions', () => {
   // libnl linked statically and OpenSSL for WPA2 and WPA3: nothing else is configured, and the
   // units keep the names and paths micad drives.
   describe.each([
-    { name: 'mica-wifi', source: 'wpa-supplicant', archive: 'wpa_supplicant', unit: 'usr/lib/systemd/system/wpa_supplicant@.service', config: ['CONFIG_AP=y', 'CONFIG_BACKEND=file', 'CONFIG_BGSCAN_SIMPLE=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_CONFIG_BLOBS=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
-    { name: 'mica-wifi-ap', source: 'hostapd', archive: 'hostapd', unit: 'usr/lib/systemd/system/hostapd@.service', config: ['CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_ACCOUNTING=y', 'CONFIG_NO_RADIUS=y', 'CONFIG_NO_VLAN=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
-  ])('$name', ({ name, source, archive, unit, config }) => {
+    { name: 'mica-wifi', source: 'wpa-supplicant', archive: 'wpa_supplicant', bind: 'etc-wpa_supplicant', unit: 'usr/lib/systemd/system/wpa_supplicant@.service', config: ['CONFIG_AP=y', 'CONFIG_BACKEND=file', 'CONFIG_BGSCAN_SIMPLE=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_CONFIG_BLOBS=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+    { name: 'mica-wifi-ap', source: 'hostapd', archive: 'hostapd', bind: 'etc-hostapd', unit: 'usr/lib/systemd/system/hostapd@.service', config: ['CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_ACCOUNTING=y', 'CONFIG_NO_RADIUS=y', 'CONFIG_NO_VLAN=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+  ])('$name', ({ name, source, archive, bind, unit, config }) => {
     const dockerfile = (): string => readFileSync(join(REPO, 'debs', name, 'Dockerfile'), 'utf8')
 
     test('builds the pinned upstream hostap release on pinned build tools', () => {
@@ -118,6 +118,14 @@ describe('the package definitions', () => {
 
     test('ships the unit micad drives', () => {
       expect(dockerfile()).toContain(`/stage/${unit}`)
+    })
+
+    // The root is read-only: systemd cannot create a bind's mount point there, so the
+    // package that ships the STATE bind ships the directory it mounts over.
+    test('ships the mount point of its STATE bind', () => {
+      const where = /^Where=(\/etc\/\S+)$/m.exec(readFileSync(join(REPO, 'debs', name, `${bind}.mount`), 'utf8'))?.[1]
+      expect(where).toBeDefined()
+      expect(dockerfile()).toContain(`install -d -m 0755 /stage${where};`)
     })
   })
 

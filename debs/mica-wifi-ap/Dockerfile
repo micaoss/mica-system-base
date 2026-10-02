@@ -73,6 +73,7 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
     install -D -m 0644 /in/units/hostapd@.service /stage/usr/lib/systemd/system/hostapd@.service; \
     install -d -m 0755 /stage/etc/systemd/system/local-fs.target.wants; \
     install -m 0644 /in/units/etc-hostapd.mount /stage/etc/systemd/system/; \
+    install -d -m 0755 /stage/etc/hostapd; \
     ln -s /etc/systemd/system/etc-hostapd.mount /stage/etc/systemd/system/local-fs.target.wants/etc-hostapd.mount; \
     install -D -m 0755 /in/units/mica-wifi-ap.openrc /stage/etc/init.d/mica-wifi-ap; \
     license="$(sed -n '/^License$/,/SUCH DAMAGE\.$/p' /in/license/README)"; \

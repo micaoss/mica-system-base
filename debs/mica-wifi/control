@@ -1,6 +1,6 @@
 Package: mica-wifi
-Version: 2.12-mica1
-Source-Date-Epoch: 1790638915
+Version: 2.12-mica2
+Source-Date-Epoch: 1790964200
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: net

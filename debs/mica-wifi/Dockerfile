@@ -77,6 +77,7 @@ RUN --mount=type=bind,from=debs,target=/in/debs \
     install -D -m 0644 /in/build/wpa_supplicant@.service /stage/usr/lib/systemd/system/wpa_supplicant@.service; \
     install -d -m 0755 /stage/etc/systemd/system/local-fs.target.wants /stage/etc/systemd/system/multi-user.target.wants; \
     install -m 0644 /in/units/etc-wpa_supplicant.mount /in/units/mica-regdb-reload.service /stage/etc/systemd/system/; \
+    install -d -m 0755 /stage/etc/wpa_supplicant; \
     ln -s /etc/systemd/system/etc-wpa_supplicant.mount /stage/etc/systemd/system/local-fs.target.wants/etc-wpa_supplicant.mount; \
     ln -s /etc/systemd/system/mica-regdb-reload.service /stage/etc/systemd/system/multi-user.target.wants/mica-regdb-reload.service; \
     install -D -m 0755 /in/units/mica-wifi-client.openrc /stage/etc/init.d/mica-wifi-client; \
