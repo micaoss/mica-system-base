@@ -128,7 +128,7 @@ graphroot. DATA's own file system and options are the product's.
 | `locks/upstream.lock` | every third-party pin: the Debian archives, the inputs and build tools of the packages, the upstream sources they compile |
 | `locks/sources.json` | the Debian snapshot and suite (the release's `apt` row) |
 | `locks/packages.tsv` | the consumers of each Debian package: `base`, a package of `debs/consumers.pkgs`, or `upstream-<root>` |
-| `locks/upstream.pkgs` | the Debian packages later stages install (the `upstream` rows) |
+| `locks/upstream.pkgs` | the Debian packages later stages install (the `upstream` rows): the inits, the options, the tools |
 | `config/ids.json` | the fixed system IDs |
 | `debs/<package>/` | a package: `control`, `Dockerfile`, `mica-inputs`, and as needed a `postinst`, a `payload/`, `build-sources.json` |
 | `debs/consumers.pkgs` | the local packages a selection may name |

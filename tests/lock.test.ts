@@ -98,10 +98,14 @@ test.each(ARCHES)('%s: every upstream package is pinned for the roots that need 
   expect(upstream.filter(row => root.has(row.name)).map(row => row.name).sort()).toEqual([...STRIPPED.filter(name => name !== 'dash'), ...ORPHANED].sort())
 })
 
-// The base floor: no curl, iproute2 or iptables.
-test.each(ARCHES)('%s: curl, iproute2 and iptables stay out of the lock', (arch) => {
+// The base floor: no curl or iproute2, which are tools pinned for later stages, and
+// no iptables anywhere in the lock (the firewall is nftables).
+test.each(ARCHES)('%s: curl and iproute2 stay out of the floor, iptables out of the lock', (arch) => {
+  const root = names(arch, BASE_PACKAGES)
+  for (const tool of ['curl', 'libcurl4t64', 'iproute2'])
+    expect(root).not.toContain(tool)
   const all = selectRuntime(REPO, arch, { kind: 'all' }).map(row => row.name)
-  for (const removed of ['curl', 'libcurl4t64', 'iproute2', 'iptables', 'libip4tc2', 'libip6tc2'])
+  for (const removed of ['iptables', 'libip4tc2', 'libip6tc2'])
     expect(all).not.toContain(removed)
 })
 

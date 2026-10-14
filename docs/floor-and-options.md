@@ -105,6 +105,7 @@ the hwinit programs -- are the board's package (its BSP).
 | Wi-Fi station | `mica-wifi` | pool |
 | Wi-Fi access point | `mica-wifi-ap` | pool |
 | Bluetooth | `mica-bluetooth` | pool; bluez is an `upstream` row |
+| System tools | any of the **tools** section of `locks/upstream.pkgs`: `iproute2`, `iputils-ping`, `ethtool`, `tcpdump`, `curl`, `bind9-dnsutils`, `strace`, `lsof`, `htop`, `less`, `vim-tiny`, `pciutils`, `usbutils`, `i2c-tools`, `gpiod`, `can-utils`, `parted`, `rsync`, `jq`, ... | `upstream` rows |
 
 An option that is a Debian package, and every other Debian package a later stage installs,
 comes from the release's `upstream` rows (below).
@@ -118,7 +119,8 @@ here.
 
 - **What is pinned.** Every package of `locks/upstream.pkgs` -- the inits' roots, and
   **options**: the options above and what boards and engines install (the radio tools,
-  board audio, mica-podman's libraries) -- with its closure beyond the floor as published.
+  board audio, mica-podman's libraries), and **tools**: system tools an image may install
+  without a change to Base -- with its closure beyond the floor as published.
   That closure includes what the floor purged: systemd's rows carry libssl3t64, coreutils'
   libgmp10.
 - **Roots attribute a row; they do not gate it.** `<roots>` names the roots of
