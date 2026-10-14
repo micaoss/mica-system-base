@@ -61,7 +61,7 @@ Every product installs exactly one.
 | Time | timesyncd | busybox `ntpd` (`mica-ntpd`) on the `ntp_servers` micad renders in `/run/mica/ntpd.conf`, Debian's pool until then |
 | Log | journald, volatile | busybox `syslogd` and `klogd` in RAM, read with `logread` |
 | Watchdog | systemd's hardware watchdog | busybox `watchdog`, 90 s |
-| Health gate | `mica-health.service`, `mica-boot-failure` on failure | `mica-health`, last, the same |
+| Health gate | `mica-health.service`, `mica-boot-failure` on failure, both writing to the journal and the console | `mica-health`, last, the same, in the foreground: its lines reach the console |
 | Resource limits | no service keeps `CAP_SYS_RESOURCE` (DATA's project quotas hold) | the same, `/etc/rc.conf.d/mica.conf` |
 | Console | no getty until the console option installs `/usr/bin/login`; `getty@tty1` masked, so the VT the boot logo lands on stays idle; logind's one login VT is tty2 | no getty; a product that installs the console adds one |
 | Enablement | links in the packages' payload | runlevel links in the packages' payload |

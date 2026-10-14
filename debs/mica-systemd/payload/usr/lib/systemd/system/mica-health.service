@@ -8,6 +8,9 @@ OnFailure=mica-boot-failure.service
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/mica/mica-health
+# The verdict on the console too, as under OpenRC.
+StandardOutput=journal+console
+StandardError=journal+console
 # Bounds the settle poll (60 s by default) and the probes.
 TimeoutStartSec=180
 Restart=no

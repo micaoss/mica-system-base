@@ -229,6 +229,15 @@ describe('the mica-systemd payload', () => {
     expect(logind).toMatch(/^ReserveVT=2$/m)
   })
 
+  // The health gate's verdict reaches the console, as OpenRC's foreground run does.
+  test('puts the health gate and the boot-failure verdict on the console', () => {
+    for (const unit of ['usr/lib/systemd/system/mica-health.service', 'etc/systemd/system/mica-boot-failure.service']) {
+      const service = readFileSync(join(payload, unit), 'utf8')
+      expect(service).toMatch(/^StandardOutput=journal\+console$/m)
+      expect(service).toMatch(/^StandardError=journal\+console$/m)
+    }
+  })
+
   // Debian's quota left the floor; its units are nothing to mask.
   test('masks no unit of the quota package', () => {
     for (const unit of ['quota', 'quotacheck', 'rpc-rquotad'])

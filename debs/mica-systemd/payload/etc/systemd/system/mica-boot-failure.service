@@ -5,3 +5,6 @@ DefaultDependencies=no
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/mica/mica-boot-failure
+# The verdict on the console too, as under OpenRC.
+StandardOutput=journal+console
+StandardError=journal+console
