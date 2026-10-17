@@ -285,5 +285,6 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
   finally {
     rmSync(work, { recursive: true, force: true })
   }
-  console.log(`mica-system-base: bootstrapped ${selected.length} locked packages${local.length ? ` and ${local.length} of this repository's` : ''} into ${root} with mmdebstrap`)
+  const bytes = output(['du', '-sb', root], 'measuring the root').split('\t')[0]
+  console.log(`mica-system-base: bootstrapped ${selected.length} locked packages${local.length ? ` and ${local.length} of this repository's` : ''} into ${root} with mmdebstrap, ${bytes} bytes installed`)
 }
