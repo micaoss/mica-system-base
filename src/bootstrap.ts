@@ -235,7 +235,9 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
   need('mmdebstrap')
   await verifyRows(options.cacheDir, selected)
   // armhf has no image of its own: it is installed from the amd64 image, and its
-  // maintainer scripts run under the host's binfmt emulation.
+  // maintainer scripts run under the host's binfmt emulation. mmdebstrap's own
+  // check of that emulation needs arch-test, which the image does not carry; without
+  // emulation the first maintainer script fails instead.
   if (output(['dpkg', '--print-architecture'], 'reading the host architecture').trim() !== imageArch(arch))
     fail(`installation of ${arch} requires an ${imageArch(arch)} host`)
   const pinned = ids()
@@ -252,6 +254,7 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
       '--mode=root',
       '--variant=custom',
       `--architectures=${arch}`,
+      ...(arch === imageArch(arch) ? [] : ['--skip=check/qemu']),
       `--include=${installing.map(row => row.name).join(',')}`,
       ...SLIM.map(line => `--dpkgopt=${line}`),
       '--aptopt=Acquire::Languages "none"',
