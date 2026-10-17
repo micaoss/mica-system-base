@@ -172,9 +172,10 @@ export function selectRuntime(repo: string, arch: Arch, selection: Selection): R
 }
 
 // Inputs: archives a package of debs/ takes files out of (input.<name>); unpacked
-// at build time, never installed in a root.
+// at build time, never installed in a root. The packages taking them are
+// Architecture: all, built in an environment image: armhf's are amd64's.
 export function selectInputs(repo: string, arch: Arch): Row[] {
-  return debianRows(repo, arch, INPUT)
+  return debianRows(repo, imageArch(arch), INPUT)
 }
 
 // Build pins: the closure of the build tools a package installs into its build

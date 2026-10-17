@@ -27,6 +27,13 @@ test('a build for one architecture takes its own and the all packages, filed int
   ])
 })
 
+// The packages taking inputs are Architecture: all, built in the amd64 image for
+// the armhf pool too, so armhf's inputs are amd64's: what the armhf build caches.
+test('armhf takes the amd64 inputs', () => {
+  expect(selectInputs(REPO, 'amd64').some(row => row.architecture === 'amd64')).toBe(true)
+  expect(selectInputs(REPO, 'armhf')).toEqual(selectInputs(REPO, 'amd64'))
+})
+
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
