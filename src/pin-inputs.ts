@@ -9,9 +9,9 @@ import { streamToFile } from '@mica/build-tools'
 import { declared } from './debs/docker.ts'
 import { fail } from './errors.ts'
 import { output } from './exec.ts'
-import { buildSnapshot, formatRows, lines, selectRuntime } from './lock.ts'
+import { ARCHES, buildSnapshot, formatRows, lines, selectRuntime } from './lock.ts'
 import { REPO, sources } from './pins.ts'
-import { ORPHANED, STRIPPED } from './rootfs.ts'
+import { DROPPED, ORPHANED, STRIPPED } from './rootfs.ts'
 
 // The inputs every package under debs/ declares; the archives themselves, never
 // their closure: nothing here is installed.
@@ -51,7 +51,7 @@ export async function resolveUpstream(file: string, arch: Arch, destination: str
   const { mirror, suite } = sources()
   // The published floor: the runtime rows but those the floor purges.
   const purged = [...STRIPPED, ...ORPHANED]
-  const root = new Set(runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })).filter(name => !purged.includes(name)))
+  const root = new Set(runtimeRoots(arch).filter(name => !purged.includes(name)))
   await resolve({
     what: 'upstream packages',
     lists: [`deb [arch=${arch} check-valid-until=no] ${mirror} ${suite} main`],
@@ -70,6 +70,13 @@ export function runtimeNames(rows: Row[]): string[] {
   return [...new Set(rows.filter(row => row.consumers.some(consumer => !consumer.startsWith('upstream-'))).map(row => row.name))].sort()
 }
 
+// The names the lock pins for the root of `arch`: those it pins for the root of any
+// architecture, less what that architecture's root drops.
+export function runtimeRoots(arch: Arch): string[] {
+  return [...new Set(ARCHES.flatMap(each => runtimeNames(selectRuntime(REPO, each, { kind: 'all' }))))]
+    .filter(name => !(DROPPED[arch] ?? []).includes(name)).sort()
+}
+
 // The runtime rows again, at the snapshot of locks/sources.json: every name the lock pins
 // for the root, resolved from the one source the release's apt row names.
 export async function resolveRuntime(arch: Arch, destination: string | undefined): Promise<void> {
@@ -77,7 +84,7 @@ export async function resolveRuntime(arch: Arch, destination: string | undefined
   await resolve({
     what: 'runtime packages',
     lists: [`deb [arch=${arch} check-valid-until=no] ${mirror} ${suite} main`],
-    roots: runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })),
+    roots: runtimeRoots(arch),
     install: true,
     foreign: true,
   }, arch, destination)

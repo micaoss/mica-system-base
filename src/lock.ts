@@ -4,11 +4,31 @@ import { join } from 'node:path'
 import { checkUpstream } from '@mica/build-tools'
 import { fail, Refusal } from './errors.ts'
 
-export type Arch = 'amd64' | 'arm64'
-export const ARCHES: Arch[] = ['amd64', 'arm64']
+export type Arch = 'amd64' | 'arm64' | 'armhf'
+export const ARCHES: Arch[] = ['amd64', 'arm64', 'armhf']
+// The architectures the build environment has images of, each built on its own
+// runner. armhf has none: it is cross-compiled and bootstrapped in the amd64
+// images, and its own binaries run only under emulation (mica-build-tools
+// docs/spec/build-rules.md).
+export type ImageArch = 'amd64' | 'arm64'
+export const IMAGE_ARCHES: ImageArch[] = ['amd64', 'arm64']
+
+export function imageArch(arch: Arch): ImageArch {
+  return arch === 'armhf' ? 'amd64' : arch
+}
+
+// Debian's architecture as an OCI platform.
+export function platform(arch: Arch): { os: 'linux', architecture: string, variant?: string } {
+  return arch === 'armhf' ? { os: 'linux', architecture: 'arm', variant: 'v7' } : { os: 'linux', architecture: arch }
+}
+
+export function platformName(arch: Arch): string {
+  const { os, architecture, variant } = platform(arch)
+  return [os, architecture, ...(variant ? [variant] : [])].join('/')
+}
 
 // The architecture this process runs on.
-export function hostArch(): Arch {
+export function hostArch(): ImageArch {
   if (process.arch === 'x64')
     return 'amd64'
   if (process.arch === 'arm64')
@@ -50,7 +70,7 @@ export function lines(path: string): string[] {
   return readFileSync(path, 'utf8').split('\n').map(line => line.replace(/#.*/, '').trim()).filter(Boolean)
 }
 
-// Every source row of locks/upstream.lock: name, arch (amd64, arm64 or all),
+// Every source row of locks/upstream.lock: name, arch (amd64, arm64, armhf or all),
 // version, sha256, url.
 export function sourceRows(repo: string): string[][] {
   return checkUpstream(join(repo, UPSTREAM_LOCK)).filter(row => row[0] === 'source').map(row => row.slice(1))
@@ -58,7 +78,7 @@ export function sourceRows(repo: string): string[][] {
 
 // The Debian archives whose lock name starts with `prefix` (no prefix: the
 // runtime lock), for one architecture, named without the prefix; an `all` row
-// serves both architectures.
+// serves every architecture.
 function debianRows(repo: string, arch: Arch, prefix: string): Row[] {
   return sourceRows(repo).filter(([name = '', target]) => (prefix ? name.startsWith(prefix) : isRuntime(name)) && (target === arch || target === 'all')).map(([name = '', target = '', version = '', sha256 = '', url = '']) => {
     if (!SNAPSHOT_URL.test(url))
@@ -186,19 +206,21 @@ export function buildSnapshot(repo: string, name: string): string {
 }
 
 // Source rows for rows resolved per architecture, named with `prefix`: one `all`
-// row when both architectures resolved the same Architecture: all archive.
+// row when every architecture resolved resolved the name as the same
+// Architecture: all archive.
 export function lockRows(prefix: string, byArch: Map<Arch, Row[]>): string[][] {
-  const names = [...new Set(ARCHES.flatMap(arch => (byArch.get(arch) ?? []).map(row => row.name)))]
+  const resolved = ARCHES.filter(arch => byArch.has(arch))
+  const names = [...new Set(resolved.flatMap(arch => byArch.get(arch)!.map(row => row.name)))]
   return names.flatMap((name) => {
-    const [amd64, arm64] = ARCHES.map(arch => (byArch.get(arch) ?? []).find(row => row.name === name))
-    if (amd64?.architecture === 'all' && arm64?.architecture === 'all' && amd64.sha256 === arm64.sha256)
-      return [['source', `${prefix}${name}`, 'all', amd64.version, amd64.sha256, amd64.url]]
+    const [first, ...others] = resolved.map(arch => byArch.get(arch)!.find(row => row.name === name))
+    if (first?.architecture === 'all' && others.every(row => row?.architecture === 'all' && row.sha256 === first.sha256))
+      return [['source', `${prefix}${name}`, 'all', first.version, first.sha256, first.url]]
     return ARCHES.flatMap((arch) => {
       const row = (byArch.get(arch) ?? []).find(candidate => candidate.name === name)
       if (!row)
         return []
       if (row.architecture !== arch)
-        fail(`${name} resolved as ${row.architecture} for ${arch} and differently for the other architecture`)
+        fail(`${name} resolved as ${row.architecture} for ${arch} and differently for another architecture`)
       return [['source', `${prefix}${name}`, arch, row.version, row.sha256, row.url]]
     })
   })

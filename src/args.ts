@@ -125,13 +125,13 @@ export function parse(argv: string[], commands: string[]): Options | undefined {
   return options
 }
 
-export const USAGE = `usage: bun src/container.ts cache|verify|select|bootstrap --arch amd64|arm64
+export const USAGE = `usage: bun src/container.ts cache|verify|select|bootstrap --arch amd64|arm64|armhf
        [--cache-dir PATH] [--packages FILE | --all | --package NAME] [--root PATH]
        bun src/container.ts pin-inputs [--check]
-       bun src/container.ts test | test-bootstrap --arch amd64|arm64
+       bun src/container.ts test | test-bootstrap --arch amd64|arm64|armhf
 
 container.ts runs each command through src/cli.ts inside the environment image
-tagged localhost/mica-system-base-env:<arch>.
+tagged localhost/mica-system-base-env:<arch>; armhf has none and runs in amd64's.
 
 The default selection is the minimal Debian bootstrap floor. --packages names
 local packages whose locked upstream dependencies are added to that floor.
@@ -147,8 +147,9 @@ first and each record's own URL is the fallback, the committed SHA256 is checked
 either way, and cache reports how many archives came from each.
 MICA_FETCH_DEADLINE bounds one download (seconds, default 600).
 bootstrap builds the selected root offline with the environment's mmdebstrap. It needs
-CAP_SYS_ADMIN and an empty destination; a foreign architecture runs in a
-BuildKit stage. No command installs APT into the root.
+CAP_SYS_ADMIN and an empty destination; a foreign architecture with an image
+runs in a BuildKit stage, and armhf in the amd64 image, its maintainer scripts
+under the host's binfmt emulation. No command installs APT into the root.
 pin-inputs rewrites the rows of locks/upstream.lock it resolves: input.<name>
 from the snapshot (the archives a package declares with inputs=),
 build.<package>.<name> in the C image from the snapshot of

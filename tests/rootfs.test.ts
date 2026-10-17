@@ -1,6 +1,6 @@
 // The floor's invariants and the systemd root's, each against a minimal root that
 // satisfies them and the one change that breaks each.
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterAll, expect, test } from 'bun:test'
 import { issue } from '../src/release.ts'
@@ -93,184 +93,202 @@ function openrcRoot(name: string): string {
 }
 
 test('a floor, a systemd root and an OpenRC root that keep every promise pass', () => {
-  expect(() => assertFloor(root('good'))).not.toThrow()
-  expect(() => assertSystemd(systemdRoot('good-systemd'))).not.toThrow()
-  expect(() => assertOpenrc(openrcRoot('good-openrc'))).not.toThrow()
+  expect(() => assertFloor(root('good'), 'amd64')).not.toThrow()
+  expect(() => assertSystemd(systemdRoot('good-systemd'), 'amd64')).not.toThrow()
+  expect(() => assertOpenrc(openrcRoot('good-openrc'), 'amd64')).not.toThrow()
+})
+
+// An armhf root stores DATA in UBI: mica-storage-ubi stands in for e2fsprogs and
+// fdisk, and neither they nor sfdisk are in it.
+test('an armhf root carries mica-storage-ubi in place of e2fsprogs and fdisk', () => {
+  const ubi = (path: string): string => {
+    writeFileSync(join(path, 'var/lib/dpkg/status'), `${readFileSync(join(path, 'var/lib/dpkg/status'), 'utf8')}Package: mica-storage-ubi\nStatus: install ok installed\n\n`)
+    return path
+  }
+  expect(() => assertFloor(root('armhf-no-stand-in'), 'armhf')).toThrow('the armhf root has no mica-storage-ubi')
+  expect(() => assertFloor(ubi(root('armhf')), 'armhf')).not.toThrow()
+  const openrc = ubi(openrcRoot('armhf-openrc'))
+  rmSync(join(openrc, 'usr/sbin/sfdisk'))
+  expect(() => assertOpenrc(openrc, 'armhf')).not.toThrow()
+  expect(() => assertOpenrc(openrc, 'amd64')).toThrow('the OpenRC root has no /usr/sbin/sfdisk')
+  const e2fsprogs = ubi(root('armhf-e2fsprogs'))
+  writeFileSync(join(e2fsprogs, 'var/lib/dpkg/status'), `${readFileSync(join(e2fsprogs, 'var/lib/dpkg/status'), 'utf8')}Package: e2fsprogs\nStatus: install ok installed\n\n`)
+  expect(() => assertFloor(e2fsprogs, 'armhf')).toThrow('the armhf root has e2fsprogs installed')
 })
 
 test('each broken promise of the OpenRC root is refused by name', () => {
   const systemd = openrcRoot('openrc-with-udev')
   writeFileSync(join(systemd, 'var/lib/dpkg/status'), 'Package: udev\nStatus: install ok installed\n\n')
-  expect(() => assertOpenrc(systemd)).toThrow('the OpenRC root has udev installed')
+  expect(() => assertOpenrc(systemd, 'amd64')).toThrow('the OpenRC root has udev installed')
 
   const init = openrcRoot('openrc-init-link')
   rmSync(join(init, 'usr/sbin/init'))
   symlinkSync('../lib/systemd/systemd', join(init, 'usr/sbin/init'))
-  expect(() => assertOpenrc(init)).toThrow('/usr/sbin/init is not openrc-init')
+  expect(() => assertOpenrc(init, 'amd64')).toThrow('/usr/sbin/init is not openrc-init')
 
   const missing = openrcRoot('openrc-no-mdev-conf')
   rmSync(join(missing, 'etc/mdev.conf'))
-  expect(() => assertOpenrc(missing)).toThrow('no /etc/mdev.conf')
+  expect(() => assertOpenrc(missing, 'amd64')).toThrow('no /etc/mdev.conf')
 
   const unlinked = openrcRoot('openrc-no-health')
   rmSync(join(unlinked, 'etc/runlevels/default/mica-health'))
-  expect(() => assertOpenrc(unlinked)).toThrow('the default runlevel holds')
+  expect(() => assertOpenrc(unlinked, 'amd64')).toThrow('the default runlevel holds')
 
   const resolver = openrcRoot('openrc-resolver')
   rmSync(join(resolver, 'etc/resolv.conf'))
   symlinkSync('../run/systemd/resolve/stub-resolv.conf', join(resolver, 'etc/resolv.conf'))
-  expect(() => assertOpenrc(resolver)).toThrow('/etc/resolv.conf does not link to /run/mica/resolv.conf')
+  expect(() => assertOpenrc(resolver, 'amd64')).toThrow('/etc/resolv.conf does not link to /run/mica/resolv.conf')
 
   const network = openrcRoot('openrc-network')
   rmSync(join(network, 'etc/network/interfaces'))
   writeFileSync(join(network, 'etc/network/interfaces'), 'auto lo\n')
-  expect(() => assertOpenrc(network)).toThrow('/etc/network/interfaces does not link')
+  expect(() => assertOpenrc(network, 'amd64')).toThrow('/etc/network/interfaces does not link')
 
   const capability = openrcRoot('openrc-capability')
   writeFileSync(join(capability, 'etc/rc.conf.d/mica.conf'), '')
-  expect(() => assertOpenrc(capability)).toThrow('CAP_SYS_RESOURCE')
+  expect(() => assertOpenrc(capability, 'amd64')).toThrow('CAP_SYS_RESOURCE')
 })
 
 test('the floor carries no init', () => {
   for (const init of ['systemd-sysv', 'udev', 'mica-systemd']) {
     const installed = root(`init-${init}`)
     writeFileSync(join(installed, 'var/lib/dpkg/status'), `Package: ${init}\nStatus: install ok installed\n\n`)
-    expect(() => assertFloor(installed)).toThrow(`the floor has an init installed: ${init}`)
+    expect(() => assertFloor(installed, 'amd64')).toThrow(`the floor has an init installed: ${init}`)
   }
   const linked = root('init-link')
   mkdirSync(join(linked, 'usr/sbin'), { recursive: true })
   symlinkSync('../lib/systemd/systemd', join(linked, 'usr/sbin/init'))
-  expect(() => assertFloor(linked)).toThrow('the floor carries /usr/sbin/init')
+  expect(() => assertFloor(linked, 'amd64')).toThrow('the floor carries /usr/sbin/init')
   // A systemd root is not a floor.
-  expect(() => assertFloor(systemdRoot('systemd-as-floor'))).toThrow('the floor has an init installed')
+  expect(() => assertFloor(systemdRoot('systemd-as-floor'), 'amd64')).toThrow('the floor has an init installed')
 })
 
 test('each broken promise of the systemd root is refused by name', () => {
   const linked = systemdRoot('wants-link')
   symlinkSync('/usr/lib/systemd/system/nftables.service', join(linked, 'etc/systemd/system/multi-user.target.wants/nftables.service'))
-  expect(() => assertSystemd(linked)).toThrow('enables or aliases a governed unit')
+  expect(() => assertSystemd(linked, 'amd64')).toThrow('enables or aliases a governed unit')
 
   const alias = systemdRoot('alias')
   symlinkSync('/usr/lib/systemd/system/nftables.service', join(alias, 'etc/systemd/system/firewall.service'))
-  expect(() => assertSystemd(alias)).toThrow('enables or aliases a governed unit')
+  expect(() => assertSystemd(alias, 'amd64')).toThrow('enables or aliases a governed unit')
 
   const preset = systemdRoot('no-preset')
   rmSync(join(preset, 'usr/lib/systemd/system-preset/50-mica-nftables.preset'))
-  expect(() => assertSystemd(preset)).toThrow('50-mica-nftables.preset')
+  expect(() => assertSystemd(preset, 'amd64')).toThrow('50-mica-nftables.preset')
 
   const getty = systemdRoot('getty-unconditioned')
   rmSync(join(getty, 'etc/systemd/system/serial-getty@.service.d/10-mica-console.conf'))
-  expect(() => assertSystemd(getty)).toThrow('serial-getty@.service')
+  expect(() => assertSystemd(getty, 'amd64')).toThrow('serial-getty@.service')
 
   const noInit = systemdRoot('no-mica-init')
   rmSync(join(noInit, 'usr/lib/mica/mica-init'))
-  expect(() => assertSystemd(noInit)).toThrow('no /usr/lib/mica/mica-init')
+  expect(() => assertSystemd(noInit, 'amd64')).toThrow('no /usr/lib/mica/mica-init')
 
   const notSystemd = systemdRoot('init-not-systemd')
   rmSync(join(notSystemd, 'usr/sbin/init'))
   symlinkSync('openrc-init', join(notSystemd, 'usr/sbin/init'))
-  expect(() => assertSystemd(notSystemd)).toThrow('/usr/sbin/init is not systemd')
+  expect(() => assertSystemd(notSystemd, 'amd64')).toThrow('/usr/sbin/init is not systemd')
 })
 
 test('each broken promise of the floor is refused by name', () => {
   const key = root('host-key')
   mkdirSync(join(key, 'etc/dropbear'))
   writeFileSync(join(key, 'etc/dropbear/dropbear_ed25519_host_key'), 'key')
-  expect(() => assertFloor(key)).toThrow('host keys')
+  expect(() => assertFloor(key, 'amd64')).toThrow('host keys')
 
   const hostname = root('build-hostname')
   writeFileSync(join(hostname, 'etc/hostname'), '9e5fa5a15eeb\n')
-  expect(() => assertFloor(hostname)).toThrow('/etc/hostname')
+  expect(() => assertFloor(hostname, 'amd64')).toThrow('/etc/hostname')
 
   // The build host's resolver, copied in by mmdebstrap, is not the device's.
   const resolver = root('build-resolv-conf')
   writeFileSync(join(resolver, 'etc/resolv.conf'), 'nameserver 10.0.0.1\n')
-  expect(() => assertFloor(resolver)).toThrow('/etc/resolv.conf')
+  expect(() => assertFloor(resolver, 'amd64')).toThrow('/etc/resolv.conf')
 
   const machine = root('machine-id')
   writeFileSync(join(machine, 'etc/machine-id'), '0123456789abcdef0123456789abcdef\n')
-  expect(() => assertFloor(machine)).toThrow('machine-id')
+  expect(() => assertFloor(machine, 'amd64')).toThrow('machine-id')
 
   const state = root('state')
   mkdirSync(join(state, 'mnt/data/state/ssh'), { recursive: true })
   writeFileSync(join(state, 'mnt/data/state/ssh/x'), '')
-  expect(() => assertFloor(state)).toThrow('/mnt/data/state')
+  expect(() => assertFloor(state, 'amd64')).toThrow('/mnt/data/state')
 
   const unmounted = root('no-mica-mountpoint')
   rmSync(join(unmounted, 'mica'), { recursive: true })
-  expect(() => assertFloor(unmounted)).toThrow('/mica')
+  expect(() => assertFloor(unmounted, 'amd64')).toThrow('/mica')
 
   const motd = root('motd')
   writeFileSync(join(motd, 'etc/motd'), 'The programs included with the Debian GNU/Linux system are free software;\n')
-  expect(() => assertFloor(motd)).toThrow('/etc/motd')
+  expect(() => assertFloor(motd, 'amd64')).toThrow('/etc/motd')
 
   const debianIssue = root('debian-issue')
   writeFileSync(join(debianIssue, 'etc/issue'), 'Debian GNU/Linux 13 \\n \\l\n\n')
-  expect(() => assertFloor(debianIssue)).toThrow('/etc/issue')
+  expect(() => assertFloor(debianIssue, 'amd64')).toThrow('/etc/issue')
 
   for (const field of ['x', '', '$y$j9T$salt$hash']) {
     const shadow = root(`shadow-${field.length}`)
     writeFileSync(join(shadow, 'etc/shadow'), `root:*:18262:0:99999:7:::\nsystemd-network:${field}:18262:0:99999:7:::\n`)
-    expect(() => assertFloor(shadow)).toThrow(`/etc/shadow has unlocked entries: systemd-network:${field}`)
+    expect(() => assertFloor(shadow, 'amd64')).toThrow(`/etc/shadow has unlocked entries: systemd-network:${field}`)
   }
   const gshadow = root('gshadow')
   writeFileSync(join(gshadow, 'etc/gshadow'), 'root:*::\nnetdev:x::\n')
-  expect(() => assertFloor(gshadow)).toThrow('/etc/gshadow has unlocked entries: netdev:x')
+  expect(() => assertFloor(gshadow, 'amd64')).toThrow('/etc/gshadow has unlocked entries: netdev:x')
   const backup = root('gshadow-backup')
   writeFileSync(join(backup, 'etc/gshadow-'), 'root:*::\nnetdev:x::\n')
-  expect(() => assertFloor(backup)).toThrow('/etc/gshadow- has unlocked entries: netdev:x')
+  expect(() => assertFloor(backup, 'amd64')).toThrow('/etc/gshadow- has unlocked entries: netdev:x')
 
   // The build day, an empty day and a day in a backup are each refused.
   for (const [file, day] of [['etc/shadow', '20710'], ['etc/shadow', ''], ['etc/shadow-', '20711']] as const) {
     const dated = root(`shadow-day-${file.length}-${day}`)
     writeFileSync(join(dated, file), `root:*:18262:0:99999:7:::\nsystemd-network:*:${day}:0:99999:7:::\n`)
-    expect(() => assertFloor(dated)).toThrow(`/${file} has last-change days other than 18262: systemd-network:${day}`)
+    expect(() => assertFloor(dated, 'amd64')).toThrow(`/${file} has last-change days other than 18262: systemd-network:${day}`)
   }
 
   // The options are not in the floor.
   for (const option of ['dropbear-bin', 'nftables', 'procps', 'dmsetup', 'kmod', 'login', 'tzdata']) {
     const installed = root(`option-${option}`)
     writeFileSync(join(installed, 'var/lib/dpkg/status'), `Package: ${option}\nStatus: install ok installed\n\n`)
-    expect(() => assertFloor(installed)).toThrow(`the floor has the option ${option} installed`)
+    expect(() => assertFloor(installed, 'amd64')).toThrow(`the floor has the option ${option} installed`)
   }
   // Nor the command set busybox replaces.
   for (const gnu of ['bash', 'coreutils', 'dash', 'diffutils', 'findutils', 'grep', 'gzip', 'sed']) {
     const installed = root(`gnu-${gnu}`)
     writeFileSync(join(installed, 'var/lib/dpkg/status'), `Package: ${gnu}\nStatus: install ok installed\n\n`)
-    expect(() => assertFloor(installed)).toThrow(`the floor has ${gnu} installed`)
+    expect(() => assertFloor(installed, 'amd64')).toThrow(`the floor has ${gnu} installed`)
   }
   const bash = root('bash-binary')
   writeFileSync(join(bash, 'usr/bin/bash'), '')
-  expect(() => assertFloor(bash)).toThrow('/usr/bin/bash')
+  expect(() => assertFloor(bash, 'amd64')).toThrow('/usr/bin/bash')
 
   const dashSh = root('sh-not-busybox')
   rmSync(join(dashSh, 'usr/bin/sh'))
   symlinkSync('dash', join(dashSh, 'usr/bin/sh'))
-  expect(() => assertFloor(dashSh)).toThrow('/usr/bin/sh is not busybox')
+  expect(() => assertFloor(dashSh, 'amd64')).toThrow('/usr/bin/sh is not busybox')
 
   const noStat = root('no-stat')
   rmSync(join(noStat, 'usr/bin/stat'))
-  expect(() => assertFloor(noStat)).toThrow('no stat for the lifecycle helpers')
+  expect(() => assertFloor(noStat, 'amd64')).toThrow('no stat for the lifecycle helpers')
   const noFindmnt = root('no-findmnt')
   rmSync(join(noFindmnt, 'usr/bin/findmnt'))
-  expect(() => assertFloor(noFindmnt)).toThrow('no findmnt for the lifecycle helpers')
+  expect(() => assertFloor(noFindmnt, 'amd64')).toThrow('no findmnt for the lifecycle helpers')
 
   for (const account of ['root', 'mica']) {
     const shell = root(`shell-${account}`)
     writeFileSync(join(shell, 'etc/passwd'), `root:x:0:0:root:/root:${account === 'root' ? '/bin/bash' : '/bin/sh'}\nmica:x:1000:1000:mica operator:/home/mica:${account === 'mica' ? '/bin/bash' : '/bin/sh'}\n`)
-    expect(() => assertFloor(shell)).toThrow(`${account} logs in with /bin/bash, not /bin/sh`)
+    expect(() => assertFloor(shell, 'amd64')).toThrow(`${account} logs in with /bin/bash, not /bin/sh`)
   }
 
   const gconv = root('gconv')
   writeFileSync(join(gconv, 'usr/bin/placeholder'), '')
   mkdirSync(join(gconv, 'usr/lib/x86_64-linux-gnu/gconv'), { recursive: true })
   writeFileSync(join(gconv, 'usr/lib/x86_64-linux-gnu/gconv/UTF-16.so'), '')
-  expect(() => assertFloor(gconv)).toThrow('gconv')
+  expect(() => assertFloor(gconv, 'amd64')).toThrow('gconv')
 
   const openssh = root('openssh')
   mkdirSync(join(openssh, 'usr/sbin'), { recursive: true })
   writeFileSync(join(openssh, 'usr/sbin/sshd'), '')
-  expect(() => assertFloor(openssh)).toThrow('/usr/sbin/sshd')
+  expect(() => assertFloor(openssh, 'amd64')).toThrow('/usr/sbin/sshd')
 })
 
 // The libraries only the GNU command set loads go with it, together when they depend

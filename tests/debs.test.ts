@@ -10,25 +10,30 @@ import { selectBuild, selectInputs, selectRuntime, selectSource } from '../src/l
 import { REPO, run } from './fixture.ts'
 
 test('a build for one architecture takes its own and the all packages, filed into its pool only', () => {
-  const packages = [{ name: 'data', arches: ['all' as const] }, { name: 'tool', arches: ['amd64' as const, 'arm64' as const] }]
+  const packages = [{ name: 'data', arches: ['all' as const] }, { name: 'tool', arches: ['amd64' as const, 'arm64' as const] }, { name: 'small', arches: ['armhf' as const] }]
   expect(buildPlan(packages)).toEqual([
-    { name: 'data', arch: 'all', pools: ['amd64', 'arm64'] },
+    { name: 'data', arch: 'all', pools: ['amd64', 'arm64', 'armhf'] },
     { name: 'tool', arch: 'amd64', pools: ['amd64'] },
     { name: 'tool', arch: 'arm64', pools: ['arm64'] },
+    { name: 'small', arch: 'armhf', pools: ['armhf'] },
   ])
   expect(buildPlan(packages, 'arm64')).toEqual([
     { name: 'data', arch: 'all', pools: ['arm64'] },
     { name: 'tool', arch: 'arm64', pools: ['arm64'] },
+  ])
+  expect(buildPlan(packages, 'armhf')).toEqual([
+    { name: 'data', arch: 'all', pools: ['armhf'] },
+    { name: 'small', arch: 'armhf', pools: ['armhf'] },
   ])
 })
 
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
-    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-ssh', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
+    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-ssh', 'mica-storage-ubi', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
-    expect(packages.find(entry => entry.name === 'mica-busybox')).toMatchObject({ arches: ['amd64', 'arm64'], inputs: [], build: [], sources: ['busybox'] })
+    expect(packages.find(entry => entry.name === 'mica-busybox')).toMatchObject({ arches: ['amd64', 'arm64', 'armhf'], inputs: [], build: [], sources: ['busybox'] })
     // Every version is <upstream>-mica<revision>, the upstream being the version
     // of the lock row the package follows (src/update.ts keeps both so).
     for (const entry of packages) {
@@ -61,14 +66,17 @@ describe('the package definitions', () => {
     expect(readFileSync(join(REPO, 'debs/consumers.pkgs'), 'utf8')).toMatch(/^mica-systemd-boot$/m)
   })
 
-  // BusyBox is compiled from the upstream release, statically, so it needs nothing of the root.
+  // BusyBox is compiled from the upstream release, statically, so it needs nothing of the root;
+  // for armhf with the amd64 C image's cross toolchain, running nothing it built.
   test('mica-busybox builds the pinned upstream source statically and depends on nothing', () => {
     const dockerfile = readFileSync(join(REPO, 'debs/mica-busybox/Dockerfile'), 'utf8')
     const { version, url } = selectSource(REPO, 'busybox')
     expect(version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(url).toBe(`https://busybox.net/downloads/busybox-${version}.tar.bz2`)
     expect(dockerfile).toContain('echo "${MICA_SOURCE_BUSYBOX_SHA256}  /busybox.tar.bz2" | sha256sum -c -')
-    expect(dockerfile).toContain('FROM --platform=linux/${MICA_DEB_ARCH} ${MICA_BUILD_C_IMAGE} AS build')
+    expect(dockerfile).toContain('FROM --platform=${MICA_BUILD_PLATFORM} ${MICA_BUILD_C_IMAGE} AS build')
+    expect(dockerfile).toContain('armhf) export CROSS_COMPILE=arm-linux-gnueabihf- ;;')
+    expect(dockerfile).not.toContain('./busybox')
     expect(readFileSync(join(REPO, 'debs/mica-busybox/config'), 'utf8')).toMatch(/^CONFIG_STATIC=y$/m)
     expect(readFileSync(join(REPO, 'debs/mica-busybox/control'), 'utf8')).not.toMatch(/^Depends:/m)
     expect(existsSync(join(REPO, 'debs/mica-busybox/inputs'))).toBe(false)
@@ -140,6 +148,19 @@ describe('the package definitions', () => {
     expect(roots).not.toContain('wpasupplicant')
     expect(roots).not.toContain('hostapd')
   })
+})
+
+// armhf roots keep DATA in UBI: mica-storage-ubi, armhf only and carrying nothing but its
+// copyright, provides the e2fsprogs and fdisk that mica-system and mica-openrc depend on.
+test('mica-storage-ubi stands in for e2fsprogs and fdisk on armhf only', () => {
+  expect(declared(REPO).find(entry => entry.name === 'mica-storage-ubi')).toMatchObject({ arches: ['armhf'], inputs: [], build: [], sources: [] })
+  const control = readFileSync(join(REPO, 'debs/mica-storage-ubi/control'), 'utf8')
+  expect(control).toMatch(/^Provides: e2fsprogs, fdisk$/m)
+  expect(control).toMatch(/^Conflicts: e2fsprogs, fdisk$/m)
+  expect(control).not.toMatch(/^Depends:/m)
+  expect(readFileSync(join(REPO, 'debs/mica-system/control'), 'utf8')).toMatch(/^Depends: .*\be2fsprogs\b/m)
+  expect(readFileSync(join(REPO, 'debs/mica-openrc/control'), 'utf8')).toMatch(/^Depends: .*\bfdisk\b/m)
+  expect(existsSync(join(REPO, 'debs/mica-storage-ubi/payload'))).toBe(false)
 })
 
 // Each producer's mica-inputs declares what its Dockerfile builds from: its

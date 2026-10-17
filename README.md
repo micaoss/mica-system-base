@@ -19,13 +19,14 @@ Building and publishing run on [mica-build-tools](https://github.com/micaoss/mic
 | Package | Arch | What it is |
 | --- | --- | --- |
 | `mica-system` | all | the system policy, for either init: `payload/` |
-| `mica-busybox` | amd64, arm64 | static BusyBox, the floor's command set |
+| `mica-busybox` | amd64, arm64, armhf | static BusyBox, the floor's command set |
 | `mica-ca-trust` | all | the TLS anchors of the pinned `ca-certificates` |
 | `mica-systemd` | all | Mica OS on systemd |
 | `mica-openrc` | all | Mica OS on OpenRC |
 | `mica-mdev` | all | device nodes without udev, for `mica-openrc` |
 | `mica-systemd-boot` | amd64, arm64 | the systemd-boot EFI loader, with persisted boot attempts |
 | `mica-ssh` | all | SSH: dropbear, started by micad |
+| `mica-storage-ubi` | armhf | stands in for e2fsprogs and fdisk where DATA is UBIFS |
 | `mica-wifi` | amd64, arm64 | a minimal `wpa_supplicant` |
 | `mica-wifi-ap` | amd64, arm64 | a minimal `hostapd` |
 | `mica-bluetooth` | all | the Bluetooth HCI attach and the pairing keys on STATE |
@@ -37,15 +38,15 @@ Each package carries the start-up files of its own services, for systemd and Ope
 
 A release is named by its UTC minute, `YYYYMMDD-HHMM`. It is cut with
 `gh release create <YYYYMMDD-HHMM> --target <commit of main>`; publishing it runs
-`release.yml`, which builds the tag on both architectures, gates it and publishes it.
+`release.yml`, which builds the tag on every architecture, gates it and publishes it.
 `ci.yml` runs the same build and gates on every push and publishes nothing.
 
 In `ghcr.io/micaoss/mica-system-base`:
 
 | Tag | Content |
 | --- | --- |
-| `pool.<arch>.<release>` | the packages for amd64 or arm64, one layer per `.deb`, annotated with its `mica.inputs`; an unchanged pool keeps its digest |
-| `rootfs.<release>` | the floor, an OCI image index over `linux/amd64` and `linux/arm64` |
+| `pool.<arch>.<release>` | the packages for amd64, arm64 or armhf, one layer per `.deb`, annotated with its `mica.inputs`; an unchanged pool keeps its digest |
+| `rootfs.<release>` | the floor, an OCI image index over `linux/amd64`, `linux/arm64` and `linux/arm/v7` (armhf) |
 
 On the GitHub release, never replaced (format: mica-build-tools `docs/spec/release-lock.md`):
 
@@ -148,7 +149,11 @@ bun src/container.ts environment        # verify locks/ and pull the environment
 bun run check                           # lint, typecheck and tests
 ```
 
-One architecture at a time (the other builds under emulation):
+One architecture at a time. arm64 on an amd64 host, or amd64 on an arm64 one, builds under
+emulation. armhf has no build environment image: it is cross-compiled and bootstrapped on an
+amd64 host, and its maintainer scripts run under the host's binfmt emulation for ARM
+(`docker run --privileged --rm "$(bin/mica-tools from --ref upstream:tonistiigi/binfmt:qemu-v10.2.3@amd64)" --install arm`); nothing is
+compiled under emulation.
 
 ```sh
 bun src/container.ts cache --arch amd64 --all        # pinned archives into repos/sha256
@@ -157,7 +162,7 @@ bun src/container.ts debs --arch amd64               # packages into _out/debs/<
 bun src/container.ts rootfs --arch amd64             # the floor, asserted
 bun src/container.ts rootfs --arch amd64 --init systemd|openrc   # the floor with an init, asserted
 bun src/container.ts boot-test --init openrc         # boot the x64 OpenRC root under QEMU
-bun src/publish.ts gate                              # both pools: pool gate and guard
+bun src/publish.ts gate                              # every pool: pool gate and guard
 bun src/publish.ts lock --dry-run --tag <YYYYMMDD-HHMM>   # the lock a release would carry
 ```
 
@@ -165,14 +170,16 @@ Re-pinning: `bun src/container.ts pin-inputs` rewrites the resolved rows of
 `locks/upstream.lock` from the snapshot of `locks/sources.json` (`--check` only compares);
 `bin/mica-tools locks move mica-build-env <release>` moves the build environment.
 
-CI builds each architecture on its native runner (`ubuntu-26.04`, `ubuntu-26.04-arm`). The
-workflows cache only downloads, and every archive is verified against its pin.
+CI builds amd64 and arm64 on their native runners (`ubuntu-26.04`, `ubuntu-26.04-arm`) and
+armhf on the amd64 runner with QEMU registered for ARM. The workflows cache only downloads,
+and every archive is verified against its pin.
 
 ## Package versions
 
 Every package's version is its upstream's: `<upstream>-mica<N>`, the upstream being
 the lock row of what it builds, carries or wires in (`UPSTREAM` in `src/update.ts`): busybox
-for mica-busybox and mica-mdev, base-files (the Debian point release) for mica-system, systemd
+for mica-busybox and mica-mdev, base-files (the Debian point release) for mica-system and
+mica-storage-ubi, systemd
 for mica-systemd and mica-systemd-boot, openrc, dropbear, bluez, hostapd, wpa_supplicant,
 ca-certificates and tzdata for theirs. A new upstream restarts at `-mica1`; a change of
 packaging, inputs or build moves `N`. No version carries an epoch. Each `debs/<package>/control`
@@ -186,6 +193,8 @@ lower version is refused.
 Create `debs/<package>/` with a `control` template (`Version`, `Source-Date-Epoch`,
 `Architecture: @ARCH@`), a `mica-inputs` naming everything that decides its bytes, and a
 `Dockerfile` whose first line is
-`# mica-deb: arches=all|amd64,arm64 [inputs=...] [build=...] [sources=...]` and which packs
+`# mica-deb: arches=all|<arch>,... [inputs=...] [build=...] [sources=...]` (`<arch>` amd64,
+arm64 or armhf; armhf is built in the amd64 C image, `MICA_BUILD_PLATFORM`, with its
+`arm-linux-gnueabihf` cross toolchain) and which packs
 with `bun /tooling/src/cli.ts deb pack`. If a product selects it, add it to
 `debs/consumers.pkgs`; name the upstream its version follows in `src/update.ts`. If it runs a service, ship its systemd unit and its OpenRC script.

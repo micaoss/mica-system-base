@@ -9,7 +9,9 @@
 // `inputs`), and a Dockerfile whose first line declares what it is built for and
 // from:
 //
-//   # mica-deb: arches=all|amd64,arm64 [inputs=<input>,...] [build=<package>,...] [sources=<name>,...]
+//   # mica-deb: arches=all|<arch>,... [inputs=<input>,...] [build=<package>,...] [sources=<name>,...]
+//
+// where <arch> is amd64, arm64 or armhf.
 //
 // `inputs` names Debian archives pinned as input.<input> in locks/upstream.lock
 // (`bun src/container.ts pin-inputs` writes them); each is passed as the build
@@ -19,17 +21,19 @@
 // MICA_BUILD_PINS, the space-separated sha256 of each. `sources` names upstream
 // source archives pinned as source.<name>, passed as MICA_SOURCE_<NAME>_VERSION,
 // _URL and _SHA256 for the build to fetch and check. MICA_BUILD_IMAGE is the
-// native environment image and MICA_BUILD_C_IMAGE the C image of the package's
-// architecture, both by digest; the builder emulates a foreign architecture. The
+// native environment image and MICA_BUILD_C_IMAGE the C image that builds the
+// package's architecture, both by digest, and MICA_BUILD_PLATFORM that image's
+// platform: an architecture's own for amd64 and arm64, which the builder emulates
+// when foreign, and amd64's for armhf, which is cross-compiled there. The
 // `tooling` context is the pinned mica-build-tools checkout, whose `deb pack`
 // makes the archive. An `all` package is built once and filed into both pools.
-import type { Arch, Row } from '../lock.ts'
+import type { Arch, ImageArch, Row } from '../lock.ts'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { packDeclaration } from '@mica/build-tools'
 import { fail } from '../errors.ts'
 import { attached } from '../exec.ts'
-import { ARCHES, selectBuild, selectInputs, selectSource } from '../lock.ts'
+import { ARCHES, imageArch, platformName, selectBuild, selectInputs, selectSource } from '../lock.ts'
 
 export interface Declared {
   name: string
@@ -60,7 +64,7 @@ export function declared(repo: string): Declared[] {
     }))
     const arches = fields.get('arches') ?? []
     if (!arches.length || !(arches.join() === 'all' || arches.every(arch => (ARCHES as string[]).includes(arch))))
-      fail(`debs/${name}/Dockerfile declares arches=${arches.join(',')}; use all, or amd64 and/or arm64`)
+      fail(`debs/${name}/Dockerfile declares arches=${arches.join(',')}; use all, or some of ${ARCHES.join(', ')}`)
     const control = join(root, name, 'control')
     const { version, epoch } = packDeclaration(readFileSync(control, 'utf8'), `debs/${name}/control`)
     return { name, arches: arches as Declared['arches'], inputs: fields.get('inputs') ?? [], build: fields.get('build') ?? [], sources: fields.get('sources') ?? [], version, epoch }
@@ -83,7 +87,7 @@ export interface BuildContext {
   builder: string
   image: string
   cImage: (arch: Arch) => string
-  native: Arch
+  native: ImageArch
   repository: string
 }
 
@@ -121,7 +125,7 @@ export function buildDebs(context: BuildContext, only: string[] = [], target?: A
         sha(pins, tool, `build package of debs/${entry.name}`)
       args.push('--build-arg', `MICA_BUILD_PINS=${pins.map(row => row.sha256).join(' ')}`)
     }
-    for (const [key, value] of Object.entries({ MICA_DEB_SOURCE_REPO: context.repository, SOURCE_DATE_EPOCH: String(entry.epoch), MICA_DEB_ARCH: arch, MICA_BUILD_IMAGE: context.image, MICA_BUILD_C_IMAGE: context.cImage(rowsArch) }))
+    for (const [key, value] of Object.entries({ MICA_DEB_SOURCE_REPO: context.repository, SOURCE_DATE_EPOCH: String(entry.epoch), MICA_DEB_ARCH: arch, MICA_BUILD_IMAGE: context.image, MICA_BUILD_C_IMAGE: context.cImage(rowsArch), MICA_BUILD_PLATFORM: platformName(imageArch(rowsArch)) }))
       args.push('--build-arg', `${key}=${value}`)
     const dest = mkdtempSync(join(context.out, `.${entry.name}-${arch}.`))
     try {

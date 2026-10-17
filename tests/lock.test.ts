@@ -1,10 +1,10 @@
-// The real lock: a minimal base, and additive selections on both architectures.
+// The real lock: a minimal base, and additive selections on every architecture.
 
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { ARCHES, lines, selectRuntime } from '../src/lock.ts'
-import { BASE_PACKAGES, INITS, ORPHANED, STRIPPED } from '../src/rootfs.ts'
+import { basePackages, DROPPED, INITS, ORPHANED, STRIPPED } from '../src/rootfs.ts'
 import { REPO, workdir } from './fixture.ts'
 
 const work = workdir('debian-lock')
@@ -30,7 +30,7 @@ describe.each(ARCHES)('%s', (arch) => {
   test('mica-system adds the system services to the base, no init and no option', () => {
     const system = names(arch, ['mica-system'])
     expect(system.length).toBeGreaterThan(names(arch).length)
-    expect(system).toEqual(expect.arrayContaining(['dbus', 'adduser', 'e2fsprogs']))
+    expect(system).toEqual(expect.arrayContaining(['dbus', 'adduser', ...(DROPPED[arch] ? [] : ['e2fsprogs'])]))
     for (const excluded of ['systemd', 'systemd-sysv', 'udev', 'libsystemd-shared', 'systemd-resolved', 'systemd-timesyncd', 'systemd-repart', 'dropbear-bin', 'nftables', 'procps', 'dmsetup', 'kmod', 'login', 'tzdata', 'quota'])
       expect(system).not.toContain(excluded)
   })
@@ -56,6 +56,18 @@ describe.each(ARCHES)('%s', (arch) => {
       expect(rows.find(row => row.name === option)?.consumers ?? []).toContain(`upstream-${option}`)
   })
 
+  // armhf keeps DATA in UBI: its lock pins nothing of e2fsprogs, which
+  // mica-storage-ubi stands in for; the others pin all of it.
+  test('the root pins e2fsprogs except where it is dropped', () => {
+    const all = selectRuntime(REPO, arch, { kind: 'all' }).map(row => row.name)
+    for (const name of DROPPED.armhf!) {
+      if (arch === 'armhf')
+        expect(all).not.toContain(name)
+      else
+        expect(all).toContain(name)
+    }
+  })
+
   test('the static mica-busybox consumes no row of the lock', () => {
     expect(selectRuntime(REPO, arch, { kind: 'all' }).filter(row => row.consumers.includes('mica-busybox'))).toEqual([])
   })
@@ -73,7 +85,7 @@ test.each(ARCHES)('%s: only registered families consume the lock, and no board f
   const registered = (consumer: string): boolean => families.has(consumer) || [...families].some(family => family.endsWith('-*') && consumer.startsWith(family.slice(0, -1)))
   for (const row of all)
     expect(row.consumers.filter(consumer => !registered(consumer))).toEqual([])
-  const root = names(arch, BASE_PACKAGES)
+  const root = names(arch, basePackages(arch))
   for (const feature of ['bluez', 'wpasupplicant', 'hostapd', 'iw', 'rfkill', 'alsa-utils'])
     expect(root).not.toContain(feature)
 })
@@ -94,14 +106,14 @@ test.each(ARCHES)('%s: every upstream package is pinned for the roots that need 
     for (const consumer of row.consumers.filter(consumer => consumer.startsWith('upstream-')))
       expect(roots).toContain(consumer.replace(/^upstream-/, ''))
   }
-  const root = new Set(names(arch, BASE_PACKAGES))
+  const root = new Set(names(arch, basePackages(arch)))
   expect(upstream.filter(row => root.has(row.name)).map(row => row.name).sort()).toEqual([...STRIPPED.filter(name => name !== 'dash'), ...ORPHANED].sort())
 })
 
 // The base floor: no curl or iproute2, which are tools pinned for later stages, and
 // no iptables anywhere in the lock (the firewall is nftables).
 test.each(ARCHES)('%s: curl and iproute2 stay out of the floor, iptables out of the lock', (arch) => {
-  const root = names(arch, BASE_PACKAGES)
+  const root = names(arch, basePackages(arch))
   for (const tool of ['curl', 'libcurl4t64', 'iproute2'])
     expect(root).not.toContain(tool)
   const all = selectRuntime(REPO, arch, { kind: 'all' }).map(row => row.name)

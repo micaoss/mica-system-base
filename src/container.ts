@@ -1,6 +1,6 @@
 // Host entry: runs src/cli.ts in the environment image, via BuildKit for a foreign architecture.
 import type { Options } from './args.ts'
-import type { Arch, Row } from './lock.ts'
+import type { Arch, ImageArch, Row } from './lock.ts'
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { reposGet, reposLookup, verifyLocks } from '@mica/build-tools'
@@ -9,12 +9,12 @@ import { nonDirectories } from './bootstrap.ts'
 import { buildDebs, declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
-import { ARCHES, hostArch, lockRows, parseRows, SELECTIONS, selectRuntime, selectSource, sourceRows, UPSTREAM_LOCK, UPSTREAM_PKGS } from './lock.ts'
-import { addedNames, runtimeNames, tagUpstream } from './pin-inputs.ts'
+import { ARCHES, hostArch, IMAGE_ARCHES, imageArch, lockRows, parseRows, SELECTIONS, selectRuntime, selectSource, sourceRows, UPSTREAM_LOCK, UPSTREAM_PKGS } from './lock.ts'
+import { addedNames, runtimeRoots, tagUpstream } from './pin-inputs.ts'
 import { assertEnvironmentImage, environment, REPO, sources } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import type { Init } from './rootfs.ts'
-import { BASE_PACKAGES, INITS, ISSUE_ENV } from './rootfs.ts'
+import { basePackages, initRoots, INITS, ISSUE_ENV } from './rootfs.ts'
 
 const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'test', 'test-bootstrap']
 const IN_CONTAINER = '/mica-system-base'
@@ -31,7 +31,7 @@ function hostPath(path: string): string {
   return path
 }
 
-function imageFor(arch: Arch): string {
+function imageFor(arch: ImageArch): string {
   const image = `${environment().image}:${arch}`
   if (capture(['docker', 'image', 'inspect', image]).code !== 0)
     fail(`${image} is missing; run: bun src/container.ts environment`)
@@ -39,7 +39,7 @@ function imageFor(arch: Arch): string {
 }
 
 interface Run {
-  arch: Arch
+  arch: ImageArch
   // An image by digest instead of the environment's local tag.
   image?: string
   network: 'none' | 'default'
@@ -98,7 +98,7 @@ function builder(): string {
 // A BuildKit build for a foreign architecture; the builder pulls its
 // image by digest, the environment's base image unless another is named.
 interface Stage {
-  arch: Arch
+  arch: ImageArch
   image?: string
   work: string
   contexts: Record<string, string>
@@ -173,9 +173,12 @@ async function bootstrap(options: Options): Promise<void> {
   const created = !existsSync(root)
   mkdirSync(root, { recursive: true })
   try {
-    if (arch === hostArch()) {
+    // armhf is bootstrapped in the amd64 image, its maintainer scripts run through
+    // the host's binfmt emulation.
+    const image = imageArch(arch)
+    if (image === hostArch()) {
       const code = dockerRun({
-        arch,
+        arch: image,
         network: 'none',
         privileged: true,
         mounts: [[REPO, IN_CONTAINER, 'ro'], [options.cacheDir, '/cache', 'ro'], [root, '/target', 'rw'], ...selection.mounts, ...(options.local ? [[options.local, '/local', 'ro'] as [string, string, 'ro']] : [])],
@@ -186,6 +189,8 @@ async function bootstrap(options: Options): Promise<void> {
         fail(`bootstrap failed for ${arch}`)
       return
     }
+    if (arch !== image)
+      fail(`the ${arch} root is bootstrapped on an ${image} host`)
     const work = scratch(`stage-${arch}`)
     try {
       const contexts: Record<string, string> = { repo: stagedRepo(work), cache: options.cacheDir }
@@ -200,7 +205,7 @@ async function bootstrap(options: Options): Promise<void> {
         mounts.push('--mount=type=bind,from=local,target=/local')
       }
       await buildStage({
-        arch,
+        arch: image,
         work,
         contexts,
         insecure: true,
@@ -235,13 +240,15 @@ async function bootstrap(options: Options): Promise<void> {
 // a foreign architecture; the runtime and upstream closures resolve for any
 // architecture from the native environment image (`foreign`).
 async function runPinInputs(arch: Arch, what: string, args: string[], options: { image?: string, foreign?: boolean } = {}): Promise<Row[]> {
+  if (!options.foreign && arch === 'armhf')
+    fail(`the armhf ${what} are not resolved: armhf has no environment image`)
   const work = scratch(`pins-${arch}`)
   const command = cli('pin-inputs', '--arch', arch, ...args, '--output', '/out/pins.tsv')
   try {
     if (options.foreign || arch === hostArch()) {
       mkdirSync(join(work, 'out'))
       const code = dockerRun({
-        arch: options.foreign ? hostArch() : arch,
+        arch: hostArch(),
         ...(options.image ? { image: options.image } : {}),
         network: 'default',
         mounts: [[REPO, IN_CONTAINER, 'ro'], [join(work, 'out'), '/out', 'rw']],
@@ -252,7 +259,7 @@ async function runPinInputs(arch: Arch, what: string, args: string[], options: {
     }
     else {
       await buildStage({
-        arch,
+        arch: arch as ImageArch,
         ...(options.image ? { image: options.image } : {}),
         work,
         noCache: true,
@@ -284,25 +291,28 @@ function header(file: string): string[] {
 const byBytes = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b))
 
 // Rewrites what pin-inputs resolves: in locks/upstream.lock the input.<name> rows
-// of the inputs debs/ declares, the build.<package>.<name> rows of each package's
-// build closure, the runtime rows of the root at the snapshot of locks/sources.json,
+// of the inputs debs/ declares, for the architectures that build the packages
+// that take them; the build.<package>.<name> rows of each package's build closure,
+// for the architectures it is built for; the runtime rows of each architecture's
+// root at the snapshot of locks/sources.json,
 // and the rows of the closure of locks/upstream.pkgs beyond the root, with their
 // locks/packages.tsv lines, each tagged upstream-<root> for the roots that need it; the
 // source rows stay. --check only compares.
 async function pinInputs(check: boolean): Promise<void> {
   const resolved: string[][] = []
+  // The packages that take inputs are Architecture: all, built in an environment image.
   const inputs = new Map<Arch, Row[]>()
-  for (const arch of ARCHES)
+  for (const arch of IMAGE_ARCHES)
     inputs.set(arch, await runPinInputs(arch, 'inputs', []))
   for (const name of declared(REPO).flatMap(entry => entry.inputs)) {
-    if (ARCHES.some(arch => !inputs.get(arch)!.some(row => row.name === name)))
+    if (IMAGE_ARCHES.some(arch => !inputs.get(arch)!.some(row => row.name === name)))
       fail(`the snapshot resolved no ${name}`)
   }
   resolved.push(...lockRows('input.', inputs))
   for (const entry of declared(REPO).filter(candidate => candidate.build.length)) {
     const build = new Map<Arch, Row[]>()
-    for (const arch of ARCHES)
-      build.set(arch, await runPinInputs(arch, `build packages of debs/${entry.name}`, ['--package', entry.name], { image: environment().c[arch] }))
+    for (const arch of entry.arches.includes('all') ? IMAGE_ARCHES : entry.arches as Arch[])
+      build.set(arch, await runPinInputs(arch, `build packages of debs/${entry.name}`, ['--package', entry.name], { image: environment().c[imageArch(arch)] }))
     resolved.push(...lockRows(`build.${entry.name}.`, build))
   }
   // The runtime rows, again at the snapshot: the same names, whose versions may move
@@ -310,13 +320,13 @@ async function pinInputs(check: boolean): Promise<void> {
   const runtime = new Map<Arch, Row[]>()
   for (const arch of ARCHES) {
     const rows = await runPinInputs(arch, 'runtime packages', ['--all'], { foreign: true })
-    const added = addedNames(runtimeNames(selectRuntime(REPO, arch, { kind: 'all' })), rows.map(row => row.name))
+    const added = addedNames(runtimeRoots(arch), rows.map(row => row.name))
     if (added.length)
       fail(`the snapshot's versions add ${added.join(', ')} to the ${arch} root; name their consumer in ${SELECTIONS} first`)
     runtime.set(arch, rows)
   }
   resolved.push(...lockRows('', runtime))
-  const root = new Set(ARCHES.flatMap(arch => runtimeNames(selectRuntime(REPO, arch, { kind: 'all' }))))
+  const root = new Set(ARCHES.flatMap(arch => runtimeRoots(arch)))
   const upstream = new Map<Arch, Row[]>()
   const roots = new Map<string, string>()
   for (const arch of ARCHES) {
@@ -330,7 +340,7 @@ async function pinInputs(check: boolean): Promise<void> {
     }
   }
   // A package the floor purges is a runtime row already: one row, both attributions.
-  resolved.push(...lockRows('', new Map([...upstream].map(([arch, rows]) => [arch, rows.filter(row => !root.has(row.name))]))))
+  resolved.push(...lockRows('', new Map([...upstream].map(([arch, rows]) => [arch, rows.filter(row => !runtimeRoots(arch).includes(row.name))]))))
   const lockFile = join(REPO, UPSTREAM_LOCK)
   const selectionFile = join(REPO, SELECTIONS)
   const selected = tagUpstream(new Map(readFileSync(selectionFile, 'utf8').split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t') as [string, string])), roots)
@@ -452,16 +462,16 @@ async function rootfs(argv: string[]): Promise<number> {
   for (let index = 0; index < argv.length; index += 2) {
     const [option, value] = [argv[index]!, argv[index + 1]]
     if (!['--arch', '--init', '--root', '--cache-dir', '--pool'].includes(option) || !value)
-      fail(`usage: bun src/container.ts rootfs --arch amd64|arm64 [--init ${Object.keys(INITS).join('|')}] [--root DIR] [--pool DIR] [--cache-dir DIR]`)
+      fail(`usage: bun src/container.ts rootfs --arch ${ARCHES.join('|')} [--init ${Object.keys(INITS).join('|')}] [--root DIR] [--pool DIR] [--cache-dir DIR]`)
     values.set(option, value)
   }
   const arch = values.get('--arch') as Arch
   if (!(ARCHES as string[]).includes(arch))
-    fail('rootfs requires --arch amd64 or arm64')
+    fail(`rootfs requires --arch ${ARCHES.join(', ')}`)
   const init = values.get('--init') as Init | undefined
   if (init !== undefined && !Object.hasOwn(INITS, init))
     fail(`--init ${init} is not ${Object.keys(INITS).join(' or ')}`)
-  const packages = [...BASE_PACKAGES, ...(init ? INITS[init].packages : [])]
+  const packages = [...basePackages(arch), ...(init ? INITS[init].packages : [])]
   const out = join(REPO, '_out')
   const root = resolvePath(values.get('--root') ?? join(out, 'rootfs', init ? `${arch}-${init}` : arch))
   const pool = resolvePath(values.get('--pool') ?? join(out, 'debs', arch, 'pool'))
@@ -473,7 +483,7 @@ async function rootfs(argv: string[]): Promise<number> {
   const work = scratch(`rootfs-${arch}`)
   try {
     const selection = join(work, 'families.pkgs')
-    writeFileSync(selection, `${[...packages, ...(init ? INITS[init].roots.map(name => `upstream-${name}`) : [])].join('\n')}\n`)
+    writeFileSync(selection, `${[...packages, ...(init ? initRoots(init, arch).map(name => `upstream-${name}`) : [])].join('\n')}\n`)
     const local = join(work, 'local')
     mkdirSync(local)
     for (const file of readdirSync(pool).filter(name => packages.some(pkg => name.startsWith(`${pkg}_`))))
@@ -539,7 +549,7 @@ async function pullEnvironment(): Promise<number> {
     console.log(`environment: ${line}`)
   console.log(`environment: base ${env.base.amd64}, ${env.base.arm64} and c ${env.c.amd64}, ${env.c.arm64}`)
   const { image } = env
-  for (const arch of ARCHES) {
+  for (const arch of IMAGE_ARCHES) {
     const reference = env.base[arch]
     if (attached(['docker', 'pull', '--quiet', '--platform', `linux/${arch}`, reference]) !== 0 || attached(['docker', 'tag', reference, `${image}:${arch}`]) !== 0)
       fail(`pulling ${reference} as ${image}:${arch} failed`)
@@ -571,17 +581,19 @@ async function debs(argv: string[]): Promise<number> {
   }
   checkCacheScope(cacheDir)
   if (!existsSync(cacheDir))
-    fail(`cache is missing: ${cacheDir}; run: bun src/container.ts cache --arch amd64 --all && bun src/container.ts cache --arch arm64 --all`)
+    fail(`cache is missing: ${cacheDir}; run: bun src/container.ts cache --arch <arch> --all for each architecture`)
   if (!only.length)
     rmSync(arch ? join(out, arch) : out, { recursive: true, force: true })
   const native = hostArch()
+  if (arch === 'armhf' && native !== imageArch(arch))
+    fail(`armhf is cross-compiled on an ${imageArch(arch)} host`)
   const built = buildDebs({
     repo: REPO,
     cacheDir,
     out,
     builder: builder(),
     image: environment().base[native],
-    cImage: arch => environment().c[arch],
+    cImage: arch => environment().c[imageArch(arch)],
     native,
     repository: releaseOf(REPO).repository,
   }, only, arch)

@@ -4,13 +4,13 @@
 // Base has:
 //
 //   bun src/publish.ts layer --arch <arch>   one architecture's root layer, on its runner
-//   bun src/publish.ts gate                  both pools as one build, then pool gate and pool guard
+//   bun src/publish.ts gate                  the pools as one build, then pool gate and pool guard
 //   bun src/publish.ts rootfs <tag>          ghcr.io/micaoss/<repository>:rootfs.<tag>
 //   bun src/publish.ts lock <tag>            <repository>.lock and its data assets, attached
 //   bun src/publish.ts lock --dry-run --tag <tag>
 //
-// rootfs: one OCI image index over a linux/amd64 and a linux/arm64 image, each a
-// single layer made from _out/rootfs/<arch>. Only a release publishes: `release
+// rootfs: one OCI image index over a linux/amd64, a linux/arm64 and a
+// linux/arm/v7 (armhf) image, each a single layer made from _out/rootfs/<arch>. Only a release publishes: `release
 // check` passes for the tag first. Nothing is re-pointed: an existing rootfs tag,
 // which carries its first build's time, must be this release and whole, and is
 // then finished rather than rebuilt. Every publication is read back with no
@@ -29,7 +29,7 @@ import { bearer, checkLock, digestOf, OCI_INDEX, OCI_MANIFEST, ociBlob, ociManif
 import { declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { capture, output } from './exec.ts'
-import { ARCHES, hostArch, selectRuntime } from './lock.ts'
+import { ARCHES, hostArch, platform, platformName, selectRuntime } from './lock.ts'
 import { environment, REPO, sources } from './pins.ts'
 import { issue, ISSUE, releaseOf } from './release.ts'
 
@@ -162,7 +162,7 @@ export function readLayers(directory: string): RootfsBuild {
     times.add(built)
   }
   if (times.size !== 1)
-    fail(`the root layers carry different build times (${[...times].join(', ')}); build both roots with one MICA_BUILD_TIME`)
+    fail(`the root layers carry different build times (${[...times].join(', ')}); build every root with one MICA_BUILD_TIME`)
   return { layers, built: [...times][0]! }
 }
 
@@ -221,7 +221,8 @@ export function rootfsImages(release: Release, { layers, built }: RootfsBuild): 
     const layer = layers.get(arch)
     if (!layer)
       fail(`no ${arch} root to publish`)
-    const config = json({ architecture: arch, os: 'linux', created: built, config: {}, rootfs: { type: 'layers', diff_ids: [layer.diffId] } })
+    const { architecture, variant } = platform(arch)
+    const config = json({ architecture, os: 'linux', ...(variant ? { variant } : {}), created: built, config: {}, rootfs: { type: 'layers', diff_ids: [layer.diffId] } })
     const manifest = json({
       schemaVersion: 2,
       mediaType: OCI_MANIFEST,
@@ -231,7 +232,7 @@ export function rootfsImages(release: Release, { layers, built }: RootfsBuild): 
     })
     platforms.set(arch, { config, layer: layer.gzip, manifest })
   }
-  const manifests = ARCHES.map(arch => ({ mediaType: OCI_MANIFEST, digest: `sha256:${sha256(platforms.get(arch)!.manifest)}`, size: platforms.get(arch)!.manifest.length, platform: { os: 'linux', architecture: arch } }))
+  const manifests = ARCHES.map(arch => ({ mediaType: OCI_MANIFEST, digest: `sha256:${sha256(platforms.get(arch)!.manifest)}`, size: platforms.get(arch)!.manifest.length, platform: platform(arch) }))
   return { index: json({ schemaVersion: 2, mediaType: OCI_INDEX, manifests, annotations: annotations(release, built) }), platforms }
 }
 
@@ -255,14 +256,14 @@ export async function publishRootfs(repo: string, tag: string, build: () => Root
     await pusher.manifest(rootfs, images.index, OCI_INDEX)
   }
   const { built, digest } = await readBackRootfs(repo, name, rootfs, release)
-  return `${HOST}/${name}:${rootfs} (${existing ? 'present' : 'pushed'}, built ${built}, sha256:${digest}, linux/amd64 and linux/arm64)`
+  return `${HOST}/${name}:${rootfs} (${existing ? 'present' : 'pushed'}, built ${built}, sha256:${digest}, ${ARCHES.map(platformName).join(', ')})`
 }
 
-interface Descriptor { mediaType?: string, digest?: string, size?: number, platform?: { os?: string, architecture?: string }, annotations?: Record<string, string> }
+interface Descriptor { mediaType?: string, digest?: string, size?: number, platform?: { os?: string, architecture?: string, variant?: string }, annotations?: Record<string, string> }
 interface Manifest { mediaType?: string, manifests?: Descriptor[], config?: Descriptor, layers?: Descriptor[], annotations?: Record<string, string> }
 
 // rootfs.<label> read back whole with no credential: an index naming this release
-// over linux/amd64 and linux/arm64, and in each image a manifest, config and
+// over linux/amd64, linux/arm64 and linux/arm/v7, and in each image a manifest, config and
 // layer matching their digests and sizes, the layer matching its diff_id, and its
 // /etc/issue naming this release, commit and the index's build time. Returns
 // that build time and the index digest.
@@ -290,8 +291,9 @@ async function readBackRootfs(repo: string, name: string, tag: string, release: 
   const built = index?.annotations?.['org.opencontainers.image.created'] ?? ''
   if (index?.mediaType !== OCI_INDEX || !BUILT.test(built) || !same(index.annotations, annotations(release, built)))
     refuse('its index does not name this release')
-  if (index.manifests?.map(entry => `${entry.mediaType} ${entry.platform?.os}/${entry.platform?.architecture}`).join() !== ARCHES.map(arch => `${OCI_MANIFEST} linux/${arch}`).join())
-    refuse('its index is not one image each for linux/amd64 and linux/arm64')
+  const platformOf = (entry: Descriptor): string => [entry.platform?.os, entry.platform?.architecture, ...(entry.platform?.variant ? [entry.platform.variant] : [])].join('/')
+  if (index.manifests?.map(entry => `${entry.mediaType} ${platformOf(entry)}`).join() !== ARCHES.map(arch => `${OCI_MANIFEST} ${platformName(arch)}`).join())
+    refuse(`its index is not one image each for ${ARCHES.map(platformName).join(', ')}`)
   for (const [position, arch] of ARCHES.entries()) {
     const entry = index.manifests[position]!
     const { value: manifest } = await read<Manifest>(`its ${arch} manifest ${entry.digest}`, () => ociManifest(`${HOST}/${name}@${entry.digest}`, locks, 'ci'), entry.size)
@@ -299,8 +301,8 @@ async function readBackRootfs(repo: string, name: string, tag: string, release: 
     if (manifest?.mediaType !== OCI_MANIFEST || manifest.config?.mediaType !== OCI_CONFIG || manifest.layers?.length !== 1 || layer?.mediaType !== OCI_LAYER || !same(manifest.annotations, annotations(release, built, { 'mica.arch': arch })))
       refuse(`its ${arch} manifest does not name this release`)
     const blob = (descriptor: Descriptor): Promise<Uint8Array> => ociBlob(`${HOST}/${name}`, (descriptor.digest ?? '').slice('sha256:'.length), locks, 'ci')
-    const { value: config } = await read<{ architecture?: string, os?: string, created?: string, rootfs?: { diff_ids?: string[] } }>(`its ${arch} config`, () => blob(manifest.config!), manifest.config.size)
-    if (config?.architecture !== arch || config.os !== 'linux' || config.created !== built || config.rootfs?.diff_ids?.length !== 1)
+    const { value: config } = await read<{ architecture?: string, os?: string, variant?: string, created?: string, rootfs?: { diff_ids?: string[] } }>(`its ${arch} config`, () => blob(manifest.config!), manifest.config.size)
+    if (config?.architecture !== platform(arch).architecture || config.variant !== platform(arch).variant || config.os !== 'linux' || config.created !== built || config.rootfs?.diff_ids?.length !== 1)
       refuse(`its ${arch} config does not name this build`)
     const tar = Bun.gunzipSync(new Uint8Array((await read(`its ${arch} layer`, () => blob(layer), layer.size)).bytes))
     if (`sha256:${sha256(tar)}` !== config.rootfs.diff_ids[0])
@@ -354,7 +356,7 @@ function renderLock(repo: string, release: Release, published: Published, data: 
     ...ARCHES.map(arch => ['pool', arch, `${at}:pool.${arch}.${release.label}@sha256:${published.pools[arch].digest}`]),
   ]
   const packages = ARCHES.flatMap(arch => published.pools[arch].layers.map((layer) => {
-    const title = /^([a-z0-9][a-z0-9+.-]*)_([^_]+)_(?:all|amd64|arm64)\.deb$/.exec(layer.annotations?.[TITLE] ?? '')
+    const title = /^([a-z0-9][a-z0-9+.-]*)_([^_]+)_(?:all|amd64|arm64|armhf)\.deb$/.exec(layer.annotations?.[TITLE] ?? '')
     if (!title)
       fail(`the ${arch} pool has a layer titled ${layer.annotations?.[TITLE]}, not <package>_<version>_<arch>.deb`)
     return ['package', title[1]!, arch, title[2]!, layer.digest.slice('sha256:'.length)]
@@ -391,7 +393,7 @@ export async function writeLock(repo: string, out: string, tag: string): Promise
     return { bytes, manifest }
   }
   const index = await read(`rootfs.${release.label}`)
-  const platform = (arch: Arch): string => index.manifest.manifests?.find(entry => entry.platform?.architecture === arch)?.digest?.slice('sha256:'.length) ?? fail(`rootfs.${release.label} has no ${arch} image`)
+  const image = (arch: Arch): string => index.manifest.manifests?.find(entry => entry.platform?.architecture === platform(arch).architecture && entry.platform?.variant === platform(arch).variant)?.digest?.slice('sha256:'.length) ?? fail(`rootfs.${release.label} has no ${arch} image`)
   const pool = async (arch: Arch): Promise<{ digest: string, layers: Layer[] }> => {
     const { bytes, manifest } = await read(`pool.${arch}.${release.label}`)
     return { digest: sha256(bytes), layers: (manifest.layers ?? []) as Layer[] }
@@ -399,8 +401,8 @@ export async function writeLock(repo: string, out: string, tag: string): Promise
   const data = dataAssets(repo, release)
   const text = renderLock(repo, release, {
     index: sha256(index.bytes),
-    platforms: { amd64: platform('amd64'), arm64: platform('arm64') },
-    pools: { amd64: await pool('amd64'), arm64: await pool('arm64') },
+    platforms: { amd64: image('amd64'), arm64: image('arm64'), armhf: image('armhf') },
+    pools: { amd64: await pool('amd64'), arm64: await pool('arm64'), armhf: await pool('armhf') },
   }, data)
   const into = join(out, 'release')
   rmSync(into, { recursive: true, force: true })
@@ -428,12 +430,12 @@ export function dryRunLock(repo: string, tag: string): string {
   }
   return renderLock(repo, release, {
     index: sha256(images.index),
-    platforms: { amd64: sha256(images.platforms.get('amd64')!.manifest), arm64: sha256(images.platforms.get('arm64')!.manifest) },
-    pools: { amd64: pool('amd64'), arm64: pool('arm64') },
+    platforms: { amd64: sha256(images.platforms.get('amd64')!.manifest), arm64: sha256(images.platforms.get('arm64')!.manifest), armhf: sha256(images.platforms.get('armhf')!.manifest) },
+    pools: { amd64: pool('amd64'), arm64: pool('arm64'), armhf: pool('armhf') },
   }, dataAssets(repo, release))
 }
 
-// Both pools as one build: the declared packages (assertPools), then the gates of
+// The pools as one build: the declared packages (assertPools), then the gates of
 // mica-build-tools -- pool gate over the archives, and pool guard for each one
 // against the latest release, which refuses a package whose inputs or bytes
 // changed without a version bump. Reads only.
@@ -485,7 +487,7 @@ async function main(argv: string[]): Promise<void> {
       console.log(`gate: ${line}`)
     return
   }
-  fail('usage: bun src/publish.ts layer --arch amd64|arm64 | gate | rootfs <tag> | lock <tag> | lock --dry-run --tag <tag>')
+  fail(`usage: bun src/publish.ts layer --arch ${ARCHES.join('|')} | gate | rootfs <tag> | lock <tag> | lock --dry-run --tag <tag>`)
 }
 
 if (import.meta.main) {

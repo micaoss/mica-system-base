@@ -7,6 +7,7 @@ mica-ca-trust
 mica-mdev
 mica-openrc
 mica-ssh
+mica-storage-ubi
 mica-system
 mica-systemd
 mica-systemd-boot

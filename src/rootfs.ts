@@ -1,6 +1,6 @@
 // The base root: the lock and this repository's own packages, installed by one
 // mmdebstrap run, then held to the invariants the base promises every product.
-import type { Row } from './lock.ts'
+import type { Arch, Row } from './lock.ts'
 import type { PinnedGroup, PinnedUser } from './pins.ts'
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,6 +12,20 @@ import { sha256File } from './verify.ts'
 // This repository's archives that belong in the base root; mica-systemd-boot is
 // the EFI loader the product signs, not part of a root.
 export const BASE_PACKAGES = ['mica-system', 'mica-busybox', 'mica-ca-trust']
+
+// What the root of an architecture leaves out of the closure of the others, and
+// this repository's package that stands in for it. armhf boards keep DATA on
+// UBIFS in UBI on raw NAND: no ext4 to check or grow and no partition table to
+// grow, so its root pins neither e2fsprogs (mica-system's Depends) nor fdisk
+// (mica-openrc's), and mica-storage-ubi provides both.
+export const DROPPED: Partial<Record<Arch, string[]>> = {
+  armhf: ['e2fsprogs', 'libext2fs2t64', 'libss2', 'logsave'],
+}
+const STAND_INS: Partial<Record<Arch, string[]>> = { armhf: ['mica-storage-ubi'] }
+
+export function basePackages(arch: Arch): string[] {
+  return [...BASE_PACKAGES, ...(STAND_INS[arch] ?? [])]
+}
 
 // The inits a product chooses between; the floor carries neither. Each is this
 // repository's packages and the roots of locks/upstream.pkgs whose closure it needs.
@@ -26,6 +40,11 @@ export const INITS = {
   },
 } as const
 export type Init = keyof typeof INITS
+
+// The upstream roots an init takes on an architecture.
+export function initRoots(init: Init, arch: Arch): string[] {
+  return INITS[init].roots.filter(name => arch !== 'armhf' || name !== 'fdisk')
+}
 // Installed, any of these is an init in the root.
 const INIT_PACKAGES = ['systemd-sysv', 'udev', ...Object.values(INITS).flatMap(init => [...init.packages, ...init.roots])]
 
@@ -80,7 +99,7 @@ export const SHADOW_FILES = ['etc/shadow', 'etc/shadow-']
 
 // This repository's archives to install: every one in `directory`, the base
 // packages among them, each once.
-export async function localRows(directory: string, arch: string): Promise<{ row: Row, path: string }[]> {
+export async function localRows(directory: string, arch: Arch): Promise<{ row: Row, path: string }[]> {
   const found: { row: Row, path: string }[] = []
   for (const name of readdirSync(directory).filter(file => file.endsWith('.deb')).sort()) {
     const path = join(directory, name)
@@ -89,7 +108,7 @@ export async function localRows(directory: string, arch: string): Promise<{ row:
       fail(`${name} is ${architecture}, not ${arch}`)
     found.push({ row: { name: pkg, version, architecture, sha256: await sha256File(path), url: `file://${path}`, consumers: [] }, path })
   }
-  const missing = BASE_PACKAGES.filter(name => !found.some(entry => entry.row.name === name))
+  const missing = basePackages(arch).filter(name => !found.some(entry => entry.row.name === name))
   if (missing.length)
     fail(`${directory} holds no ${missing.join(', ')}; build the pool first (bun src/container.ts debs)`)
   if (new Set(found.map(entry => entry.row.name)).size !== found.length)
@@ -126,7 +145,7 @@ export function installedPackages(root: string): string[] {
     .map(stanza => /^Package: (\S+)$/m.exec(stanza)?.[1] ?? '')
 }
 // What every root of this repository keeps, whatever its init.
-function assertCommon(root: string): void {
+function assertCommon(root: string, arch: Arch): void {
   // Keys are made on the device, on STATE; a key in a signed root is one the fleet shares.
   const keys = [...walk(root, 'etc'), ...walk(root, 'usr')].filter(path => /(?:^|\/)(?:dropbear_\w+_host_key|ssh_host_\w+_key)(?:\.pub)?$/.test(path))
   if (keys.length)
@@ -178,6 +197,12 @@ function assertCommon(root: string): void {
     fail(`/usr/bin/sh is not busybox${lstatExists(sh) && lstatSync(sh).isSymbolicLink() ? `: it links to ${readlinkSync(sh)}` : ''}`)
   if (!existsSync(join(root, 'usr/bin/busybox')))
     fail('the base root has no /usr/bin/busybox')
+  const dropped = (DROPPED[arch] ?? []).filter(name => installed.includes(name))
+  if (dropped.length)
+    fail(`the ${arch} root has ${dropped.join(', ')} installed`)
+  const standIns = (STAND_INS[arch] ?? []).filter(name => !installed.includes(name))
+  if (standIns.length)
+    fail(`the ${arch} root has no ${standIns.join(', ')}`)
   for (const command of HELPER_COMMANDS) {
     if (!['usr/bin', 'usr/sbin'].some(directory => lstatExists(join(root, directory, command))))
       fail(`the floor has no ${command} for the lifecycle helpers`)
@@ -200,8 +225,8 @@ function assertCommon(root: string): void {
 
 // What every product inherits and none may have to repair: the floor, which
 // carries no init -- a product installs mica-systemd or mica-openrc.
-export function assertFloor(root: string): void {
-  assertCommon(root)
+export function assertFloor(root: string, arch: Arch): void {
+  assertCommon(root, arch)
   const installed = installedPackages(root)
   const inits = installed.filter(name => INIT_PACKAGES.includes(name))
   if (inits.length)
@@ -218,8 +243,8 @@ export function assertFloor(root: string): void {
 
 // A root composed from the floor with mica-systemd: the floor's promises, systemd
 // as its init, and the units it governs.
-export function assertSystemd(root: string): void {
-  assertCommon(root)
+export function assertSystemd(root: string, arch: Arch): void {
+  assertCommon(root, arch)
   if (!/(?:^|\/)systemd$/.test(linkTarget(join(root, 'usr/sbin/init')) ?? ''))
     fail('/usr/sbin/init is not systemd')
   for (const tool of ['usr/lib/mica/mica-init', 'usr/bin/systemctl', 'usr/bin/systemd-repart']) {
@@ -260,15 +285,16 @@ const OPENRC_RUNLEVELS: Record<string, string[]> = {
 
 // A root composed from the floor with mica-openrc: the floor's promises, OpenRC
 // as its init with mdev for devices, and nothing of systemd or udev left.
-export function assertOpenrc(root: string): void {
-  assertCommon(root)
+export function assertOpenrc(root: string, arch: Arch): void {
+  assertCommon(root, arch)
   if (linkTarget(join(root, 'usr/sbin/init')) !== 'openrc-init')
     fail('/usr/sbin/init is not openrc-init')
   const installed = installedPackages(root)
   const systemd = ['systemd', 'systemd-sysv', 'udev', 'libsystemd-shared', 'mica-systemd'].filter(name => installed.includes(name))
   if (systemd.length)
     fail(`the OpenRC root has ${systemd.join(', ')} installed`)
-  for (const tool of ['usr/lib/mica/mica-init', 'usr/lib/mica/mica-grow-data', 'usr/sbin/openrc-init', 'usr/sbin/sfdisk', 'etc/mdev.conf', 'usr/sbin/ifup', 'usr/sbin/ip', 'usr/sbin/udhcpc', 'usr/bin/logread', 'etc/mtab']) {
+  const tools = ['usr/lib/mica/mica-init', 'usr/lib/mica/mica-grow-data', 'usr/sbin/openrc-init', 'usr/sbin/sfdisk', 'etc/mdev.conf', 'usr/sbin/ifup', 'usr/sbin/ip', 'usr/sbin/udhcpc', 'usr/bin/logread', 'etc/mtab']
+  for (const tool of tools.filter(path => arch !== 'armhf' || path !== 'usr/sbin/sfdisk')) {
     if (!lstatExists(join(root, tool)))
       fail(`the OpenRC root has no /${tool}`)
   }

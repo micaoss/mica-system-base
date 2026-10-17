@@ -1,6 +1,7 @@
 name: ci
-# Every push to main and pull request: the checks, both architectures built on
-# their native runners and the pools gated (build.yml). Publishes nothing.
+# Every push to main and pull request: the checks, every architecture built
+# (amd64 and arm64 on their native runners, armhf cross-built on the amd64 one)
+# and the pools gated (build.yml). Publishes nothing.
 on:
   push:
     branches: [main]

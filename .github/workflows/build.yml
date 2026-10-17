@@ -1,8 +1,10 @@
 name: build
 # Called by ci.yml and release.yml: the checks, then for amd64 and arm64, each on
-# its native runner, the pinned archives, the packages, the base root and its
-# layer, kept as the artifacts base-<arch>; then the two pools checked as one
-# build. One build time, chosen once, goes into both roots. Nothing is emulated.
+# its native runner, and for armhf on the amd64 runner, the pinned archives, the
+# packages, the base root and its layer, kept as the artifacts base-<arch>; then
+# the pools checked as one build. One build time, chosen once, goes into every
+# root. Nothing is compiled under emulation: armhf is cross-compiled in the amd64
+# images, and only its roots' maintainer scripts and programs run under QEMU.
 # Every job first checks out the mica-build-tools commit locks/mica-build-tools.pin
 # names (`bin/mica-tools sync`), which src/ imports as @mica/build-tools.
 # Caches only save downloads: the Bun install cache and the pinned Debian
@@ -27,7 +29,7 @@ jobs:
       build-time: ${{ steps.time.outputs.value }}
     steps:
       - id: time
-        name: One build time for both roots
+        name: One build time for every root
         run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
   check:
     runs-on: ubuntu-26.04
@@ -68,6 +70,8 @@ jobs:
             runner: ubuntu-26.04
           - arch: arm64
             runner: ubuntu-26.04-arm
+          - arch: armhf
+            runner: ubuntu-26.04
     runs-on: ${{ matrix.runner }}
     env:
       MICA_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
@@ -97,6 +101,12 @@ jobs:
         run: bin/mica-tools sync
       - name: locks/ against the pinned releases
         run: bun src/container.ts environment
+      # The armhf roots are installed from the amd64 image: their maintainer scripts,
+      # and the busybox the floor is stripped with, run under the runner's binfmt,
+      # registered by the binfmt image locks/mica-build-env.lock pins.
+      - name: Emulation for the armhf roots
+        if: matrix.arch == 'armhf'
+        run: docker run --privileged --rm "$(bin/mica-tools from --ref upstream:tonistiigi/binfmt:qemu-v10.2.3@amd64)" --install arm
       # The archives are named by the sha256 the committed pins record, and the cache
       # step verifies every one of them whether it came from the cache or the mirror.
       - name: Restore the pinned archives
@@ -174,7 +184,7 @@ jobs:
       # The declared packages, pool gate, then pool guard: reads the latest release's
       # lock and pools and refuses a package whose inputs or bytes changed without a
       # version bump.
-      - name: Both pools as one build, each package against the latest release
+      - name: The pools as one build, each package against the latest release
         run: bun src/publish.ts gate
         env:
           GH_TOKEN: ${{ github.token }}

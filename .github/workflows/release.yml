@@ -1,9 +1,9 @@
 name: release
 # A published GitHub release YYYYMMDD-HHMM (cut with `gh release create
 # <YYYYMMDD-HHMM> --target <commit of main>`, which creates the tag) builds that
-# tag through build.yml, both architectures on their native runners, then
-# publishes the gated pools (mica-build-tools `release pool`) and the two root
-# layers as one index to ghcr.io/micaoss/mica-system-base:
+# tag through build.yml, amd64 and arm64 on their native runners and armhf
+# cross-built on the amd64 one, then publishes the gated pools (mica-build-tools
+# `release pool`) and the three root layers as one index to ghcr.io/micaoss/mica-system-base:
 # pool.<arch>.<YYYYMMDD-HHMM> and rootfs.<YYYYMMDD-HHMM>, and attaches
 # (`release attach`) the unowned-path data assets, mica-system-base.lock (those
 # artifacts, the packages and the Debian pins for later stages) and SHA256SUMS,
@@ -57,7 +57,7 @@ jobs:
       - name: mica-build-tools at its pin
         run: bin/mica-tools sync
       - name: Publish the pools
-        run: bin/mica-tools release pool "$TAG" --arch amd64 --arch arm64
+        run: bin/mica-tools release pool "$TAG" --arch amd64 --arch arm64 --arch armhf
         env:
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

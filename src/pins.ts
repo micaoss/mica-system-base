@@ -1,5 +1,5 @@
 import type { Input } from '@mica/build-tools'
-import type { Arch } from './lock.ts'
+import type { ImageArch } from './lock.ts'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { checkLocks, modeOf, resolveImage } from '@mica/build-tools'
@@ -37,11 +37,12 @@ function text(record: Record<string, unknown>, key: string, file: string, patter
 // locks/mica-build-env.lock, read through mica-build-tools -- its base and C images
 // by platform manifest, and from its upstream rows the Dockerfile frontend and the
 // BuildKit the builder runs. `mica-tools locks verify` holds the lock to its release.
+// armhf has no images of its own (lock.ts imageArch).
 export interface Environment {
   image: string
   bun: string
-  base: Record<Arch, string>
-  c: Record<Arch, string>
+  base: Record<ImageArch, string>
+  c: Record<ImageArch, string>
   frontend: string
   buildkit: string
 }
@@ -54,7 +55,7 @@ const BUILDKIT = 'moby/buildkit:'
 // its path: its tag is the lock's to choose, and there must be exactly one.
 export function buildEnvImages(inputs: Input[], locks: string): Omit<Environment, 'image' | 'bun'> {
   const image = (selector: string): string => resolveImage(selector, inputs, locks)
-  const platforms = (name: string): Record<Arch, string> => ({ amd64: image(`${BUILD_ENV}:${name}@amd64`), arm64: image(`${BUILD_ENV}:${name}@arm64`) })
+  const platforms = (name: string): Record<ImageArch, string> => ({ amd64: image(`${BUILD_ENV}:${name}@amd64`), arm64: image(`${BUILD_ENV}:${name}@arm64`) })
   const input = inputs.find(entry => entry.lock.repository === BUILD_ENV)
   if (!input)
     fail(`locks/ has no ${BUILD_ENV}.lock`)

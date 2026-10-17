@@ -25,18 +25,37 @@ On amd64 the floor is 72 packages and 51 MB (11.8 MB with xz).
 Every path of the root that no package owns is listed, with what wrote it, in the release's
 `mica-system-base-unowned.<arch>.tsv` (165 paths, none unattributed).
 
+### armhf: DATA in UBI
+
+The armhf floor is for boards that keep their system in UBI volumes on raw NAND, DATA on
+UBIFS: there is no ext4 file system to check or grow and no partition table to grow. Its lock
+pins nothing of e2fsprogs (`e2fsprogs`, `libext2fs2t64`, `libss2`, `logsave`; `DROPPED` in
+`src/rootfs.ts`), and its floor carries **mica-storage-ubi**, which provides and conflicts with
+`e2fsprogs` (mica-system's Depends) and `fdisk` (mica-openrc's): the OpenRC init on armhf
+takes `openrc` alone as its upstream root. Nothing on such a board runs them -- mica-openrc
+grows DATA only where the board names its partitions, checks only the file systems
+`/etc/fstab` gives a pass number and grows only those marked `x-systemd.growfs` -- and the
+packages of amd64 and arm64 are unchanged. A product that wants the tools installs them in
+place of mica-storage-ubi; `fdisk` stays an `upstream` row on armhf.
+
+On armhf the floor is 69 packages, about 40 MB, and 9.8 MB as an xz squashfs; with
+mica-openrc 78 packages and 10.3 MB (the archives unpacked and measured; amd64 measured the
+same way is 43.2 MB and 12.1 MB). The compose toolchain is in those figures: perl-base alone
+is 3.6 MB.
+
 ## The packages
 
 | Package | Arch | Role | Depends |
 | --- | --- | --- | --- |
 | `mica-system` | all | floor: system policy for either init | dbus, passwd, e2fsprogs |
-| `mica-busybox` | amd64, arm64 | floor: static BusyBox from the pinned upstream release | |
+| `mica-busybox` | amd64, arm64, armhf | floor: static BusyBox from the pinned upstream release | |
 | `mica-ca-trust` | all | floor: the anchors of the pinned `ca-certificates`, as data | |
 | `mica-systemd` | all | init: Mica OS on systemd | mica-system, systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, udev |
 | `mica-openrc` | all | init: Mica OS on OpenRC | mica-system, mica-mdev, openrc, fdisk |
 | `mica-mdev` | all | init: device nodes without udev, for mica-openrc | mica-busybox |
 | `mica-systemd-boot` | amd64, arm64 | boot: the systemd-boot EFI loader of the pinned systemd, with persisted boot attempts | |
 | `mica-ssh` | all | option: SSH (dropbear), started by micad | dropbear-bin, mica-system |
+| `mica-storage-ubi` | armhf | floor on armhf: stands in for e2fsprogs and fdisk where DATA is UBIFS | |
 | `mica-wifi` | amd64, arm64 | option: a minimal `wpa_supplicant` from upstream hostap | libnl, libssl3t64, iw, rfkill |
 | `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap | libnl, libssl3t64, iw, rfkill |
 | `mica-bluetooth` | all | option: the HCI attach and the pairing keys on STATE | bluez, rfkill |
@@ -52,7 +71,7 @@ Every product installs exactly one.
 | | systemd | OpenRC |
 | --- | --- | --- |
 | From the pool | `mica-systemd` | `mica-openrc`, `mica-mdev` |
-| Roots of `upstream` rows | `systemd`, `systemd-sysv`, `udev`, `systemd-resolved`, `systemd-timesyncd`, `systemd-repart` | `openrc`, `fdisk` |
+| Roots of `upstream` rows | `systemd`, `systemd-sysv`, `udev`, `systemd-resolved`, `systemd-timesyncd`, `systemd-repart` | `openrc`, `fdisk` (armhf: `openrc`) |
 | PID 1 | systemd | `openrc-init` |
 | Devices | udev | busybox `mdev -d`; `/etc/mdev.conf` gives udev's owners and modes; no `/dev/*/by-*` names |
 | DATA | grown with `systemd-repart` (`mica-grow-data`), checked and mounted from `/etc/fstab`, laid out | grown with `sfdisk` (`mica-grow-data`), checked (`fsck -M`: not the DATA the runkit mounted), mounted from `/etc/fstab`, `x-systemd.growfs` honoured, laid out |
@@ -127,7 +146,7 @@ here.
   `locks/upstream.pkgs` whose closure holds the row. A later stage takes **any** row by its
   package name and architecture, a root or not.
 - **The rows are closed.** Every row's dependencies are rows of the same release or in the
-  floor, and CI bootstraps all of them together with the floor on both architectures
+  floor, and CI bootstraps all of them together with the floor on every architecture
   (`test-bootstrap`).
 - **One archive per package.** A later stage installs a listed package from its row and never
   pins it itself, so every consumer of a release runs the same archives.
@@ -158,7 +177,8 @@ here.
 
 ## Verified on every build
 
-CI, on native amd64 and arm64 runners:
+CI, on native amd64 and arm64 runners, and for armhf on the amd64 runner with its maintainer
+scripts under QEMU:
 
 - every locked package, the `upstream` ones included, bootstraps together;
 - the packages build; the floor, the floor with mica-systemd and the floor with mica-openrc

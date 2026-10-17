@@ -120,9 +120,10 @@ describe('publication', () => {
     }
   }
   function debs(): void {
-    deb('fixture-data', 'all', ['amd64', 'arm64'])
+    deb('fixture-data', 'all', ['amd64', 'arm64', 'armhf'])
     deb('fixture-tool', 'amd64', ['amd64'])
     deb('fixture-tool', 'arm64', ['arm64'])
+    deb('fixture-tool', 'armhf', ['armhf'])
   }
 
   beforeAll(() => {
@@ -131,7 +132,7 @@ describe('publication', () => {
     use(server)
     process.env.MICA_GITHUB_API = api.url
     process.env.GH_TOKEN = 'test-token'
-    for (const [name, arches] of [['fixture-data', 'all'], ['fixture-tool', 'amd64,arm64']] as const) {
+    for (const [name, arches] of [['fixture-data', 'all'], ['fixture-tool', 'amd64,arm64,armhf']] as const) {
       mkdirSync(join(repo, 'debs', name), { recursive: true })
       writeFileSync(join(repo, 'debs', name, 'Dockerfile'), `# mica-deb: arches=${arches}\n`)
       writeFileSync(join(repo, 'debs', name, 'control'), `Package: ${name}\nVersion: ${version}\nSource-Date-Epoch: 1757800000\n`)
@@ -143,7 +144,7 @@ describe('publication', () => {
     writeFileSync(join(repo, 'locks/sources.json'), readFileSync(join(REPO, 'locks/sources.json')))
     // One upstream package pinned for later stages, as the release lock lists it.
     writeFileSync(join(repo, 'debs/consumers.pkgs'), 'upstream-*\n')
-    writePins(repo, ['amd64', 'arm64'].map((arch, index) => ({ name: 'libfixture', arch, version: '1.0-1', sha: 'ab'[index]!.repeat(64), url: `${UPSTREAM_URL}_${arch}.deb`, consumers: ['upstream-libfixture', 'upstream-tool'] })))
+    writePins(repo, ['amd64', 'arm64', 'armhf'].map((arch, index) => ({ name: 'libfixture', arch, version: '1.0-1', sha: 'abc'[index]!.repeat(64), url: `${UPSTREAM_URL}_${arch}.deb`, consumers: ['upstream-libfixture', 'upstream-tool'] })))
     git('init', '-q')
     git('add', '.')
     git('commit', '-q', '-m', 'fixture')
@@ -152,7 +153,7 @@ describe('publication', () => {
     commit = git('rev-parse', 'HEAD')
     // The producer-data assets a release names with its `data` rows.
     mkdirSync(join(out, 'rootfs'), { recursive: true })
-    for (const arch of ['amd64', 'arm64'] as const)
+    for (const arch of ['amd64', 'arm64', 'armhf'] as const)
       writeFileSync(join(out, `rootfs/${arch}.unowned.tsv`), `/etc/passwd\tbootstrap seed\n/etc/pam.d/common-auth\tpam-auth-update (libpam-runtime.postinst)\n/etc/${arch}.conf\tunknown\n`)
     debs()
   })
@@ -170,7 +171,7 @@ describe('publication', () => {
     return () => {
       attempts++
       const layers: RootfsBuild['layers'] = new Map()
-      for (const arch of ['amd64', 'arm64'] as const) {
+      for (const arch of ['amd64', 'arm64', 'armhf'] as const) {
         const tree = join(work, 'roots', `${attempts}-${arch}`)
         mkdirSync(join(tree, 'etc'), { recursive: true })
         writeFileSync(join(tree, 'etc/issue'), issue(TAG, commit, named))
@@ -188,7 +189,7 @@ describe('publication', () => {
   // A manifest or blob as the publishing credential reads it.
   const get = async (target: ReturnType<typeof registry>, path: string): Promise<Uint8Array> =>
     new Uint8Array(await (await fetch(`${target.url}/v2/${NAME}/${path}`, { headers: { Authorization: 'Bearer user' } })).arrayBuffer())
-  const rootIndex = async (target = server): Promise<{ body: string, manifests: { digest: string, platform: { architecture: string } }[], annotations: Record<string, string> }> => {
+  const rootIndex = async (target = server): Promise<{ body: string, manifests: { digest: string, platform: { os: string, architecture: string, variant?: string } }[], annotations: Record<string, string> }> => {
     const body = text(await get(target, `manifests/rootfs.${TAG}`))
     return { body, ...JSON.parse(body) }
   }
@@ -200,12 +201,20 @@ describe('publication', () => {
     return text(Bun.spawnSync(['tar', '-xOf', '-', './etc/issue'], { stdin: Bun.gunzipSync(new Uint8Array(layer)) }).stdout)
   }
 
-  test('the rootfs is one index over both architectures, and a later attempt keeps it', async () => {
+  test('the rootfs is one index over every architecture, and a later attempt keeps it', async () => {
     const built = '2026-09-13T21:40:00Z'
     const line = await publishRootfs(repo, TAG, roots(built))
     expect(line).toContain(`${NAME}:rootfs.${TAG} (pushed`)
+    expect(line).toEndWith('linux/amd64, linux/arm64, linux/arm/v7)')
     const index = await rootIndex()
-    expect(index.manifests.map(entry => entry.platform.architecture)).toEqual(['amd64', 'arm64'])
+    expect(index.manifests.map(entry => entry.platform)).toEqual([{ os: 'linux', architecture: 'amd64' }, { os: 'linux', architecture: 'arm64' }, { os: 'linux', architecture: 'arm', variant: 'v7' }])
+    const config = async (position: number): Promise<Record<string, unknown>> => {
+      const manifest = JSON.parse(text(await get(server, `manifests/${index.manifests[position]!.digest}`))) as { config: { digest: string } }
+      return JSON.parse(text(await get(server, `blobs/${manifest.config.digest}`))) as Record<string, unknown>
+    }
+    expect(await config(0)).toMatchObject({ architecture: 'amd64', os: 'linux' })
+    expect(await config(0)).not.toHaveProperty('variant')
+    expect(await config(2)).toMatchObject({ architecture: 'arm', os: 'linux', variant: 'v7' })
     expect(index.annotations['org.opencontainers.image.revision']).toBe(commit)
     expect(index.annotations['org.opencontainers.image.version']).toBe(TAG)
     expect(index.annotations['org.opencontainers.image.created']).toBe(built)
@@ -276,7 +285,7 @@ describe('publication', () => {
   })
 
   test('mica-system-base.lock names the published rootfs, pools and packages by digest, beside its data assets', async () => {
-    const pools = await publishPools(repo, 'mica-system-base', TAG, ['amd64', 'arm64'])
+    const pools = await publishPools(repo, 'mica-system-base', TAG, ['amd64', 'arm64', 'armhf'])
     const at = `ghcr.io/${NAME}`
     const index = await get(server, `manifests/rootfs.${TAG}`)
     const platforms = (JSON.parse(text(index)) as { manifests: { digest: string }[] }).manifests.map(entry => entry.digest)
@@ -288,14 +297,18 @@ describe('publication', () => {
       `release\tmica-system-base\t${TAG}\t${commit}`,
       `image\tmica-system-base\trootfs\tamd64\t${at}@${platforms[0]}`,
       `image\tmica-system-base\trootfs\tarm64\t${at}@${platforms[1]}`,
+      `image\tmica-system-base\trootfs\tarmhf\t${at}@${platforms[2]}`,
       `image\tmica-system-base\trootfs\tindex\t${at}:rootfs.${TAG}@sha256:${sha256(index)}`,
       ...pools.filter(row => row.startsWith('pool\t')),
       `package\tfixture-data\tamd64\t${version}\t${archive('amd64', `fixture-data_${version}_all.deb`)}`,
       `package\tfixture-data\tarm64\t${version}\t${archive('arm64', `fixture-data_${version}_all.deb`)}`,
+      `package\tfixture-data\tarmhf\t${version}\t${archive('armhf', `fixture-data_${version}_all.deb`)}`,
       `package\tfixture-tool\tamd64\t${version}\t${archive('amd64', `fixture-tool_${version}_amd64.deb`)}`,
       `package\tfixture-tool\tarm64\t${version}\t${archive('arm64', `fixture-tool_${version}_arm64.deb`)}`,
+      `package\tfixture-tool\tarmhf\t${version}\t${archive('armhf', `fixture-tool_${version}_armhf.deb`)}`,
       `upstream\tlibfixture\tamd64\t1.0-1\t${'a'.repeat(64)}\t${UPSTREAM_URL}_amd64.deb\tlibfixture,tool`,
       `upstream\tlibfixture\tarm64\t1.0-1\t${'b'.repeat(64)}\t${UPSTREAM_URL}_arm64.deb\tlibfixture,tool`,
+      `upstream\tlibfixture\tarmhf\t1.0-1\t${'c'.repeat(64)}\t${UPSTREAM_URL}_armhf.deb\tlibfixture,tool`,
       `apt\t${sources().mirror}\t${sources().suite}\tmain\t/usr/share/keyrings/debian-archive-keyring.gpg`,
       ...data.map(asset => `data\t${asset.name}\t${asset.file}\t${asset.sha256}`),
       '',
@@ -313,13 +326,13 @@ describe('publication', () => {
 
   test('a dry run writes the lock of the local pools and root layers without a registry', () => {
     const layer = (arch: string): { gzip: Uint8Array, diffId: string } => ({ gzip: Bun.gzipSync(new TextEncoder().encode(`${arch} root`)), diffId: `sha256:${sha256(new TextEncoder().encode(`${arch} root`))}` })
-    for (const arch of ['amd64', 'arm64'] as const)
+    for (const arch of ['amd64', 'arm64', 'armhf'] as const)
       writeLayer(join(out, 'layers'), arch, layer(arch), '2026-09-14T01:40:00Z')
     const lock = dryRunLock(repo, TAG)
     const parsed = parseLock(lock, 'mica-system-base.lock')
     const images = rootfsImages(releaseOf(repo), readLayers(join(out, 'layers')))
     expect(parsed.rows.find(row => row[0] === 'image' && row[3] === 'index')![4]).toBe(`ghcr.io/${NAME}:rootfs.${TAG}@sha256:${sha256(images.index)}`)
-    expect(parsed.rows.filter(row => row[0] === 'package').map(row => row.slice(1, 3).join(' '))).toEqual(['fixture-data amd64', 'fixture-data arm64', 'fixture-tool amd64', 'fixture-tool arm64'])
+    expect(parsed.rows.filter(row => row[0] === 'package').map(row => row.slice(1, 3).join(' '))).toEqual(['fixture-data amd64', 'fixture-data arm64', 'fixture-data armhf', 'fixture-tool amd64', 'fixture-tool arm64', 'fixture-tool armhf'])
     // The pools of a dry run are the ones `release pool` publishes.
     expect(parsed.rows.filter(row => row[0] === 'pool').map(row => row[2])).toEqual(readFileSync(join(out, 'release', 'mica-system-base.lock'), 'utf8').split('\n').filter(row => row.startsWith('pool\t')).map(row => row.split('\t')[2]))
     expect(() => dryRunLock(repo, '2026-09-14')).toThrow('is not YYYYMMDD-HHMM')
@@ -327,9 +340,9 @@ describe('publication', () => {
 
   test('the gate takes the declared packages, pool gate and pool guard; a Replaces is refused', async () => {
     expect(await gate(repo)).toEqual([
-      `the ${TAG} pools hold amd64: 2, arm64: 2 archives of the declared packages`,
-      'pool gate: 4 archives pass',
-      ...([['amd64', 'fixture-data', 'all'], ['amd64', 'fixture-tool', 'amd64'], ['arm64', 'fixture-data', 'all'], ['arm64', 'fixture-tool', 'arm64']] as const).map(([pool, name, arch]) =>
+      `the ${TAG} pools hold amd64: 2, arm64: 2, armhf: 2 archives of the declared packages`,
+      'pool gate: 6 archives pass',
+      ...([['amd64', 'fixture-data', 'all'], ['amd64', 'fixture-tool', 'amd64'], ['arm64', 'fixture-data', 'all'], ['arm64', 'fixture-tool', 'arm64'], ['armhf', 'fixture-data', 'all'], ['armhf', 'fixture-tool', 'armhf']] as const).map(([pool, name, arch]) =>
         `pool guard: ${pool} ${name} ${version} new ${sha256(new Uint8Array(readFileSync(join(out, 'debs', pool, 'pool', `${name}_${version}_${arch}.deb`))))}`),
     ])
     deb('fixture-tool', 'arm64', ['arm64'], 'Replaces: fixture-data\n')
@@ -367,14 +380,16 @@ describe('publication', () => {
     expect(() => assertBanner(tree, release)).toThrow('does not name')
   })
 
-  test('each architecture packs its root layer; the index takes both with one build time', () => {
+  test('each architecture packs its root layer; the index takes them all with one build time', () => {
     const layers = join(work, 'layers')
     const layer = (text: string): { gzip: Uint8Array, diffId: string } => ({ gzip: Bun.gzipSync(new TextEncoder().encode(text)), diffId: `sha256:${sha256(new TextEncoder().encode(text))}` })
     writeLayer(layers, 'amd64', layer('amd64 root'), '2026-09-14T01:40:00Z')
     expect(() => readLayers(layers)).toThrow('no arm64 root layer')
-    writeLayer(layers, 'arm64', layer('arm64 root'), '2026-09-14T01:41:00Z')
-    expect(() => readLayers(layers)).toThrow('different build times')
     writeLayer(layers, 'arm64', layer('arm64 root'), '2026-09-14T01:40:00Z')
+    expect(() => readLayers(layers)).toThrow('no armhf root layer')
+    writeLayer(layers, 'armhf', layer('armhf root'), '2026-09-14T01:41:00Z')
+    expect(() => readLayers(layers)).toThrow('different build times')
+    writeLayer(layers, 'armhf', layer('armhf root'), '2026-09-14T01:40:00Z')
     const read = readLayers(layers)
     expect(read.built).toBe('2026-09-14T01:40:00Z')
     expect(read.layers.get('arm64')).toEqual(layer('arm64 root'))

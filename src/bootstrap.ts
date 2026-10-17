@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fail } from './errors.ts'
 import { attached, capture, need, output } from './exec.ts'
+import { imageArch } from './lock.ts'
 import { ids, sources } from './pins.ts'
 import { renderRepo } from './repo.ts'
 import { assertFloor, assertOpenrc, assertSystemd, HOSTNAME, localRows, lstatExists, OPERATOR_ACCOUNTS, ORPHANED, SHADOW_FILES, SHADOW_LAST_CHANGE, STRIPPED, writeRelease } from './rootfs.ts'
@@ -233,8 +234,10 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
   need('dpkg-deb')
   need('mmdebstrap')
   await verifyRows(options.cacheDir, selected)
-  if (output(['dpkg', '--print-architecture'], 'reading the host architecture').trim() !== arch)
-    fail(`installation requires a native ${arch} host`)
+  // armhf has no image of its own: it is installed from the amd64 image, and its
+  // maintainer scripts run under the host's binfmt emulation.
+  if (output(['dpkg', '--print-architecture'], 'reading the host architecture').trim() !== imageArch(arch))
+    fail(`installation of ${arch} requires an ${imageArch(arch)} host`)
   const pinned = ids()
   const { mirror, suite } = sources()
   mkdirSync(dirname(root), { recursive: true })
@@ -269,11 +272,11 @@ export async function bootstrap(options: Options, selected: Row[]): Promise<void
       writeRelease(root)
       // The floor, or the floor with the init its local packages brought.
       if (local.some(entry => entry.row.name === 'mica-systemd'))
-        assertSystemd(root)
+        assertSystemd(root, arch)
       else if (local.some(entry => entry.row.name === 'mica-openrc'))
-        assertOpenrc(root)
+        assertOpenrc(root, arch)
       else
-        assertFloor(root)
+        assertFloor(root, arch)
     }
   }
   finally {

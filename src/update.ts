@@ -39,6 +39,7 @@ export const UPSTREAM: Record<string, string> = {
   'mica-mdev': 'source.busybox',
   'mica-openrc': 'openrc',
   'mica-ssh': 'input.dropbear-bin',
+  'mica-storage-ubi': 'base-files',
   'mica-system': 'base-files',
   'mica-systemd': 'systemd',
   'mica-systemd-boot': 'source.systemd',
