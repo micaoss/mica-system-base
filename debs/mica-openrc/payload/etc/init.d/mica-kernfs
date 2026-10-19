@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+# The kernel filesystems every later service needs, and the default hostname.
+# OpenRC's own init.sh has mounted /proc and /run already, and its cgroups service
+# mounts the cgroup hierarchy.
+
+description="Mount /sys and /dev"
+
+depend() {
+    before *
+}
+
+# mount_if <type> <target> <options> [<mode of the target>]
+mount_if() {
+    mountinfo -q "$2" && return 0
+    [ -d "$2" ] || mkdir -p -m "${4:-0755}" "$2"
+    mount -n -t "$1" -o "$3" "$1" "$2"
+}
+
+start() {
+    ebegin "Mounting the kernel filesystems"
+    mount_if sysfs /sys noexec,nosuid,nodev &&
+        mount_if devtmpfs /dev mode=0755,nosuid &&
+        mount_if devpts /dev/pts gid=5,mode=0620,noexec,nosuid &&
+        mount_if tmpfs /dev/shm mode=1777,nosuid,nodev 1777 &&
+        mount_if mqueue /dev/mqueue noexec,nosuid,nodev &&
+        # Only where the kernel has it (CONFIG_SECURITYFS), as systemd mounts it.
+        if grep -qw securityfs /proc/filesystems; then
+            mount_if securityfs /sys/kernel/security noexec,nosuid,nodev
+        fi
+    eend $? || return 1
+    [ -e /dev/fd ] || ln -s /proc/self/fd /dev/fd
+    [ -e /dev/stdin ] || ln -s /proc/self/fd/0 /dev/stdin
+    [ -e /dev/stdout ] || ln -s /proc/self/fd/1 /dev/stdout
+    [ -e /dev/stderr ] || ln -s /proc/self/fd/2 /dev/stderr
+    # The image's default until mica-mounts binds STATE's hostname over it.
+    hostname -F /etc/hostname
+}

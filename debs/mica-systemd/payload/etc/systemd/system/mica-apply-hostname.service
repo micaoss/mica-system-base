@@ -1,0 +1,18 @@
+[Unit]
+Description=Apply the persisted hostname
+# PID 1 set the hostname from the image's /etc/hostname; apply the persisted one
+# once etc-hostname.mount is in place.
+DefaultDependencies=no
+Requires=etc-hostname.mount
+After=etc-hostname.mount
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+ConditionFileNotEmpty=/etc/hostname
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/hostname -F /etc/hostname
+
+[Install]
+WantedBy=local-fs.target

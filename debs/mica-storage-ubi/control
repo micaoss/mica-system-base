@@ -1,0 +1,22 @@
+Package: mica-storage-ubi
+Version: 13.8+deb13u7-mica1
+Source-Date-Epoch: 1792244158
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Provides: e2fsprogs, fdisk
+Conflicts: e2fsprogs, fdisk
+Description: Mica OS storage in UBI on raw NAND: no ext4 or partition tools
+ A board that keeps its system in UBI volumes on raw NAND has DATA on UBIFS and
+ no partition table: there is no ext4 file system for e2fsck or resize2fs and no
+ partition for sfdisk to grow. This package carries no files; it provides
+ e2fsprogs, which mica-system depends on for an ext4 DATA, and fdisk, which
+ mica-openrc depends on to grow DATA's partition, so a root for such a board
+ installs neither.
+ .
+ Nothing on that board runs them: mica-openrc grows DATA only where the board
+ names its partitions, checks only the file systems /etc/fstab gives a pass
+ number and grows only those marked x-systemd.growfs, and a UBI board does none
+ of that. A product that wants e2fsprogs or fdisk itself installs them in place
+ of this package.

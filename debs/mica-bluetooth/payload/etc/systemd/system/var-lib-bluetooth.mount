@@ -1,0 +1,17 @@
+[Unit]
+Description=Bluetooth pairing keys from DATA state
+# bluez stores link keys and paired-device records under /var/lib/bluetooth.
+# Pairing credentials remain outside the bounded general var project.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+Before=bluetooth.service
+
+[Mount]
+What=/mnt/data/state/bluetooth
+Where=/var/lib/bluetooth
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

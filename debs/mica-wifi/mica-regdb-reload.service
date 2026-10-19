@@ -1,0 +1,21 @@
+# Built-in cfg80211 can request its database before the support mount exists.
+# Reload from the authenticated kernel support image before configuring radios.
+[Unit]
+Description=Load the wireless regulatory database into cfg80211
+Documentation=man:iw(8)
+ConditionPathExists=/sys/module/cfg80211
+# Before anything configures a radio: micad renders country_code into the
+# wpa_supplicant and hostapd instances it starts, and a hint issued while the
+# database is still unread is answered -ENODATA and not retried.
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/bin/test -s /usr/lib/firmware/regulatory.db
+ExecStartPre=/usr/bin/test -s /usr/lib/firmware/regulatory.db.p7s
+ExecStart=/usr/sbin/iw reg reload
+
+[Install]
+WantedBy=multi-user.target

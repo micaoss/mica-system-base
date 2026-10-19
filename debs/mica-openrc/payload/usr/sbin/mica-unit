@@ -1,0 +1,128 @@
+#!/bin/sh
+# The user's own services, kept on DATA state: /usr/local/etc is a bind of
+# DATA/state/openrc-local (mica-mounts), and OpenRC finds a script in its init.d and
+# the script's settings in its conf.d. /etc/runlevels is on the read-only root, so
+# enabled/ is the runlevel here: mica-local, in the default runlevel, starts every
+# script linked there at boot. Everything survives reboot and update.
+#
+#   mica-unit install <script>...          openrc-run scripts into init.d (a name the root ships is refused)
+#   mica-unit install --conf <file>...     their settings into conf.d, named <script>[.conf]
+#   mica-unit enable [--now] <script>      start it at every boot
+#   mica-unit disable [--now] <script>     stop starting it at boot
+#   mica-unit remove <script>              stop it and delete it with its settings
+#   mica-unit list                         the scripts here, enabled or disabled
+set -eu
+
+DIR=${MICA_UNIT_DIR:-/usr/local/etc}
+SHIPPED=${MICA_UNIT_SHIPPED:-/etc/init.d}
+
+die() {
+    echo "mica-unit: $*" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: mica-unit install [--conf] <file>... | enable [--now] <script> | disable [--now] <script> | remove <script> | list" >&2
+    exit 2
+}
+
+script_name() {
+    case "$1" in
+    */* | '' | .* | *[!A-Za-z0-9._-]*) die "$1 is not a script name" ;;
+    *) echo "$1" ;;
+    esac
+}
+
+not_shipped() {
+    for dir in $SHIPPED; do
+        [ ! -e "$dir/$1" ] && [ ! -L "$dir/$1" ] || die "$1 is shipped by the root; a user script cannot replace it"
+    done
+}
+
+installed() {
+    [ -f "$DIR/init.d/$1" ] || die "$1 is not installed in $DIR/init.d"
+}
+
+install_scripts() {
+    [ "$#" -gt 0 ] || usage
+    for file in "$@"; do
+        [ -f "$file" ] || die "$file is not a file"
+        name=$(script_name "${file##*/}")
+        not_shipped "$name"
+        first=
+        IFS= read -r first <"$file" || :
+        case "$first" in
+        '#!/sbin/openrc-run'* | '#!/usr/sbin/openrc-run'* | '#! /sbin/openrc-run'*) ;;
+        *) die "$name is not an openrc-run script" ;;
+        esac
+    done
+    mkdir -p "$DIR/init.d"
+    for file in "$@"; do
+        install -m 0755 "$file" "$DIR/init.d/${file##*/}"
+    done
+}
+
+install_confs() {
+    [ "$#" -gt 0 ] || usage
+    mkdir -p "$DIR/conf.d"
+    for file in "$@"; do
+        [ -f "$file" ] || die "$file is not a file"
+        name=$(script_name "${file##*/}")
+        name=${name%.conf}
+        not_shipped "$name"
+        install -m 0644 "$file" "$DIR/conf.d/$name"
+    done
+}
+
+list_scripts() {
+    for path in "$DIR"/init.d/*; do
+        [ -f "$path" ] || continue
+        name=${path##*/}
+        if [ -L "$DIR/enabled/$name" ]; then state=enabled; else state=disabled; fi
+        printf '%s\t%s\n' "$name" "$state"
+    done
+}
+
+command=${1:-}
+[ "$#" -gt 0 ] && shift
+now=
+conf=
+case "${1:-}" in
+--now) now=1 && shift ;;
+--conf) conf=1 && shift ;;
+esac
+case "$command" in
+install)
+    [ -z "$now" ] || usage
+    if [ -n "$conf" ]; then install_confs "$@"; else install_scripts "$@"; fi
+    ;;
+enable)
+    [ "$#" = 1 ] && [ -z "$conf" ] || usage
+    name=$(script_name "$1")
+    installed "$name"
+    not_shipped "$name"
+    mkdir -p "$DIR/enabled"
+    ln -sfn "../init.d/$name" "$DIR/enabled/$name"
+    [ -z "$now" ] || rc-service "$name" start
+    ;;
+disable)
+    [ "$#" = 1 ] && [ -z "$conf" ] || usage
+    name=$(script_name "$1")
+    [ -z "$now" ] || rc-service "$name" stop
+    rm -f "$DIR/enabled/$name"
+    ;;
+remove)
+    [ "$#" = 1 ] && [ -z "$now$conf" ] || usage
+    name=$(script_name "$1")
+    installed "$name"
+    rc-service "$name" stop || :
+    rm -f "$DIR/enabled/$name" "$DIR/init.d/$name" "$DIR/conf.d/$name"
+    ;;
+list)
+    [ "$#" = 0 ] && [ -z "$now$conf" ] || usage
+    list_scripts
+    ;;
+*)
+    usage
+    ;;
+esac

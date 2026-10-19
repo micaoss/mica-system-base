@@ -1,0 +1,18 @@
+Package: mica-mdev
+Version: 1.38.0-mica1
+Source-Date-Epoch: 1790638915
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: mica-busybox
+Conflicts: udev
+Description: Mica OS device nodes without udev
+ Device management for a Mica OS root that runs OpenRC (mica-openrc): busybox
+ mdev, which mica-busybox already carries, populates /dev from /sys at boot and
+ then follows the kernel's uevents as a netlink daemon (mdev -d). /etc/mdev.conf
+ gives each node the owner and mode udev's default rules give it, loads the
+ driver of a module alias, and mdev loads firmware from /usr/lib/firmware.
+ .
+ It does not make udev's persistent names (/dev/disk/by-*, /dev/serial/by-*);
+ Mica OS finds DATA by PARTUUID through blkid, which needs none of them.

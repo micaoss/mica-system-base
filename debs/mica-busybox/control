@@ -1,0 +1,13 @@
+Package: mica-busybox
+Version: 1.38.0-mica1
+Source-Date-Epoch: 1792383800
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Description: BusyBox binary for diagnostics, its applets a fallback in PATH
+ /usr/bin/busybox: the upstream BusyBox release compiled statically for this
+ architecture, so it runs with none of the root's libraries. One link per applet
+ under /usr/libexec/busybox, which /etc/profile.d/mica-busybox.sh puts last in a
+ login shell's PATH: an applet answers to its plain name (ping, vi) only where the
+ root ships no command of that name.

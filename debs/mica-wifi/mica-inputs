@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-wifi
+source build.mica-wifi.*
+source source.wpa-supplicant

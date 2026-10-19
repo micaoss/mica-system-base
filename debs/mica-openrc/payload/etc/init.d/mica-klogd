@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# Kernel messages into the system log.
+
+description="Kernel log into the system log"
+command=/usr/bin/busybox
+command_args="klogd -n"
+supervisor=supervise-daemon
+
+depend() {
+    need mica-syslogd
+}

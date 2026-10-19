@@ -1,0 +1,42 @@
+#!/bin/sh
+# udhcpc's script for mica-network: the lease's address, router and DNS on the
+# interface, and /run/mica/resolv.conf rebuilt from every interface's servers.
+# udhcpc passes the event in $1 and the lease in the environment.
+set -eu
+resolvers=/run/mica/resolv.d
+
+# The floor links no applet beyond the commands it purged: ip is busybox's.
+ip() { busybox ip "$@"; }
+
+write_resolv() {
+    cat "$resolvers"/* 2>/dev/null >/run/mica/resolv.conf.new || : >/run/mica/resolv.conf.new
+    mv /run/mica/resolv.conf.new /run/mica/resolv.conf
+}
+
+case "$1" in
+deconfig)
+    ip -4 addr flush dev "$interface"
+    ip link set "$interface" up
+    rm -f "$resolvers/$interface"
+    write_resolv
+    ;;
+bound | renew)
+    ip -4 addr flush dev "$interface"
+    ip -4 addr add "$ip/${mask:-24}" ${broadcast:+broadcast "$broadcast"} dev "$interface"
+    for gateway in ${router:-}; do
+        ip -4 route replace default via "$gateway" dev "$interface"
+        break
+    done
+    mkdir -p "$resolvers"
+    {
+        [ -z "${domain:-}" ] || echo "search $domain"
+        for server in ${dns:-}; do
+            echo "nameserver $server"
+        done
+    } >"$resolvers/$interface"
+    write_resolv
+    ;;
+leasefail | nak)
+    ;;
+esac
+exit 0

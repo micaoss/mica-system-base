@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+# DATA: grown to the end of its disk, checked, mounted from /etc/fstab, its file
+# system grown to the partition, then laid out (mica-system's mica-data-layout).
+# The board renders the fstab line of /mnt/data and, in
+# /etc/conf.d/mica-data-layout, the partition UUIDs mica-grow-data checks
+# (grow_system_uuid, grow_disk_uuid); without them nothing is grown.
+
+description="Grow, check, mount and lay out DATA"
+
+depend() {
+    need mica-kernfs dev
+}
+
+start() {
+    if [ -n "${grow_system_uuid:-}" ] && [ -n "${grow_disk_uuid:-}" ]; then
+        ebegin "Growing DATA to the end of its disk"
+        /usr/lib/mica/mica-grow-data "$grow_system_uuid" "$grow_disk_uuid"
+        eend $? || return 1
+    fi
+    # -M: mica-deploy's runkit has mounted DATA (with its project quotas) before the
+    # init runs, and a mounted file system is not checked.
+    ebegin "Checking the file systems of /etc/fstab"
+    fsck -A -M -T -R -a >/dev/null
+    # 0: clean; 1: errors corrected. Anything else needs a person.
+    [ $? -le 1 ]
+    eend $? || return 1
+    ebegin "Mounting /etc/fstab"
+    mount -a
+    eend $? || return 1
+    # x-systemd.growfs, as systemd-growfs honours it: the file system fills its partition.
+    for target in $(awk '$1 !~ /^#/ && $4 ~ /(^|,)x-systemd\.growfs(,|$)/ { print $2 }' /etc/fstab); do
+        ebegin "Growing the file system of $target"
+        resize2fs "$(findmnt -n -o SOURCE --target "$target")" >/dev/null 2>&1
+        eend $? || return 1
+    done
+    ebegin "Laying out DATA"
+    /usr/lib/mica/mica-data-layout
+    eend $?
+}

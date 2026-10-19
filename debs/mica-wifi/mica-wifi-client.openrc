@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+# wpa_supplicant@<interface>.service and networkd's DHCP on an OpenRC root:
+# wpa_supplicant on the interface and configuration micad names in
+# /run/mica/wifi-client.env, and busybox udhcpc on the link with mica-openrc's lease
+# script. One service rather than one per interface: an instance would be a link in
+# the read-only /etc/init.d. In no runlevel; micad renders both files and starts it.
+
+description="Wi-Fi station"
+
+ENV=/run/mica/wifi-client.env
+WPA_PID=/run/mica-wifi-client.wpa.pid
+DHCP_PID=/run/mica-wifi-client.dhcp.pid
+
+depend() {
+    need mica-mounts
+    after mica-network
+}
+
+load() {
+    if [ ! -r "$ENV" ]; then
+        eerror "$ENV is absent: micad has not configured the station"
+        return 1
+    fi
+    . "$ENV"
+}
+
+start() {
+    load || return 1
+    # mica-regdb-reload.service's work: the regulatory database into cfg80211.
+    if [ -s /usr/lib/firmware/regulatory.db ] && command -v iw >/dev/null; then
+        iw reg reload >/dev/null 2>&1 || :
+    fi
+    ebegin "Starting the Wi-Fi station on $interface"
+    start-stop-daemon --start --pidfile "$WPA_PID" --exec /usr/sbin/wpa_supplicant -- \
+        -B -P "$WPA_PID" -i "$interface" -c "$config" &&
+        busybox udhcpc -b -S -R -i "$interface" -p "$DHCP_PID" -s /usr/lib/mica/mica-udhcpc
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping the Wi-Fi station"
+    start-stop-daemon --stop --quiet --pidfile "$DHCP_PID" 2>/dev/null
+    start-stop-daemon --stop --quiet --pidfile "$WPA_PID"
+    eend 0
+}

@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+# The user's own services: every script mica-unit enabled, in
+# /usr/local/etc/enabled on DATA state (/etc/runlevels is on the read-only root).
+# After the bus micad answers on, as under systemd, but never needing micad: a user
+# service starts even when micad does not.
+
+description="Start the user's services enabled with mica-unit"
+
+DIR=${MICA_UNIT_DIR:-/usr/local/etc}
+
+depend() {
+    need mica-mounts
+    after mica-dbus micad
+}
+
+start() {
+    failed=0
+    for path in "$DIR"/enabled/*; do
+        [ -L "$path" ] || continue
+        name=${path##*/}
+        rc-service "$name" start || {
+            ewarn "$name did not start"
+            failed=1
+        }
+    done
+    return "$failed"
+}

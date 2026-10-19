@@ -1,0 +1,166 @@
+#!/bin/sh
+# The user's own services, kept on DATA state: /usr/local/lib/systemd/system is a
+# bind of DATA/state/systemd-units, so a unit installed and enabled here survives
+# reboot and update, and micad's reset clears it. `systemctl enable` cannot do this:
+# it links into /etc/systemd/system, on the read-only root. At boot,
+# mica-load-extensions reloads systemd once the bind is up and starts what is enabled.
+#
+#   mica-unit install <file>...          copy units in (a name the root ships is refused)
+#   mica-unit enable [--now] <unit>      link it as its [Install] says, here
+#   mica-unit disable [--now] <unit>     remove those links
+#   mica-unit remove <unit>              stop it, unlink it and delete it
+#   mica-unit list                       the units here, enabled or disabled
+#
+# <unit> may omit .service; name@instance enables an instance of name@.service.
+set -eu
+
+DIR=${MICA_UNIT_DIR:-/usr/local/lib/systemd/system}
+SHIPPED=${MICA_UNIT_SHIPPED:-/etc/systemd/system /usr/lib/systemd/system /lib/systemd/system}
+
+die() {
+    echo "mica-unit: $*" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: mica-unit install <file>... | enable [--now] <unit> | disable [--now] <unit> | remove <unit> | list" >&2
+    exit 2
+}
+
+# <name> with .service added when it has no unit suffix.
+unit_name() {
+    case "$1" in
+    */* | '') die "$1 is not a unit name" ;;
+    *.service | *.socket | *.timer | *.path | *.target | *.mount) echo "$1" ;;
+    *.*) die "$1 is not a unit name" ;;
+    *) echo "$1.service" ;;
+    esac
+}
+
+not_shipped() {
+    for dir in $SHIPPED; do
+        [ ! -e "$dir/$1" ] && [ ! -L "$dir/$1" ] || die "$1 is shipped by the root; a user unit cannot replace it"
+    done
+}
+
+# The file a unit is read from: name@instance.suffix from name@.suffix.
+unit_file() {
+    case "$1" in
+    *@?*.*) echo "${1%%@*}@.${1##*.}" ;;
+    *) echo "$1" ;;
+    esac
+}
+
+# Every value of <key>= in the [Install] section of <file>, one per line.
+install_values() {
+    awk -v key="$2" '
+        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+        section == "[Install]" && index($0, key "=") == 1 {
+            n = split(substr($0, length(key) + 2), words, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) if (words[i] != "") print words[i]
+        }' "$1"
+}
+
+# Every link here that names <unit>: under a .wants/ or .requires/, or an alias of it.
+links_of() {
+    for path in "$DIR"/*.wants/"$1" "$DIR"/*.requires/"$1"; do
+        [ -L "$path" ] && echo "$path"
+    done
+    for path in "$DIR"/*; do
+        [ -L "$path" ] && [ "$(readlink "$path")" = "$1" ] && echo "$path"
+    done
+    return 0
+}
+
+install_units() {
+    [ "$#" -gt 0 ] || usage
+    for file in "$@"; do
+        [ -f "$file" ] || die "$file is not a file"
+        name=${file##*/}
+        [ "$(unit_name "$name")" = "$name" ] || die "$name is not a unit name"
+        not_shipped "$name"
+    done
+    for file in "$@"; do
+        install -m 0644 "$file" "$DIR/${file##*/}"
+    done
+    systemctl daemon-reload
+}
+
+enable_unit() {
+    name=$(unit_name "$1")
+    file=$(unit_file "$name")
+    [ -f "$DIR/$file" ] || die "$name is not installed in $DIR"
+    not_shipped "$name"
+    wanted=$(install_values "$DIR/$file" WantedBy)
+    required=$(install_values "$DIR/$file" RequiredBy)
+    aliases=$(install_values "$DIR/$file" Alias)
+    [ -n "$wanted$required$aliases" ] || die "$file has no WantedBy=, RequiredBy= or Alias= in [Install]; nothing would start it"
+    for alias in $aliases; do not_shipped "$alias"; done
+    for target in $wanted; do
+        mkdir -p "$DIR/$target.wants"
+        ln -sfn "../$file" "$DIR/$target.wants/$name"
+    done
+    for target in $required; do
+        mkdir -p "$DIR/$target.requires"
+        ln -sfn "../$file" "$DIR/$target.requires/$name"
+    done
+    for alias in $aliases; do
+        ln -sfn "$file" "$DIR/$alias"
+    done
+    systemctl daemon-reload
+}
+
+disable_unit() {
+    name=$(unit_name "$1")
+    links_of "$name" | while IFS= read -r path; do rm -f "$path"; done
+}
+
+list_units() {
+    for path in "$DIR"/*; do
+        [ -f "$path" ] && [ ! -L "$path" ] || continue
+        name=${path##*/}
+        if [ -n "$(links_of "$name")" ]; then state=enabled; else state=disabled; fi
+        printf '%s\t%s\n' "$name" "$state"
+    done
+}
+
+command=${1:-}
+[ "$#" -gt 0 ] && shift
+now=
+if [ "${1:-}" = --now ]; then
+    now=1
+    shift
+fi
+case "$command" in
+install)
+    [ -z "$now" ] || usage
+    install_units "$@"
+    ;;
+enable)
+    [ "$#" = 1 ] || usage
+    enable_unit "$1"
+    [ -z "$now" ] || systemctl start "$(unit_name "$1")"
+    ;;
+disable)
+    [ "$#" = 1 ] || usage
+    [ -z "$now" ] || systemctl stop "$(unit_name "$1")"
+    disable_unit "$1"
+    systemctl daemon-reload
+    ;;
+remove)
+    [ "$#" = 1 ] && [ -z "$now" ] || usage
+    name=$(unit_name "$1")
+    [ -f "$DIR/$name" ] || die "$name is not installed in $DIR"
+    systemctl stop "$name" || :
+    disable_unit "$name"
+    rm -f "$DIR/$name"
+    systemctl daemon-reload
+    ;;
+list)
+    [ "$#" = 0 ] && [ -z "$now" ] || usage
+    list_units
+    ;;
+*)
+    usage
+    ;;
+esac

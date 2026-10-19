@@ -1,0 +1,17 @@
+[Unit]
+Description=Prepare the persistent home directory on DATA
+Documentation=file:/usr/lib/mica/mica-seed-home
+# Creates home.mount's source before the bind; safe to run on every boot.
+DefaultDependencies=no
+RequiresMountsFor=/mica
+After=mica.mount
+Before=home.mount local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-seed-home
+
+[Install]
+WantedBy=local-fs.target

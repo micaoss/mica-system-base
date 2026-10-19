@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-system
+path debs/copyright
+path payload

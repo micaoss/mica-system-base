@@ -1,0 +1,12 @@
+[Unit]
+Description=Recover after deployment health failure
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/mica/mica-boot-failure
+# Never attached to the tty systemd starts it on only once it holds that tty's
+# lock, which a getty resetting a port nothing reads keeps: the script puts its
+# verdict there itself, bounded.
+StandardOutput=journal
+StandardError=journal

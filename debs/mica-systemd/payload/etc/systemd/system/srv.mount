@@ -1,0 +1,16 @@
+[Unit]
+Description=Persistent user data on DATA
+DefaultDependencies=no
+Requires=mica-data-layout.service
+After=mica-data-layout.service
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Mount]
+What=/mnt/data/srv
+Where=/srv
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Mica health gate (confirm the authenticated deployment)
+Documentation=file:/usr/lib/mica/mica-health
+# Pulled in by multi-user.target and ordered after it: boot never waits on the gate.
+After=multi-user.target
+OnFailure=mica-boot-failure.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/mica/mica-health
+# Never attached to the tty systemd starts it on only once it holds that tty's
+# lock, which a getty resetting a port nothing reads keeps: the script puts its
+# verdict there itself, bounded.
+StandardOutput=journal
+StandardError=journal
+# Bounds the settle poll (60 s by default) and the probes.
+TimeoutStartSec=180
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

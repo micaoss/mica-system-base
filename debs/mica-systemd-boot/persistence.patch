@@ -1,0 +1,24 @@
+--- a/src/boot/boot.c
++++ b/src/boot/boot.c
+@@ -1777,7 +1777,7 @@
+                 return IDX_INVALID;
+ 
+         for (size_t i = 0; i < config->n_entries; i++)
+-                if (efi_fnmatch(pattern, config->entries[i]->id))
++                if (config->entries[i]->tries_left != 0 && efi_fnmatch(pattern, config->entries[i]->id))
+                         return i;
+ 
+         return IDX_INVALID;
+@@ -2962,7 +2962,11 @@
+                         continue;
+                 }
+ 
+-                (void) boot_entry_bump_counters(entry);
++                if (entry->tries_left == 0)
++                        return log_error_status(EFI_ABORTED, "Mica OS: deployment attempts exhausted; recovery required");
++                err = boot_entry_bump_counters(entry);
++                if (err != EFI_SUCCESS)
++                        return log_error_status(err, "Mica OS: attempt state was not persisted; refusing boot");
+                 save_selected_entry(&config, entry);
+ 
+                 /* Optionally, read a random seed off the ESP and pass it to the OS */

@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+# The network, as /etc/network/interfaces states it, applied by busybox ifupdown
+# (ifup -a, ifdown -a) the way Alpine configures one. The file lives on DATA
+# (/var/lib/mica/network/interfaces), where micad writes it; until micad has, a
+# default one is written here: loopback, and DHCP on every wired interface (eth*),
+# as mica-systemd's 80-dhcp.network gives it. DHCP is busybox udhcpc, whose script
+# (/usr/lib/mica/mica-udhcpc) configures the lease and writes DNS under /run.
+
+description="The network of /etc/network/interfaces"
+
+depend() {
+    need mica-mounts dev
+    provide net
+}
+
+INTERFACES=/var/lib/mica/network/interfaces
+
+default_interfaces() {
+    echo "# Written by mica-network on the first boot; micad replaces it."
+    printf 'auto lo\niface lo inet loopback\n'
+    for path in /sys/class/net/eth*; do
+        [ -e "$path" ] || continue
+        interface=${path##*/}
+        printf '\nauto %s\niface %s inet dhcp\n    script /usr/lib/mica/mica-udhcpc\n    udhcpc_opts -b -S\n' \
+            "$interface" "$interface"
+    done
+}
+
+start() {
+    if [ ! -e "$INTERFACES" ]; then
+        ebegin "Writing the default network"
+        checkpath -d -m 0755 "${INTERFACES%/*}" && default_interfaces >"$INTERFACES"
+        eend $? || return 1
+    fi
+    mkdir -p /run/mica/resolv.d
+    ebegin "Bringing up the network"
+    ifup -a
+    eend $?
+}
+
+stop() {
+    ebegin "Taking down the network"
+    ifdown -a
+    eend $?
+}

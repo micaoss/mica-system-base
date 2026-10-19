@@ -1,0 +1,74 @@
+#!/bin/sh
+# Create the DATA namespaces (state, meta, cache, tmp, var, mica, srv, containers).
+# Their project quotas -- 100 system and user data, 101 cache, tmp and var, 102
+# containers -- are the runkit's: mica-deploy sets the project ids and limits right
+# after it mounts DATA, before this root starts (mica-core), and a board without
+# quotas mounts DATA without them.
+set -eu
+
+DATA_ROOT=${MICA_DATA_ROOT:-/mnt/data}
+SYSTEM_ROOT=${DATA_ROOT}/mica
+USER_ROOT=${DATA_ROOT}/srv
+CONTAINER_ROOT=${DATA_ROOT}/containers
+
+die() {
+    echo "mica-data-layout: $*" >&2
+    exit 1
+}
+
+[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] \
+    || die "$DATA_ROOT is not a real directory"
+
+# A read-only or full DATA stops here rather than writing anywhere else.
+ensure_dir() {
+    path=$1
+    mode=$2
+    [ ! -L "$path" ] || die "$path must not be a symbolic link"
+    if [ -e "$path" ]; then
+        [ -d "$path" ] || die "$path exists but is not a directory"
+    else
+        mkdir -m "$mode" "$path" || die "cannot create $path"
+    fi
+    chown 0:0 "$path"
+    chmod "$mode" "$path"
+}
+
+ensure_dir "$DATA_ROOT/state" 0700
+ensure_dir "$DATA_ROOT/meta" 0700
+ensure_dir "$DATA_ROOT/cache" 0755
+ensure_dir "$DATA_ROOT/tmp" 1777
+ensure_dir "$DATA_ROOT/var" 0755
+ensure_dir "$SYSTEM_ROOT" 0755
+ensure_dir "$USER_ROOT" 0755
+ensure_dir "$CONTAINER_ROOT" 0711
+
+PROBE=${SYSTEM_ROOT}/.writable-probe.$$
+trap 'rm -f "$PROBE"' EXIT HUP INT TERM
+( umask 077; set -C; : >"$PROBE" ) || die "$SYSTEM_ROOT is not writable"
+sync -f "$PROBE"
+rm -f "$PROBE"
+
+ensure_dir "$SYSTEM_ROOT/ui" 0755
+# Diagnostics are served through the authenticated management API.
+ensure_dir "$SYSTEM_ROOT/diagnostics" 0700
+# 0700: configuration holds credentials (Wi-Fi keys); micad writes each document
+# 0600.
+ensure_dir "$SYSTEM_ROOT/config" 0700
+ensure_dir "$SYSTEM_ROOT/containers" 0711
+ensure_dir "$CONTAINER_ROOT/networks" 0755
+ensure_dir "$CONTAINER_ROOT/tmp" 0700
+ensure_dir "$SYSTEM_ROOT/home" 0755
+ensure_dir "$SYSTEM_ROOT/root" 0700
+ensure_dir "$SYSTEM_ROOT/apps" 0755
+ensure_dir "$SYSTEM_ROOT/updates" 0755
+ensure_dir "$SYSTEM_ROOT/updates/downloads" 0755
+ensure_dir "$SYSTEM_ROOT/updates/verified" 0755
+ensure_dir "$SYSTEM_ROOT/updates/staging" 0755
+
+sync -f "$SYSTEM_ROOT"
+sync -f "$USER_ROOT"
+sync -f "$CONTAINER_ROOT"
+sync -f "$DATA_ROOT"
+trap - EXIT HUP INT TERM
+
+echo "mica-data-layout: /mica backing tree ready at $SYSTEM_ROOT"

@@ -1,0 +1,17 @@
+[Unit]
+Description=Third-party systemd units from DATA/state
+# The persistent unit directory for integrators' own units, on DATA/state: every
+# unit directory in the image is read-only. systemd reads it after
+# /etc/systemd/system and /run/systemd/system, so it cannot override an image unit.
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+
+[Mount]
+What=/mnt/data/state/systemd-units
+Where=/usr/local/lib/systemd/system
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

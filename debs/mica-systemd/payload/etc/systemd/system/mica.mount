@@ -1,0 +1,17 @@
+[Unit]
+Description=Writable Mica system data on DATA
+DefaultDependencies=no
+Requires=mica-data-layout.service
+After=mica-data-layout.service
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Mount]
+What=/mnt/data/mica
+Where=/mica
+Type=none
+# Keep logical child mounts out of the physical reset backing tree.
+Options=bind,private
+
+[Install]
+WantedBy=local-fs.target

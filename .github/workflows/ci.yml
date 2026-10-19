@@ -1,0 +1,16 @@
+name: ci
+# Every push to main and pull request: the checks, every architecture built
+# (amd64 and arm64 on their native runners, armhf cross-built on the amd64 one)
+# and the pools gated (build.yml). Publishes nothing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

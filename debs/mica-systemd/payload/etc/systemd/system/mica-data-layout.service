@@ -1,0 +1,17 @@
+[Unit]
+Description=Prepare writable /mica and /srv DATA namespaces
+Documentation=file:/usr/lib/mica/mica-data-layout
+DefaultDependencies=no
+RequiresMountsFor=/mnt/data
+Requires=systemd-growfs@mnt-data.service
+After=systemd-growfs@mnt-data.service
+Before=mica.mount mica-containers.mount srv.mount mica-seed-home.service mica-seed-root.service local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-data-layout
+
+[Install]
+WantedBy=local-fs.target

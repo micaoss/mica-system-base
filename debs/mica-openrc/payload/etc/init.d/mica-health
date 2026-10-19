@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+# The health gate, after every other service of the boot: it confirms the booted
+# deployment, or mica-boot-failure reboots to the fallback or powers off.
+
+description="Mica health gate (confirm the authenticated deployment)"
+
+depend() {
+    after *
+}
+
+start() {
+    ebegin "Running the health gate"
+    if /usr/lib/mica/mica-health; then
+        eend 0
+        return 0
+    fi
+    eend 1
+    /usr/lib/mica/mica-boot-failure
+    return 1
+}

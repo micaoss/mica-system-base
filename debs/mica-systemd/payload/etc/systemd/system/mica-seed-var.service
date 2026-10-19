@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize persistent var on DATA
+DefaultDependencies=no
+Requires=mica-data-layout.service
+After=mica-data-layout.service
+Before=var.mount local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-seed-var
