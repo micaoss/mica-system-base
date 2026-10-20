@@ -140,6 +140,19 @@ A user service starts after micad (and after the D-Bus micad answers on), never 
 starts even when micad does not. It cannot be ordered before micad or into the early boot; the
 units on DATA are loaded only once DATA is bound.
 
+micad declares user services too: the settings `services.units`, `micad unit` on the device,
+`/api/v1/units` and the console (mica-core `docs/mica-core.md` section 3.10). It applies them
+through `mica-unit`, into the same directories, and removes only the units it applied; a service
+installed with `mica-unit` by hand stays, and `mica-unit` remains for that hand use. micad relies
+on this contract of `mica-unit`, under both inits:
+
+- `list` prints one line per service, `<name>` TAB `enabled` or `disabled`.
+- `install <file>` names the service after the file's basename.
+- `install --conf <file>` (OpenRC) names the settings after the basename without `.conf`.
+- `enable`, `disable` and `remove <name>` exit 0 on success; a refusal exits 1 with a
+  `mica-unit: ...` line on stderr, bad arguments exit 2 with the usage line on stderr, and a
+  failing `systemctl` or `rc-service` passes on its own exit status and message.
+
 ## The options
 
 | Option | What a product installs | Where it is pinned |
