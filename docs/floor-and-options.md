@@ -140,6 +140,21 @@ unmounts and binds again: for that moment a reader sees the image's accounts, ne
 file. glibc's `files` lookup and the static busybox read the files on each lookup, so `ls`,
 `ps` and `id` name an app account as soon as it is added.
 
+**Device access groups.** An app runs unprivileged and reaches devices through a group, which
+micad gives its account:
+
+| Group | gid | Nodes, mode 0660 |
+| --- | --- | --- |
+| `gpio` | 984 | `/dev/gpiochip*` |
+| `i2c` | 987 | `/dev/i2c-*` |
+| `spi` | 983 | `/dev/spidev*.*` |
+| `dialout` | 20 | serial ports, as Debian's udev gives them: `/dev/tty[A-Z]*[0-9]` (`ttyS`, `ttyUSB`, `ttyACM`, `ttyAMA`, `ttyFIQ`...) and `/dev/ttymxc*` |
+
+The gids are pinned in `config/ids.json` (`dialout` is base-passwd's) and exist in the floor.
+Under systemd, mica-systemd's `/usr/lib/udev/rules.d/60-mica-devices.rules` gives the nodes to
+`gpio`, `i2c` and `spi`, and udev's `50-udev-default.rules` gives the serial ports to
+`dialout`; under OpenRC, mica-mdev's `/etc/mdev.conf` does both.
+
 **Runlevel membership is payload.** mica-openrc's postinst removes the runlevel links no
 package owns -- what openrc imported from the SysV links, such as Debian's `dbus` -- and keeps
 every link a package ships, and OpenRC's `cgroups`. A package configured after it that runs

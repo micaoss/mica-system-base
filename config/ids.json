@@ -22,6 +22,8 @@
     { "name": "netdev", "gid": 988 },
     { "name": "i2c", "gid": 987 },
     { "name": "tcpdump", "gid": 986 },
-    { "name": "iperf3", "gid": 985 }
+    { "name": "iperf3", "gid": 985 },
+    { "name": "gpio", "gid": 984 },
+    { "name": "spi", "gid": 983 }
   ]
 }

@@ -1,0 +1,6 @@
+# Device access for unprivileged apps: GPIO, I2C and SPI nodes go to the groups
+# config/ids.json pins, as mica-mdev's mdev.conf gives them under OpenRC. Serial
+# ports stay dialout's (50-udev-default.rules).
+SUBSYSTEM=="gpio", KERNEL=="gpiochip[0-9]*", GROUP="gpio", MODE="0660"
+SUBSYSTEM=="i2c-dev", KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"
+SUBSYSTEM=="spidev", KERNEL=="spidev[0-9]*.[0-9]*", GROUP="spi", MODE="0660"
