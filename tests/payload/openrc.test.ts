@@ -70,9 +70,11 @@ describe('mica-udhcpc', () => {
   const run = join(box.dir, 'run')
   // mica-udhcpc calls busybox's ip applet.
   fake(bin, 'busybox', 'echo "$*" >> "$CALLS"')
-  // The script writes under /run/mica; the sandbox's run directory stands in for it.
+  // The scripts write under /run/mica; the sandbox's run directory stands in for it.
+  const resolv = join(box.dir, 'mica-resolv')
+  writeFileSync(resolv, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', run))
   const script = join(box.dir, 'mica-udhcpc')
-  writeFileSync(script, readFileSync(join(OPENRC, 'mica-udhcpc'), 'utf8').replaceAll('/run/mica', run))
+  writeFileSync(script, readFileSync(join(OPENRC, 'mica-udhcpc'), 'utf8').replaceAll('/run/mica', run).replaceAll('/usr/lib/mica/mica-resolv', `sh ${resolv}`))
   const event = (name: string, lease: Record<string, string>): number =>
     exec(['sh', script, name], { PATH: `${bin}:${SYSTEM_PATH}`, CALLS: calls, ...lease }).code
 
@@ -90,6 +92,33 @@ describe('mica-udhcpc', () => {
     // Losing a lease takes that interface's servers away.
     expect(event('deconfig', { interface: 'eth0' })).toBe(0)
     expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 10.1.0.53\nnameserver 10.1.0.54\n')
+  })
+
+  // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.
+  test('global, while it exists, makes up resolv.conf alone, through every lease change', () => {
+    const resolvers = join(run, 'resolv.d')
+    expect(event('bound', { interface: 'eth0', ip: '10.0.0.5', dns: '10.0.0.53' })).toBe(0)
+    writeFileSync(join(resolvers, 'global'), 'nameserver 9.9.9.9\n')
+    // A file micad stages under a dot name is never read.
+    writeFileSync(join(resolvers, '.global.new'), 'nameserver 1.1.1.1\n')
+    expect(exec(['sh', resolv], { PATH: SYSTEM_PATH }).code).toBe(0)
+    expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 9.9.9.9\n')
+    expect(event('renew', { interface: 'eth0', ip: '10.0.0.5', dns: '10.0.0.54' })).toBe(0)
+    expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 9.9.9.9\n')
+    rmSync(join(resolvers, 'global'))
+    rmSync(join(resolvers, '.global.new'))
+    expect(exec(['sh', resolv], { PATH: SYSTEM_PATH }).code).toBe(0)
+    expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 10.0.0.54\nnameserver 10.1.0.53\nnameserver 10.1.0.54\n')
+    // No temporary file is left beside it.
+    expect(readdirSync(run).sort()).toEqual(['resolv.conf', 'resolv.d'])
+  })
+
+  test('with no file at all, resolv.conf is empty', () => {
+    const empty = join(box.dir, 'empty-run')
+    const script = join(box.dir, 'mica-resolv-empty')
+    writeFileSync(script, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', empty))
+    expect(exec(['sh', script], { PATH: SYSTEM_PATH }).code).toBe(0)
+    expect(readFileSync(join(empty, 'resolv.conf'), 'utf8')).toBe('')
   })
 })
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # udhcpc's script for mica-network: the lease's address, router and DNS on the
-# interface, and /run/mica/resolv.conf rebuilt from every interface's servers.
-# udhcpc passes the event in $1 and the lease in the environment.
+# interface, its servers in /run/mica/resolv.d/<interface>, and /run/mica/resolv.conf
+# rebuilt (mica-resolv). udhcpc passes the event in $1 and the lease in the environment.
 set -eu
 resolvers=/run/mica/resolv.d
 
@@ -9,8 +9,7 @@ resolvers=/run/mica/resolv.d
 ip() { busybox ip "$@"; }
 
 write_resolv() {
-    cat "$resolvers"/* 2>/dev/null >/run/mica/resolv.conf.new || : >/run/mica/resolv.conf.new
-    mv /run/mica/resolv.conf.new /run/mica/resolv.conf
+    /usr/lib/mica/mica-resolv
 }
 
 case "$1" in
