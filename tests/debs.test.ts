@@ -134,9 +134,9 @@ describe('the package definitions', () => {
   // libnl linked statically and OpenSSL for WPA2 and WPA3: nothing else is configured, and the
   // units keep the names and paths micad drives.
   describe.each([
-    { name: 'mica-wifi', source: 'wpa-supplicant', archive: 'wpa_supplicant', bind: 'etc-wpa_supplicant', unit: 'usr/lib/systemd/system/wpa_supplicant@.service', config: ['CONFIG_AP=y', 'CONFIG_BACKEND=file', 'CONFIG_BGSCAN_SIMPLE=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_CONFIG_BLOBS=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
-    { name: 'mica-wifi-ap', source: 'hostapd', archive: 'hostapd', bind: 'etc-hostapd', unit: 'usr/lib/systemd/system/hostapd@.service', config: ['CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_ACCOUNTING=y', 'CONFIG_NO_RADIUS=y', 'CONFIG_NO_VLAN=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
-  ])('$name', ({ name, source, archive, bind, unit, config }) => {
+    { name: 'mica-wifi', source: 'wpa-supplicant', archive: 'wpa_supplicant', bind: 'etc-wpa_supplicant', unit: 'usr/lib/systemd/system/wpa_supplicant@.service', libs: 'libc.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200', config: ['CONFIG_AP=y', 'CONFIG_BACKEND=file', 'CONFIG_BGSCAN_SIMPLE=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_CONFIG_BLOBS=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+    { name: 'mica-wifi-ap', source: 'hostapd', archive: 'hostapd', bind: 'etc-hostapd', unit: 'usr/lib/systemd/system/hostapd@.service', libs: 'libc.so.6 | libm.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200', config: ['CONFIG_ACS=y', 'CONFIG_CTRL_IFACE=y', 'CONFIG_DRIVER_NL80211=y', 'CONFIG_GETRANDOM=y', 'CONFIG_LIBNL32=y', 'CONFIG_NO_ACCOUNTING=y', 'CONFIG_NO_RADIUS=y', 'CONFIG_NO_VLAN=y', 'CONFIG_SAE=y', 'CONFIG_TLS=openssl'] },
+  ])('$name', ({ name, source, archive, bind, unit, libs, config }) => {
     const dockerfile = (): string => readFileSync(join(REPO, 'debs', name, 'Dockerfile'), 'utf8')
 
     test('builds the pinned upstream hostap release on pinned build tools', () => {
@@ -168,8 +168,14 @@ describe('the package definitions', () => {
       expect(settings.sort()).toEqual([...config])
     })
 
+    // libm is hostapd's, for ACS; it is libc6's like libc.
     test('refuses a binary that loads anything but libc, libcrypto and libnl', () => {
-      expect(dockerfile()).toContain('libc.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200) ;;')
+      expect(dockerfile()).toContain(`case "$lib" in ${libs}) ;;`)
+    })
+
+    // micad's automatic channel is hostapd's ACS (channel=acs_survey).
+    test.if(name === 'mica-wifi-ap')('refuses a hostapd built without ACS', () => {
+      expect(dockerfile()).toContain('grep -a -q \'ACS: Automatic channel selection started\' hostapd || { echo \'error: hostapd is built without ACS\'')
     })
 
     test('ships the unit micad drives', () => {

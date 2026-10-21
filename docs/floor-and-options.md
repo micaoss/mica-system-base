@@ -57,7 +57,7 @@ is 3.6 MB.
 | `mica-ssh` | all | option: SSH (dropbear), started by micad | dropbear-bin, mica-system |
 | `mica-storage-ubi` | armhf | floor on armhf: stands in for e2fsprogs and fdisk where DATA is UBIFS | |
 | `mica-wifi` | amd64, arm64 | option: a minimal `wpa_supplicant` from upstream hostap | libnl, libssl3t64, iw, rfkill |
-| `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap | libnl, libssl3t64, iw, rfkill |
+| `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap, with ACS | libnl, libssl3t64, iw, rfkill |
 | `mica-bluetooth` | all | option: the HCI attach and the pairing keys on STATE | bluez, rfkill |
 | `mica-tzdata` | all | option: the zoneinfo of the pinned `tzdata`, as data | |
 

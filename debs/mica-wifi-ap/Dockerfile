@@ -1,7 +1,7 @@
 # mica-deb: arches=amd64,arm64 build=libnl-3-dev,libnl-genl-3-dev,libssl-dev,pkg-config sources=hostapd
 # mica-wifi-ap: hostapd and hostapd_cli compiled from the upstream hostap release
 # source.hostapd of locks/upstream.lock with config as the whole .config: nl80211
-# only, the root's libnl-3, libnl-genl-3 and libcrypto, and nothing else. With
+# only and ACS, the root's libnl-3, libnl-genl-3 and libcrypto, and nothing else. With
 # them, hostapd@.service, the STATE bind of /etc/hostapd and the OpenRC script
 # mica-wifi-ap. The source is fetched
 # and checked natively, compiled in the build-env C image of the target
@@ -20,7 +20,7 @@ RUN set -eu; \
     mkdir /src; \
     tar -xzf /hostapd.tar.gz -C /src --strip-components=1 --no-same-owner
 
-# The binaries may load libc, libcrypto and the two libnl libraries the root
+# The binaries may load libc, libm (ACS), libcrypto and the two libnl libraries the root
 # already has, and nothing else: no libnl-route, D-Bus, PC/SC or readline.
 FROM --platform=linux/${MICA_DEB_ARCH} ${MICA_BUILD_C_IMAGE} AS build
 ARG MICA_DEB_ARCH
@@ -47,11 +47,12 @@ RUN --mount=type=bind,from=cache,target=/cache \
         machine="$(od -An -tu2 -j18 -N2 "$bin" | tr -d ' ')"; \
         case "${MICA_DEB_ARCH}:${machine}" in amd64:62|arm64:183) ;; *) echo "error: $bin is ELF machine $machine, not ${MICA_DEB_ARCH}" >&2; exit 1 ;; esac; \
         for lib in $(readelf -d "$bin" | sed -n 's/.*(NEEDED).*\[\(.*\)\]$/\1/p'); do \
-            case "$lib" in libc.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200) ;; *) echo "error: $bin loads $lib" >&2; exit 1 ;; esac; \
+            case "$lib" in libc.so.6 | libm.so.6 | libcrypto.so.3 | libnl-3.so.200 | libnl-genl-3.so.200) ;; *) echo "error: $bin loads $lib" >&2; exit 1 ;; esac; \
         done; \
     done; \
     version="$(./hostapd -v 2>&1 || true)"; \
     case "$version" in *"hostapd v${MICA_SOURCE_HOSTAPD_VERSION}"*) ;; *) echo "error: hostapd -v says: $version" >&2; exit 1 ;; esac; \
+    LC_ALL=C grep -a -q 'ACS: Automatic channel selection started' hostapd || { echo 'error: hostapd is built without ACS' >&2; exit 1; }; \
     mkdir /out; \
     cp hostapd hostapd_cli /out/
 

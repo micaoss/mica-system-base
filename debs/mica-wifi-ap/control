@@ -1,6 +1,6 @@
 Package: mica-wifi-ap
-Version: 2.12-mica1
-Source-Date-Epoch: 1792383800
+Version: 2.12-mica2
+Source-Date-Epoch: 1792562032
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: net
@@ -8,8 +8,9 @@ Priority: optional
 Depends: libc6, libnl-3-200, libnl-genl-3-200, libssl3t64, iw, rfkill
 Description: Mica OS Wi-Fi access point: a minimal hostapd
  /usr/sbin/hostapd and /usr/sbin/hostapd_cli compiled from the upstream
- hostap release with the nl80211 driver only, and WPA2 and WPA3 personal
- through the root's OpenSSL. No RADIUS, accounting or dynamic VLANs.
+ hostap release with the nl80211 driver only, automatic channel selection
+ (ACS), and WPA2 and WPA3 personal through the root's OpenSSL. No RADIUS,
+ accounting or dynamic VLANs.
  .
  hostapd@.service is installed and not enabled: micad's access-point
  reconciler starts the instance for the interface it brought up and renders
