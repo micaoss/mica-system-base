@@ -205,8 +205,8 @@ describe('mica-mounts', () => {
     const state = join(c.dir, 'openrc-local')
     const text = readFileSync(join(OPENRC_PAYLOAD, 'etc/init.d/mica-mounts'), 'utf8').replaceAll('/mnt/data/state/openrc-local', state)
     const script = join(c.dir, 'mica-mounts')
-    writeFileSync(script, text.replaceAll('/usr/lib/mica/mica-hosts', 'mica_hosts'))
-    const stubs = 'bind() { echo "bind $*" >> "$CALLS"; }; mount() { :; }; seed() { :; }; hostname() { echo "hostname $*" >> "$CALLS"; }; mica_hosts() { echo mica-hosts >> "$CALLS"; }; tmpfiles() { :; }'
+    writeFileSync(script, text.replaceAll('/usr/lib/mica/mica-hosts', 'mica_hosts').replaceAll('/usr/lib/mica/mica-accounts', 'mica_accounts'))
+    const stubs = 'bind() { echo "bind $*" >> "$CALLS"; }; mount() { :; }; seed() { :; }; hostname() { echo "hostname $*" >> "$CALLS"; }; mica_hosts() { echo mica-hosts >> "$CALLS"; }; mica_accounts() { echo "mica-accounts $*" >> "$CALLS"; }; tmpfiles() { :; }'
     const ran = exec(['sh', '-c', `. ${script}; ebegin() { :; }; eend() { return \${1:-0}; }; ${stubs}; start`], { PATH: SYSTEM_PATH, CALLS: c.calls })
     expect(ran.code).toBe(0)
     expect(calls(c)).toContain(`bind ${state} /usr/local/etc`)
@@ -217,5 +217,7 @@ describe('mica-mounts', () => {
     // services after mica-mounts resolve a name.
     const order = calls(c)
     expect(order.indexOf('mica-hosts')).toBe(order.indexOf('hostname -F /etc/hostname') + 1)
+    // The accounts are bound next, before the user's services and the var tree.
+    expect(order.indexOf('mica-accounts build')).toBe(order.indexOf('mica-hosts') + 1)
   })
 })

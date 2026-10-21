@@ -18,7 +18,7 @@ On amd64 the floor is 72 packages and 51 MB (11.8 MB with xz).
 | System policy | **mica-system**: the lifecycle helpers under `/usr/lib/mica`, the DATA layout and its mountpoints, the operator account, the interactive shell profile. Beside busybox the helpers call e2fsck and resize2fs (e2fsprogs) and findmnt (util-linux). They ask the init only through `/usr/lib/mica/mica-init`, which the init package provides, and reach micad with `dbus-send`. |
 | System bus | dbus, whichever init runs it, with adduser to create its account. |
 | Trust | **mica-ca-trust**, the TLS anchors of the update transport. |
-| Accounts | `root` and `mica` (uid and gid 1000), both locked, both on `/bin/sh`. The system IDs of `config/ids.json` are fixed. |
+| Accounts | `root` and `mica` (uid and gid 1000), both locked, both on `/bin/sh`. The system IDs of `config/ids.json` are fixed. The apps' accounts, 30000..39999, are micad's, through `mica-accounts` (below). |
 | Compose toolchain | dpkg, tar, perl-base, debconf, passwd and init-system-helpers, so a composer can install into the root with dpkg. They are not device content; the composer purges the package manager at pack. |
 | Not carried | an init; gconv modules, i18n data, time zones beyond UTC (`/etc/localtime` is absent), man pages, documentation beyond copyright files; OpenSSH, curl, iptables; Debian's `quota` (DATA's project quotas are set by mica-deploy's runkit, on the boards that want them). |
 
@@ -109,6 +109,36 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   starting with a dot in `resolv.d`, or any name in `/run/mica`, then renamed) or removes it,
   and runs `mica-resolv`; mica-udhcpc runs it after every lease change. Under systemd the
   global DNS is resolved's.
+
+**Accounts.** micad runs each of the user's apps under an account of its own. The image's
+`/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)
+binds built copies over them, `/run/mica/accounts/{passwd,group}`: the image's lines, then the
+app accounts kept on STATE, `DATA/state/accounts/{passwd,group}`. It runs once STATE is bound
+and before micad: `mica-accounts.service` under systemd (after `mica-seed-state.service`,
+before `local-fs.target`, `micad.service` and `mica-shadow-reconcile.service`), `mica-mounts`
+under OpenRC (after the hostname). The early boot -- udev or mdev, journald, D-Bus -- reads the
+image's files. Without a build, or when it fails, the image's files are what everyone reads:
+root, mica and every system account work, and only the app names are unknown.
+
+micad calls it, and never edits the files:
+
+- `mica-accounts add <name> <uid> [<gid>]` adds an app account, `gid` defaulting to `uid`. The
+  name is `[a-z_][a-z0-9_-]{0,31}`, uid and gid are in `30000..39999`, and neither the name nor
+  an id may belong to the image or another app account. STATE then holds
+  `<name>:x:<uid>:<gid>:mica app <name>:/nonexistent:/usr/sbin/nologin` in `passwd` and
+  `<name>:x:<gid>:` in `group`; `/etc/passwd` and `/etc/group` are rebound, and
+  `/run/mica/shadow` gains a locked entry. The same account again succeeds and changes nothing.
+- `mica-accounts remove <name>` drops it from STATE and the shadow and rebinds; an unknown
+  name succeeds.
+- `mica-accounts list` prints the app accounts, one a line: `<name>` TAB `<uid>` TAB `<gid>`.
+- `mica-accounts build` rebinds from STATE as it is, after micad's reset has cleared it.
+
+Each exits 0 on success; a refusal or a failure exits 1 with one `mica-accounts: ...` line on
+stderr, and bad arguments exit 2 with the usage line. A malformed, out-of-range or clashing
+STATE line is skipped with a `mica-accounts: skipping ...` line, never fatal. A rebind
+unmounts and binds again: for that moment a reader sees the image's accounts, never half a
+file. glibc's `files` lookup and the static busybox read the files on each lookup, so `ls`,
+`ps` and `id` name an app account as soon as it is added.
 
 **Runlevel membership is payload.** mica-openrc's postinst removes the runlevel links no
 package owns -- what openrc imported from the SysV links, such as Debian's `dbus` -- and keeps

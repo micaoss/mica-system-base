@@ -1,0 +1,19 @@
+[Unit]
+Description=Bind the image's accounts and the app accounts over /etc/passwd and /etc/group
+Documentation=file:/usr/lib/mica/mica-accounts
+# Once STATE is bound, before micad starts the apps under their accounts. The early
+# boot (udev, journald, D-Bus) reads the image's files, which stay in place until then.
+DefaultDependencies=no
+Requires=mica-seed-state.service
+After=mica-seed-state.service
+RequiresMountsFor=/mnt/data/state
+Before=local-fs.target micad.service mica-shadow-reconcile.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-accounts build
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,221 @@
+#!/bin/sh
+# The accounts of the user's apps, which micad runs each under its own uid. The
+# root is read-only, so /etc/passwd and /etc/group get built copies bound over
+# them: the image's accounts, then the app accounts micad keeps on STATE
+# (DATA/state/accounts). Fail-safe: without a build the image's files stay in
+# place, every system account and login works, and only the app names are unknown.
+#
+#   mica-accounts build                     rebuild and rebind (at boot, once STATE is bound)
+#   mica-accounts add <name> <uid> [<gid>]  an app account; gid defaults to uid
+#   mica-accounts remove <name>             drop it; an unknown name is no error
+#   mica-accounts list                      the app accounts: <name> TAB <uid> TAB <gid>
+#
+# A name is [a-z_][a-z0-9_-]{0,31}; uid and gid are in 30000..39999 and taken by
+# no other account. Exit 0 on success, 1 with one `mica-accounts: ...` line on
+# stderr when refused or failed, 2 with the usage line for bad arguments.
+set -eu
+
+ETC=${MICA_ACCOUNTS_ETC:-/etc}
+RUN=${MICA_ACCOUNTS_RUN:-/run/mica/accounts}
+STATE=${MICA_ACCOUNTS_STATE:-/mnt/data/state/accounts}
+SHADOW=${MICA_ACCOUNTS_SHADOW:-/run/mica/shadow}
+MOUNTINFO=${MICA_ACCOUNTS_MOUNTINFO:-/proc/self/mountinfo}
+FIRST=30000
+LAST=39999
+
+die() {
+    echo "mica-accounts: $*" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: mica-accounts build | add <name> <uid> [<gid>] | remove <name> | list" >&2
+    exit 2
+}
+
+valid_name() {
+    case "$1" in
+    '' | [!a-z_]* | *[!a-z0-9_-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 32 ]
+}
+
+in_range() {
+    case "$1" in
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge "$FIRST" ] && [ "$1" -le "$LAST" ]
+}
+
+bound() {
+    awk -v target="$1" '$5 == target { found = 1 } END { exit !found }' "$MOUNTINFO"
+}
+
+# One build or change at a time.
+lock() {
+    mkdir -p "$RUN"
+    tries=0
+    until mkdir "$RUN/.lock" 2>/dev/null; do
+        tries=$((tries + 1))
+        [ "$tries" -le 10 ] || die "another mica-accounts holds $RUN/.lock"
+        sleep 1
+    done
+    trap 'rmdir "$RUN/.lock" 2>/dev/null || :' EXIT
+    trap 'exit 1' INT TERM
+}
+
+# The image's files, saved as $RUN/image.<file> once a boot, before anything is
+# bound over them.
+save_image() {
+    for file in passwd group; do
+        [ ! -f "$RUN/image.$file" ] || continue
+        if bound "$ETC/$file"; then umount "$ETC/$file" || die "unbinding $ETC/$file failed"; fi
+        cp "$ETC/$file" "$RUN/image.$file.$$" && mv "$RUN/image.$file.$$" "$RUN/image.$file" ||
+            die "saving the image's $ETC/$file failed"
+    done
+}
+
+# The STATE lines that are well formed, in range and clash with nothing before
+# them; each other line is reported and skipped.
+valid_passwd() { # <image passwd> <state passwd>
+    [ -f "$2" ] || return 0
+    awk -F: -v first="$FIRST" -v last="$LAST" '
+        FNR == NR { names[$1] = 1; ids[$3] = 1; next }
+        {
+            ok = NF == 7 && $1 ~ /^[a-z_][a-z0-9_-]*$/ && length($1) <= 32 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ &&
+                $3 + 0 >= first && $3 + 0 <= last && $4 + 0 >= first && $4 + 0 <= last && !($1 in names) && !($3 in ids)
+            if (!ok) { print "mica-accounts: skipping passwd line " FNR " of STATE: " $0 > "/dev/stderr"; next }
+            names[$1] = 1; ids[$3] = 1; print
+        }' "$1" "$2"
+}
+
+valid_group() { # <image group> <state group>
+    [ -f "$2" ] || return 0
+    awk -F: -v first="$FIRST" -v last="$LAST" '
+        FNR == NR { names[$1] = 1; ids[$3] = 1; next }
+        {
+            ok = NF == 4 && $1 ~ /^[a-z_][a-z0-9_-]*$/ && length($1) <= 32 && $3 ~ /^[0-9]+$/ &&
+                $3 + 0 >= first && $3 + 0 <= last && !($1 in names) && !($3 in ids)
+            if (!ok) { print "mica-accounts: skipping group line " FNR " of STATE: " $0 > "/dev/stderr"; next }
+            names[$1] = 1; ids[$3] = 1; print
+        }' "$1" "$2"
+}
+
+# The image's lines, ending in a newline, then the valid STATE lines.
+compose() { # passwd | group
+    from=$RUN/image.$1
+    {
+        cat "$from"
+        [ -z "$(tail -c 1 "$from")" ] || echo
+        "valid_$1" "$from" "$STATE/$1"
+    } >"$RUN/$1.$$" || die "writing $RUN/$1 failed"
+    chmod 0644 "$RUN/$1.$$"
+    mv "$RUN/$1.$$" "$RUN/$1"
+}
+
+# A locked entry in the RAM shadow for every app account that has none.
+shadow_entries() {
+    [ -f "$SHADOW" ] || return 0
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | cut -d: -f1 | while IFS= read -r name; do
+        grep -q "^$name:" "$SHADOW" || printf '%s:!:20000:0:99999:7:::\n' "$name"
+    done >"$RUN/shadow.add"
+    if [ -s "$RUN/shadow.add" ]; then
+        cp -p "$SHADOW" "$SHADOW.$$" && cat "$RUN/shadow.add" >>"$SHADOW.$$" && mv "$SHADOW.$$" "$SHADOW" ||
+            die "adding to $SHADOW failed"
+    fi
+    rm -f "$RUN/shadow.add"
+}
+
+build() {
+    save_image
+    compose passwd
+    compose group
+    for file in passwd group; do
+        if bound "$ETC/$file"; then umount "$ETC/$file" || die "unbinding $ETC/$file failed"; fi
+        mount --bind "$RUN/$file" "$ETC/$file" || die "binding $RUN/$file over $ETC/$file failed"
+    done
+    shadow_entries
+}
+
+# <file> written as <file> without <name>'s line, then with the lines on stdin.
+rewrite() { # <file> <name>
+    mkdir -p "$STATE"
+    chmod 0755 "$STATE"
+    {
+        [ ! -f "$1" ] || awk -F: -v name="$2" '$1 != name' "$1"
+        cat
+    } >"$1.$$" || die "writing $1 failed"
+    chmod 0644 "$1.$$"
+    mv "$1.$$" "$1"
+}
+
+field() { # <file> <name> <field>
+    [ -f "$1" ] || return 0
+    awk -F: -v name="$2" -v n="$3" '$1 == name { print $n; exit }' "$1"
+}
+
+taken() { # <file> <field> <value> <except name>
+    [ -f "$1" ] || return 1
+    awk -F: -v n="$2" -v value="$3" -v except="$4" '$n == value && $1 != except { found = 1 } END { exit !found }' "$1"
+}
+
+add() { # <name> <uid> <gid>
+    valid_name "$1" || die "$1 is not an account name"
+    in_range "$2" || die "uid $2 is outside $FIRST..$LAST"
+    in_range "$3" || die "gid $3 is outside $FIRST..$LAST"
+    save_image
+    if [ "$(field "$STATE/passwd" "$1" 3):$(field "$STATE/passwd" "$1" 4):$(field "$STATE/group" "$1" 3)" = "$2:$3:$3" ]; then
+        build
+        return
+    fi
+    ! taken "$RUN/image.passwd" 1 "$1" '' && ! taken "$RUN/image.group" 1 "$1" '' || die "$1 is an account of the image"
+    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || die "$1 is an app account with other ids"
+    ! taken "$RUN/image.passwd" 3 "$2" '' && ! taken "$STATE/passwd" 3 "$2" "$1" || die "uid $2 is taken"
+    ! taken "$RUN/image.group" 3 "$3" '' && ! taken "$STATE/group" 3 "$3" "$1" || die "gid $3 is taken"
+    printf '%s:x:%s:%s:mica app %s:/nonexistent:/usr/sbin/nologin\n' "$1" "$2" "$3" "$1" | rewrite "$STATE/passwd" "$1"
+    printf '%s:x:%s:\n' "$1" "$3" | rewrite "$STATE/group" "$1"
+    sync
+    build
+}
+
+remove() { # <name>
+    valid_name "$1" || die "$1 is not an account name"
+    save_image
+    rewrite "$STATE/passwd" "$1" </dev/null
+    rewrite "$STATE/group" "$1" </dev/null
+    sync
+    if [ -f "$SHADOW" ] && grep -q "^$1:" "$SHADOW" && ! taken "$RUN/image.passwd" 1 "$1" ''; then
+        cp -p "$SHADOW" "$SHADOW.$$" && awk -F: -v name="$1" '$1 != name' "$SHADOW" >"$SHADOW.$$" && mv "$SHADOW.$$" "$SHADOW" ||
+            die "removing $1 from $SHADOW failed"
+    fi
+    build
+}
+
+command=${1:-}
+[ "$#" -gt 0 ] && shift
+case "$command" in
+build)
+    [ "$#" = 0 ] || usage
+    lock
+    build
+    ;;
+add)
+    [ "$#" = 2 ] || [ "$#" = 3 ] || usage
+    lock
+    add "$1" "$2" "${3:-$2}"
+    ;;
+remove)
+    [ "$#" = 1 ] || usage
+    lock
+    remove "$1"
+    ;;
+list)
+    [ "$#" = 0 ] || usage
+    lock
+    save_image
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' '{ print $1, $3, $4 }'
+    ;;
+*)
+    usage
+    ;;
+esac

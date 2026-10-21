@@ -621,6 +621,8 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     'confirm)',
     '  for p in /proc/[0-9]*; do [ "$(cat $p/comm 2>/dev/null)" = dbus-daemon ] && sed -n "s/^CapBnd:/boot-test: dbus-daemon CapBnd:/p" $p/status >/dev/console; done',
     '  { ip -4 addr show dev eth0; cat /etc/resolv.conf /etc/hosts; } | sed "s/^/boot-test: /" >/dev/console',
+    '# An app account, added live as micad adds one, and resolved by name.',
+    '  /usr/lib/mica/mica-accounts add boottest 30000 && id boottest | sed "s/^/boot-test: /" >/dev/console',
     '  (sleep 3; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
@@ -681,6 +683,8 @@ const BOOT_TEST_EXPECT = [
   // /etc/hosts, written to /run/mica/hosts at boot: localhost and the hostname.
   'boot-test: 127.0.0.1\tlocalhost',
   `boot-test: 127.0.1.1\t${HOSTNAME}`,
+  // mica-accounts: an app account bound over /etc/passwd and /etc/group.
+  'boot-test: uid=30000(boottest) gid=30000(boottest)',
 ]
 
 async function bootTest(argv: string[]): Promise<number> {
