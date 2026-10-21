@@ -187,8 +187,9 @@ fi
 
 # --- required member: apid -------------------------------------------------
 #
-# `mica-apid --healthcheck` requests https://127.0.0.1/healthz. apid is the
-# network route in when SSH is off (the prod default).
+# `mica-apid --healthcheck` asks the running apid's /healthz on its local socket,
+# and passes when apid is off by configuration. apid is the network route in when
+# SSH is off (the prod default).
 if requires apid; then
     run "$INIT" installed apid ||
         fail "required member apid: apid is not installed in this image." \
@@ -198,7 +199,7 @@ if requires apid; then
             "cannot establish that apid answers. A SKIP here would confirm a slot with no" \
             "remote route into it."
     run mica-apid --healthcheck >/dev/null ||
-        fail "required member apid: apid did not answer https://127.0.0.1/healthz"
+        fail "required member apid: mica-apid --healthcheck failed: apid did not answer on its local socket"
     log "required member apid: OK"
 fi
 

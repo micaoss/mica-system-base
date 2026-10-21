@@ -237,6 +237,16 @@ describe('the required daemons', () => {
     expect(ran.code).toBe(1)
     expect(markedGood(c)).toBe(false)
     expect(ran.out).toContain('required member apid')
+    // The probe is mica-apid --healthcheck, over apid's local socket.
+    expect(ran.out).toContain('mica-apid --healthcheck failed')
+    expect(ran.out).not.toContain('https://127.0.0.1')
+  })
+
+  // The shipped configuration describes the probe as it is.
+  test('health.conf names the apid probe mica-apid --healthcheck', () => {
+    const conf = readFileSync(join(PAYLOAD, 'etc/mica/health.conf'), 'utf8')
+    expect(conf).toContain('mica-apid --healthcheck')
+    expect(conf).not.toContain('https://127.0.0.1')
   })
 
   test('both wedged names micad first', () => {
