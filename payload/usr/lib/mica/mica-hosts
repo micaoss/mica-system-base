@@ -1,0 +1,15 @@
+#!/bin/sh
+# /run/mica/hosts, where /etc/hosts links: the root is read-only, so the file lives
+# under /run and micad rewrites it. Written at every boot once the persisted hostname
+# is applied and before any service resolves a name (mica-hosts.service under systemd,
+# mica-mounts under OpenRC): localhost and this host's name, the lines micad's file
+# starts with too, followed by the user's static records. Written to a temporary name
+# and renamed, so a reader never sees half a file.
+set -eu
+hosts=/run/mica/hosts
+name=$(cat "${MICA_HOSTNAME_FILE:-/proc/sys/kernel/hostname}")
+
+mkdir -p "${hosts%/*}"
+printf '127.0.0.1\tlocalhost\n::1\tlocalhost\n127.0.1.1\t%s\n' "$name" >"$hosts.$$"
+chmod 0644 "$hosts.$$"
+mv "$hosts.$$" "$hosts"

@@ -88,6 +88,28 @@ Every product installs exactly one.
 `/etc/mtab` links to `/proc/self/mounts` under both. The kernel file systems under OpenRC
 are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
 
+**Names.** micad writes the files below; the root stays read-only.
+
+- `/etc/hosts` (mica-system) links to `/run/mica/hosts`. Base's `/usr/lib/mica/mica-hosts`
+  writes it at every boot, once the persisted hostname is applied and before any service
+  resolves a name: `mica-hosts.service` under systemd (after `mica-apply-hostname.service`,
+  before `sysinit.target`, `systemd-resolved.service` and `nss-lookup.target`), `mica-mounts`
+  under OpenRC (right after `hostname -F /etc/hostname`, before `mica-network`, `mica-dbus`
+  and every service that needs `mica-mounts`). It holds exactly
+  `127.0.0.1<TAB>localhost`, `::1<TAB>localhost` and `127.0.1.1<TAB><hostname>`, mode 0644.
+  micad replaces the whole file with those three lines, for the hostname of the moment,
+  followed by the user's static records, written to a temporary name in `/run/mica` and
+  renamed over it. Its readers -- glibc's `files` lookup (dropbear, `hostname -f`, every
+  program) and systemd-resolved, which reloads it when it changes -- read it on each lookup,
+  so no reader holds a stale copy and none starts before the first one is in place.
+- OpenRC: `/etc/resolv.conf` links to `/run/mica/resolv.conf`, which `/usr/lib/mica/mica-resolv`
+  builds from `/run/mica/resolv.d`. When `resolv.d/global` exists, it alone is
+  `resolv.conf` and every interface's file is ignored; when it does not, the interfaces'
+  files (`resolv.d/<interface>`, mica-udhcpc's) make it up. micad writes `global` (a name
+  starting with a dot in `resolv.d`, or any name in `/run/mica`, then renamed) or removes it,
+  and runs `mica-resolv`; mica-udhcpc runs it after every lease change. Under systemd the
+  global DNS is resolved's.
+
 **Runlevel membership is payload.** mica-openrc's postinst removes the runlevel links no
 package owns -- what openrc imported from the SysV links, such as Debian's `dbus` -- and keeps
 every link a package ships, and OpenRC's `cgroups`. A package configured after it that runs

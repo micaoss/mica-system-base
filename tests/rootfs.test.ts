@@ -23,6 +23,7 @@ function root(name: string): string {
     writeFileSync(join(path, file), content)
   }
   put('etc/hostname', 'mica\n')
+  symlinkSync('../run/mica/hosts', join(path, 'etc/hosts'))
   put('etc/issue', issue('20260914-0130', 'c'.repeat(40), '2026-09-14T01:40:00Z'))
   put('etc/machine-id')
   put('etc/passwd', 'root:x:0:0:root:/root:/bin/sh\nsystemd-network:x:998:998::/:/usr/sbin/nologin\nmica:x:1000:1000:mica operator:/home/mica:/bin/sh\n')
@@ -215,6 +216,12 @@ test('each broken promise of the floor is refused by name', () => {
   const resolver = root('build-resolv-conf')
   writeFileSync(join(resolver, 'etc/resolv.conf'), 'nameserver 10.0.0.1\n')
   expect(() => assertFloor(resolver, 'amd64')).toThrow('/etc/resolv.conf')
+
+  // /etc/hosts is micad's, under /run; the build host's is not the device's.
+  const hosts = root('build-hosts')
+  rmSync(join(hosts, 'etc/hosts'))
+  writeFileSync(join(hosts, 'etc/hosts'), '127.0.0.1\tlocalhost\n172.17.0.2\t9e5fa5a15eeb\n')
+  expect(() => assertFloor(hosts, 'amd64')).toThrow('/etc/hosts does not link to /run/mica/hosts')
 
   const machine = root('machine-id')
   writeFileSync(join(machine, 'etc/machine-id'), '0123456789abcdef0123456789abcdef\n')

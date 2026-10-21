@@ -14,7 +14,7 @@ import { addedNames, runtimeRoots, tagUpstream } from './pin-inputs.ts'
 import { assertEnvironmentImage, environment, REPO, sources } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import type { Init } from './rootfs.ts'
-import { basePackages, initRoots, INITS, ISSUE_ENV } from './rootfs.ts'
+import { basePackages, HOSTNAME, initRoots, INITS, ISSUE_ENV } from './rootfs.ts'
 
 const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'test', 'test-bootstrap']
 const IN_CONTAINER = '/mica-system-base'
@@ -620,7 +620,7 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '# The bounding set of a supervised daemon, for the test to read off the console.',
     'confirm)',
     '  for p in /proc/[0-9]*; do [ "$(cat $p/comm 2>/dev/null)" = dbus-daemon ] && sed -n "s/^CapBnd:/boot-test: dbus-daemon CapBnd:/p" $p/status >/dev/console; done',
-    '  { ip -4 addr show dev eth0; cat /etc/resolv.conf; } | sed "s/^/boot-test: /" >/dev/console',
+    '  { ip -4 addr show dev eth0; cat /etc/resolv.conf /etc/hosts; } | sed "s/^/boot-test: /" >/dev/console',
     '  (sleep 3; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
@@ -678,6 +678,9 @@ const BOOT_TEST_EXPECT = [
   // QEMU's user network: a DHCP lease on eth0 and its DNS server in /etc/resolv.conf.
   'inet 10.0.2.15/24',
   'boot-test: nameserver 10.0.2.3',
+  // /etc/hosts, written to /run/mica/hosts at boot: localhost and the hostname.
+  'boot-test: 127.0.0.1\tlocalhost',
+  `boot-test: 127.0.1.1\t${HOSTNAME}`,
 ]
 
 async function bootTest(argv: string[]): Promise<number> {

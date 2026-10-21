@@ -1,6 +1,7 @@
 #!/sbin/openrc-run
 # The binds of DATA and the seeds they wait for, in the order mica-systemd's units
-# give them: /mica, /mica/containers, /srv; STATE's hostname and the user's services
+# give them: /mica, /mica/containers, /srv; STATE's hostname, applied and written to
+# /run/mica/hosts (mica-hosts, mica-hosts.service's under systemd), and the user's services
 # (/usr/local/etc, mica-unit's); the var tree, then /var/lib/mica on it; /root and
 # /home. Then the tmpfiles entries (mica-system's
 # /etc/tmpfiles.d). Stopped at shutdown, the binds come down in reverse and DATA is
@@ -51,7 +52,8 @@ start() {
     eend $? || return 1
     seed mica-seed-state || return 1
     ebegin "Binding STATE's hostname"
-    bind /mnt/data/state/hostname /etc/hostname && hostname -F /etc/hostname
+    bind /mnt/data/state/hostname /etc/hostname && hostname -F /etc/hostname &&
+        /usr/lib/mica/mica-hosts
     eend $? || return 1
     ebegin "Binding the user's services"
     [ ! -L /mnt/data/state/openrc-local ] &&

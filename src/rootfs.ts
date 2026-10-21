@@ -188,6 +188,8 @@ function assertCommon(root: string, arch: Arch): void {
   const resolver = join(root, 'etc/resolv.conf')
   if (lstatExists(resolver) && !lstatSync(resolver).isSymbolicLink())
     fail('the base root carries a /etc/resolv.conf of its own, the build host\'s; the init links it to the resolver it runs')
+  if (linkTarget(join(root, 'etc/hosts')) !== '../run/mica/hosts')
+    fail('/etc/hosts does not link to /run/mica/hosts, which mica-hosts writes at boot and micad rewrites')
   if (readFileSync(join(root, 'etc/hostname'), 'utf8') !== `${HOSTNAME}\n`)
     fail(`the base root's /etc/hostname is not '${HOSTNAME}'`)
   if (existsSync(join(root, 'etc/machine-id')) && readFileSync(join(root, 'etc/machine-id'), 'utf8').trim())

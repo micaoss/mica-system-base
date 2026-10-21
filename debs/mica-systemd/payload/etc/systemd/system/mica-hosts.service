@@ -1,0 +1,17 @@
+[Unit]
+Description=Write /run/mica/hosts, where /etc/hosts links
+Documentation=file:/usr/lib/mica/mica-hosts
+# Once the persisted hostname is applied, and before anything resolves a name:
+# systemd-resolved reads /etc/hosts, and sysinit.target comes before every service.
+DefaultDependencies=no
+After=etc-hostname.mount mica-apply-hostname.service
+Before=sysinit.target systemd-resolved.service nss-lookup.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-hosts
+
+[Install]
+WantedBy=sysinit.target
