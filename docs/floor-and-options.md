@@ -168,12 +168,17 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 | Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/run/mica/wifi-client.env` |
 | Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/run/mica/wifi-ap.env` |
 | Bluetooth HCI attach | mica-bluetooth | `mica-bt.service`, enabled, inert without `/etc/mica/bt.conf` | `mica-bt`, in no runlevel, starts nothing without `/etc/mica/bt.conf` | boot (systemd); the product links it into `default` (OpenRC) |
-| Bluetooth daemon | mica-bluetooth (bluez) | bluez's `bluetooth.service`, `var-lib-bluetooth.mount` | `mica-bluetoothd`: the STATE bind, then bluetoothd | micad |
+| Bluetooth daemon | mica-bluetooth (bluez) | bluez's `bluetooth.service` with mica-bluetooth's drop-in, `var-lib-bluetooth.mount` | `mica-bluetoothd`: the STATE bind, then bluetoothd | micad |
 | Network time | mica-systemd, mica-openrc | timesyncd | `mica-ntpd`, in `default` | boot; micad restarts it for new servers |
 | micad, apid, MQTT | mica-core's packages | their units | their scripts | their packages |
 
 The board facts these services read -- `/etc/mica/bt.conf`, the radio modules and firmware,
 the hwinit programs -- are the board's package (its BSP).
+
+bluetoothd reads `/usr/lib/mica/bluetooth/main.conf` (`-f`) under both inits, not bluez's
+conffile `/etc/bluetooth/main.conf`. It sets the LE connection interval to 11.25-15 ms
+(`MinConnectionInterval=9`, `MaxConnectionInterval=12`, in 1.25 ms units) for BLE
+provisioning; every other setting is bluetoothd's default.
 
 ## The user's own services
 

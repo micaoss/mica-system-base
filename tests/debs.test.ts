@@ -444,6 +444,19 @@ describe('mica-bluetooth', () => {
     expect(existsSync(join(payload, 'etc/runlevels'))).toBe(false)
     expect(readFileSync(join(payload, 'etc/init.d/mica-bluetoothd'), 'utf8')).toContain('/mnt/data/state/bluetooth /var/lib/bluetooth')
   })
+
+  // /etc/bluetooth/main.conf is bluez's conffile; bluetoothd reads this package's
+  // file instead, under both inits: LE connection intervals of 11.25-15 ms.
+  test('bluetoothd runs with -f /usr/lib/mica/bluetooth/main.conf, LE interval 9-12', () => {
+    const config = readFileSync(join(payload, 'usr/lib/mica/bluetooth/main.conf'), 'utf8').split('\n').filter(line => line && !line.startsWith('#'))
+    expect(config).toEqual(['[LE]', 'MinConnectionInterval=9', 'MaxConnectionInterval=12'])
+    expect(existsSync(join(payload, 'etc/bluetooth'))).toBe(false)
+    expect(readFileSync(join(payload, 'usr/lib/systemd/system/bluetooth.service.d/mica.conf'), 'utf8').split('\n').filter(line => line.startsWith('ExecStart='))).toEqual([
+      'ExecStart=',
+      'ExecStart=/usr/libexec/bluetooth/bluetoothd -f /usr/lib/mica/bluetooth/main.conf',
+    ])
+    expect(readFileSync(join(payload, 'etc/init.d/mica-bluetoothd'), 'utf8')).toContain('command_args="-n -f /usr/lib/mica/bluetooth/main.conf"')
+  })
 })
 
 describe('mica-ssh', () => {

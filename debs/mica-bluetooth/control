@@ -1,6 +1,6 @@
 Package: mica-bluetooth
-Version: 5.82-mica1
-Source-Date-Epoch: 1790638915
+Version: 5.82-mica2
+Source-Date-Epoch: 1792643735
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -17,6 +17,11 @@ Description: Mica OS Bluetooth support
  nothing without /etc/mica/bt.conf, and /etc/init.d/mica-bluetoothd, which
  binds the pairing keys and runs bluetoothd under supervise-daemon; both in no
  runlevel -- the product links mica-bt, micad starts mica-bluetoothd.
+ .
+ bluetoothd reads /usr/lib/mica/bluetooth/main.conf through -f under both
+ inits (a drop-in for bluez's bluetooth.service, and mica-bluetoothd), in place
+ of bluez's conffile /etc/bluetooth/main.conf: an LE connection interval of
+ 11.25-15 ms, everything else bluetoothd's default.
  .
  The UART, the host-controller protocol and the link speed hwinit-bt reads
  from /etc/mica/bt.conf, the radio kernel modules and the firmware are board
