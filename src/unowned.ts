@@ -112,7 +112,8 @@ export function unownedPaths(root: string): UnownedPath[] {
         owned.add(line)
     }
   }
-  const scripts = readdirSync(info).filter(name => /\.(?:pre|post)(?:inst|rm)$/.test(name) || name.endsWith('.config'))
+  // Sorted: a path's writers are named in one order, whatever order the directory lists.
+  const scripts = readdirSync(info).filter(name => /\.(?:pre|post)(?:inst|rm)$/.test(name) || name.endsWith('.config')).sort()
     .map(name => ({ name, text: readFileSync(join(info, name), 'utf8') }))
   const alternatives = scripts.filter(script => script.text.includes('update-alternatives'))
   const tmpfiles = tmpfilesEntries(root)

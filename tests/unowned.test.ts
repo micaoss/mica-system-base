@@ -63,6 +63,17 @@ function root(name: string): string {
   return path
 }
 
+// The writers of a path are named in the scripts' byte order, whatever order the
+// directory lists them in, so the report of one root is one file.
+test('several writers of a path are named in sorted order', () => {
+  const path = root('writers')
+  const scripts = ['debianutils.postinst', 'debianutils.prerm', 'tar.postinst', 'tar.prerm', 'util-linux.postinst', 'util-linux.prerm']
+  for (const script of scripts)
+    writeFileSync(join(path, 'var/lib/dpkg/info', script), '#!/bin/sh\nupdate-alternatives --install /usr/bin/which which /usr/bin/which.debianutils 0\n')
+  symlinkSync('/usr/bin/which.debianutils', join(path, 'etc/alternatives/which'))
+  expect(unownedPaths(path).find(row => row.path === '/etc/alternatives/which')?.writer).toBe(`update-alternatives (${scripts.join(', ')})`)
+})
+
 test('an unowned path is listed with its writer, and an owned one is not', () => {
   const rows = unownedPaths(root('base'))
   const writers = new Map(rows.map(row => [row.path, row.writer]))
