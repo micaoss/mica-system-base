@@ -3,10 +3,11 @@
 // gate, and the refusals. The pools themselves are mica-build-tools' `release
 // pool`, run here only to publish what the lock names.
 import type { RootfsBuild } from '../src/publish.ts'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { publishPools } from '@mica/build-tools'
+import { localLock, publishPools } from '@mica/build-tools'
+import { offlineLayout, offlineRelease } from '../src/offline.ts'
 import { sources } from '../src/pins.ts'
 import { assertBanner, assertPools, dataAssets, dryRunLock, gate, parseLock, publishRootfs, readLayers, rootfsImages, sha256, writeLayer, writeLock } from '../src/publish.ts'
 import { issue, releaseOf } from '../src/release.ts'
@@ -336,6 +337,52 @@ describe('publication', () => {
     // The pools of a dry run are the ones `release pool` publishes.
     expect(parsed.rows.filter(row => row[0] === 'pool').map(row => row[2])).toEqual(readFileSync(join(out, 'release', 'mica-system-base.lock'), 'utf8').split('\n').filter(row => row.startsWith('pool\t')).map(row => row.split('\t')[2]))
     expect(() => dryRunLock(repo, '2026-09-14')).toThrow('is not YYYYMMDD-HHMM')
+  })
+
+  // An offline build (release-lock.md section 6): the same rows, every image and pool
+  // `local/mica-system-base` and held in _out/offline/oci, which `local-lock` takes.
+  test('an offline build writes the lock and OCI layout that local-lock pins', () => {
+    const layer = (arch: string): { gzip: Uint8Array, diffId: string } => ({ gzip: Bun.gzipSync(new TextEncoder().encode(`${arch} root`)), diffId: `sha256:${sha256(new TextEncoder().encode(`${arch} root`))}` })
+    for (const arch of ['amd64', 'arm64', 'armhf'] as const)
+      writeLayer(join(out, 'layers'), arch, layer(arch), '2026-09-14T01:40:00Z')
+    const text = offlineLayout(repo, offlineRelease(repo, {}))
+    const offline = join(out, 'offline')
+    expect(readFileSync(join(offline, 'mica-system-base.lock'), 'utf8')).toBe(text)
+    expect(readFileSync(join(offline, 'SHA256SUMS'), 'utf8')).toBe(`${sha256(new TextEncoder().encode(text))}  mica-system-base.lock\n`)
+    const lock = parseLock(text, 'mica-system-base.lock')
+    expect([lock.release, lock.commit]).toEqual(['offline', commit])
+    // The rows of a release, under the registry `local` and the release `offline`.
+    const kinds = (rows: string[][]): string[] => rows.map(row => row[0] === 'image' || row[0] === 'pool' ? `${row[0]} ${row.at(-2)}` : row.slice(0, 3).join(' '))
+    const published = parseLock(dryRunLock(repo, TAG), 'mica-system-base.lock')
+    expect(kinds(lock.rows.slice(1))).toEqual(kinds(published.rows.slice(1)))
+    expect(lock.rows.filter(row => row[0] === 'package')).toEqual(published.rows.filter(row => row[0] === 'package'))
+    expect(lock.rows.filter(row => row[0] === 'image' || row[0] === 'pool').map(row => row.at(-1)!.replace(/@.*/, ''))).toEqual([
+      ...['amd64', 'arm64', 'armhf'].map(() => 'local/mica-system-base'),
+      'local/mica-system-base:rootfs.offline',
+      ...['amd64', 'arm64', 'armhf'].map(arch => `local/mica-system-base:pool.${arch}.offline`),
+    ])
+    // Every reference and archive resolves in the layout, and the index names the images.
+    const blob = (digest: string): Uint8Array => new Uint8Array(readFileSync(join(offline, 'oci/blobs/sha256', digest)))
+    for (const row of lock.rows.filter(row => row[0] === 'image' || row[0] === 'pool' || row[0] === 'package')) {
+      const digest = row[0] === 'package' ? row[4]! : row.at(-1)!.split('@sha256:')[1]!
+      expect(sha256(blob(digest))).toBe(digest)
+    }
+    const index = JSON.parse(new TextDecoder().decode(blob(lock.rows.find(row => row[3] === 'index')![4]!.split('@sha256:')[1]!))) as { manifests: { digest: string }[] }
+    expect(index.manifests.map(entry => entry.digest)).toEqual(lock.rows.filter(row => row[0] === 'image' && row[3] !== 'index').map(row => `sha256:${row[4]!.split('@sha256:')[1]}`))
+    for (const asset of dataAssets(repo, releaseOf(repo)))
+      expect(sha256(new Uint8Array(readFileSync(join(offline, asset.file))))).toBe(asset.sha256)
+    // The consumer's side: local-lock verifies it and writes the offline pin.
+    const locks = join(work, 'consumer-locks')
+    mkdirSync(locks, { recursive: true })
+    expect(localLock(locks, 'mica-system-base', repo, {})).toContain(`mica-system-base offline at ${commit}`)
+    expect(readFileSync(join(locks, 'mica-system-base.lock'), 'utf8')).toBe(text)
+    expect(readFileSync(join(locks, 'pins/mica-system-base.pin'), 'utf8')).toContain(`CHECKOUT=${repo}`)
+    // Refused under CI, and for a tree with changes.
+    expect(() => offlineRelease(repo, { GITHUB_ACTIONS: 'true' })).toThrow('never made under CI')
+    writeFileSync(join(repo, 'untracked'), '')
+    expect(() => offlineRelease(repo, {})).toThrow('uncommitted changes')
+    rmSync(join(repo, 'untracked'))
+    expect(existsSync(join(offline, 'oci/oci-layout'))).toBe(true)
   })
 
   test('the gate takes the declared packages, pool gate and pool guard; a Replaces is refused', async () => {

@@ -346,9 +346,10 @@ export function dataAssets(repo: string, release: Release): DataAsset[] {
 // release; the rootfs index and images; the pools; this repository's packages,
 // each the layer of its pool with that digest; the Debian packages pinned for
 // later stages with the locks/upstream.pkgs roots they are pinned for; and the Debian
-// snapshot as the one apt source. The lock must pass the format's rules.
-function renderLock(repo: string, release: Release, published: Published, data: DataAsset[]): string {
-  const at = `${REFERENCE}/${release.repository}`
+// snapshot as the one apt source. The lock must pass the format's rules. An
+// offline lock (section 6) names the registry `local` and the release `offline`.
+export function renderLock(repo: string, release: Release, published: Published, data: DataAsset[], registry = REFERENCE): string {
+  const at = `${registry}/${release.repository}`
   const rows: string[][] = [
     ['release', release.repository, release.label, release.commit],
     ...ARCHES.map(arch => ['image', release.repository, 'rootfs', arch, `${at}@sha256:${published.platforms[arch]}`]),
@@ -371,7 +372,8 @@ function renderLock(repo: string, release: Release, published: Published, data: 
   rows.push(...packages.sort(byKey), ...upstream.sort(byKey), ['apt', mirror, suite, 'main', KEYRING],
     ...data.map(asset => ['data', asset.name, asset.file, asset.sha256]).sort(byKey))
   const file = `${release.repository}.lock`
-  const text = `${['# mica-lock v1', `# ${file}: ${release.repository} ${release.label}, written when the release was published.`, ...rows.map(row => row.join('\t'))].join('\n')}\n`
+  const written = release.label === 'offline' ? `offline at ${release.commit}, written by bun run offline` : `${release.label}, written when the release was published`
+  const text = `${['# mica-lock v1', `# ${file}: ${release.repository} ${written}.`, ...rows.map(row => row.join('\t'))].join('\n')}\n`
   parseLock(text, file)
   return text
 }

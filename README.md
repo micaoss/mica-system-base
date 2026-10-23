@@ -166,6 +166,13 @@ bun src/publish.ts gate                              # every pool: pool gate and
 bun src/publish.ts lock --dry-run --tag <YYYYMMDD-HHMM>   # the lock a release would carry
 ```
 
+`bun run offline` builds every architecture of a clean checkout and writes what a release
+would publish to `_out/offline/` (mica-build-tools `docs/spec/release-lock.md` section 6):
+`mica-system-base.lock` with the release `offline`, its images and pools named
+`local/mica-system-base` and held in the OCI layout `oci/`, the `data` files, and `SHA256SUMS`
+over the lock. A consumer pins it with `bin/mica-tools local-lock mica-system-base <checkout>`.
+It is refused under CI.
+
 Re-pinning: `bun src/container.ts pin-inputs` rewrites the resolved rows of
 `locks/upstream.lock` from the snapshot of `locks/sources.json` (`--check` only compares);
 `bin/mica-tools locks move mica-build-env <release>` moves the build environment.
