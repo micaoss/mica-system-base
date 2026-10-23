@@ -1,6 +1,6 @@
 Package: mica-wifi
-Version: 2.12-mica1
-Source-Date-Epoch: 1792383800
+Version: 2.12-mica2
+Source-Date-Epoch: 1792746912
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: net
@@ -22,6 +22,7 @@ Description: Mica OS Wi-Fi station: a minimal wpa_supplicant
  .
  On an OpenRC root /etc/init.d/mica-wifi-client does the same, in no runlevel:
  wpa_supplicant and busybox udhcpc on the interface and configuration micad
- names in /run/mica/wifi-client.env.
+ names in /run/mica/wifi-client.env, the file's metric= handed to udhcpc's
+ script as IF_METRIC, the metric of the station's default route.
  .
  Access-point support is mica-wifi-ap.

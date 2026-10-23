@@ -109,6 +109,12 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   starting with a dot in `resolv.d`, or any name in `/run/mica`, then renamed) or removes it,
   and runs `mica-resolv`; mica-udhcpc runs it after every lease change. Under systemd the
   global DNS is resolved's.
+- OpenRC default routes: mica-udhcpc installs a lease's first router as the default route
+  with `metric $IF_METRIC` when `IF_METRIC` is set and not empty, and without a metric
+  otherwise. busybox ifupdown exports a DHCP stanza's `metric <n>` line as `IF_METRIC`;
+  `mica-wifi-client` passes `metric=` of `/run/mica/wifi-client.env`. With a metric per
+  interface, two uplinks keep a default route each. Under systemd micad renders the metric
+  into the networkd units.
 
 **Accounts.** micad runs each of the user's apps under an account of its own. The image's
 `/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)

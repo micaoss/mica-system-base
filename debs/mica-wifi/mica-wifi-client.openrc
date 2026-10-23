@@ -2,7 +2,7 @@
 # wpa_supplicant@<interface>.service and networkd's DHCP on an OpenRC root:
 # wpa_supplicant on the interface and configuration micad names in
 # /run/mica/wifi-client.env, and busybox udhcpc on the link with mica-openrc's lease
-# script. One service rather than one per interface: an instance would be a link in
+# script, the file's default-route metric (metric=) handed to it as IF_METRIC. One service rather than one per interface: an instance would be a link in
 # the read-only /etc/init.d. In no runlevel; micad renders both files and starts it.
 
 description="Wi-Fi station"
@@ -33,7 +33,7 @@ start() {
     ebegin "Starting the Wi-Fi station on $interface"
     start-stop-daemon --start --pidfile "$WPA_PID" --exec /usr/sbin/wpa_supplicant -- \
         -B -P "$WPA_PID" -i "$interface" -c "$config" &&
-        busybox udhcpc -b -S -R -i "$interface" -p "$DHCP_PID" -s /usr/lib/mica/mica-udhcpc
+        IF_METRIC="${metric:-}" busybox udhcpc -b -S -R -i "$interface" -p "$DHCP_PID" -s /usr/lib/mica/mica-udhcpc
     eend $?
 }
 

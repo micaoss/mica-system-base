@@ -1,5 +1,6 @@
 // mica-openrc's helpers: mica-init against a fake OpenRC state directory and fake
-// rc-service, rc-status and openrc-shutdown; mica-udhcpc against a fake ip; mica-ntpd's
+// rc-service, rc-status and openrc-shutdown; mica-udhcpc against a fake ip, and the metric
+// mica-wifi-client hands it; mica-ntpd's
 // servers.
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -94,6 +95,22 @@ describe('mica-udhcpc', () => {
     expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 10.1.0.53\nnameserver 10.1.0.54\n')
   })
 
+  // micad's metric per interface: the stanza's `metric <n>`, which ifupdown exports as
+  // IF_METRIC, or mica-wifi-client's. Two uplinks keep a default route each.
+  test('IF_METRIC gives each interface\'s default route its own metric; none, no metric', () => {
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5', router: '10.8.0.1', IF_METRIC: '100' })).toBe(0)
+    expect(event('renew', { interface: 'wlan0', ip: '10.2.0.5', router: '10.2.0.1', IF_METRIC: '600' })).toBe(0)
+    expect(event('bound', { interface: 'eth9', ip: '10.9.0.5', router: '10.9.0.1', IF_METRIC: '' })).toBe(0)
+    expect(readFileSync(calls, 'utf8').split('\n').filter(line => line.includes('route'))).toEqual([
+      'ip -4 route replace default via 10.8.0.1 dev eth8 metric 100',
+      'ip -4 route replace default via 10.2.0.1 dev wlan0 metric 600',
+      'ip -4 route replace default via 10.9.0.1 dev eth9',
+    ])
+    for (const name of ['eth8', 'wlan0', 'eth9'])
+      expect(event('deconfig', { interface: name })).toBe(0)
+  })
+
   // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.
   test('global, while it exists, makes up resolv.conf alone, through every lease change', () => {
     const resolvers = join(run, 'resolv.d')
@@ -119,6 +136,30 @@ describe('mica-udhcpc', () => {
     writeFileSync(script, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', empty))
     expect(exec(['sh', script], { PATH: SYSTEM_PATH }).code).toBe(0)
     expect(readFileSync(join(empty, 'resolv.conf'), 'utf8')).toBe('')
+  })
+})
+
+// mica-wifi's station hands micad's `metric` of /run/mica/wifi-client.env to udhcpc,
+// and so to mica-udhcpc, as IF_METRIC.
+describe('mica-wifi-client', () => {
+  const bin = join(box.dir, 'wifi-bin')
+  const calls = join(box.dir, 'wifi-calls')
+  const env = join(box.dir, 'wifi-client.env')
+  fake(bin, 'start-stop-daemon', 'exit 0')
+  fake(bin, 'busybox', 'echo "IF_METRIC=${IF_METRIC-unset} $*" >> "$CALLS"')
+  const script = join(box.dir, 'mica-wifi-client')
+  writeFileSync(script, readFileSync(resolve(import.meta.dir, '../../debs/mica-wifi/mica-wifi-client.openrc'), 'utf8').replaceAll('/run/mica/wifi-client.env', env))
+  const start = (): string => {
+    writeFileSync(calls, '')
+    expect(exec(['sh', '-c', `ebegin() { :; }; eend() { return $1; }; eerror() { :; }; . ${script}; start`], { PATH: `${bin}:${SYSTEM_PATH}`, CALLS: calls }).code).toBe(0)
+    return readFileSync(calls, 'utf8')
+  }
+
+  test('udhcpc runs with IF_METRIC from the file\'s metric, empty without one', () => {
+    writeFileSync(env, 'interface=wlan0\nconfig=/tmp/wpa.conf\nmetric=600\n')
+    expect(start()).toBe('IF_METRIC=600 udhcpc -b -S -R -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
+    writeFileSync(env, 'interface=wlan0\nconfig=/tmp/wpa.conf\n')
+    expect(start()).toBe('IF_METRIC= udhcpc -b -S -R -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
   })
 })
 
