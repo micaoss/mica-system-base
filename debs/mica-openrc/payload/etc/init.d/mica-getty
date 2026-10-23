@@ -1,0 +1,56 @@
+#!/sbin/openrc-run
+# serial-getty@<console>.service and logind's tty2 on an OpenRC root: agetty, each
+# under its own supervise-daemon, on every serial console the kernel command line
+# names (/sys/class/tty/console/active), and on tty2, the login VT, where a display
+# exists; tty1, where the boot logo lands, stays idle. Each supervisor is named
+# mica-getty.<tty>, which supervise-daemon takes only as RC_SVCNAME. As under
+# systemd, no getty starts until the console option has installed /usr/bin/login,
+# the prompts start after micad, so the first one carries its device code
+# (/etc/issue.d), and a getty that fails fails nothing else (agetty's ExecStart=-).
+
+description="Login prompts on the consoles"
+
+depend() {
+    after micad
+}
+
+# The ttys to prompt on, one per line.
+consoles() {
+    for tty in $(cat /sys/class/tty/console/active 2>/dev/null); do
+        case "$tty" in
+        tty[0-9]*) ;;
+        *) [ -e "/dev/$tty" ] && echo "$tty" ;;
+        esac
+    done
+    if [ -e /dev/tty2 ] && { [ -e /sys/class/graphics/fb0 ] || ls -d /sys/class/drm/card*-* >/dev/null 2>&1; }; then
+        echo tty2
+    fi
+}
+
+start() {
+    if [ ! -e /usr/bin/login ]; then
+        einfo "No console installed: no login prompt"
+        return 0
+    fi
+    for tty in $(consoles); do
+        case "$tty" in
+        tty[0-9]*) set -- "$tty" linux ;;
+        *) set -- --keep-baud 115200,57600,38400,9600 "$tty" vt220 ;;
+        esac
+        ebegin "Starting a login prompt on $tty"
+        RC_SVCNAME="mica-getty.$tty" supervise-daemon "mica-getty.$tty" --start --pidfile "/run/mica-getty.$tty.pid" \
+            --respawn-delay 1 --respawn-max 0 /usr/sbin/agetty -- -o '-- \u' --noreset --noclear "$@"
+        eend $?
+    done
+    return 0
+}
+
+stop() {
+    for pidfile in /run/mica-getty.*.pid; do
+        [ -e "$pidfile" ] || continue
+        tty=${pidfile##*/mica-getty.}
+        tty=${tty%.pid}
+        RC_SVCNAME="mica-getty.$tty" supervise-daemon "mica-getty.$tty" --stop --pidfile "$pidfile"
+    done
+    return 0
+}

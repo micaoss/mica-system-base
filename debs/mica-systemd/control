@@ -1,6 +1,6 @@
 Package: mica-systemd
-Version: 257.13-mica4
-Source-Date-Epoch: 1792625418
+Version: 257.13-mica5
+Source-Date-Epoch: 1792792090
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -26,7 +26,8 @@ Description: Mica OS on systemd
  adds the firewall; the postinst refuses a root in which it is linked.
  .
  getty@.service and serial-getty@.service start only once the console option
- has installed /usr/bin/login. The console policy of every board: getty@tty1 is
+ has installed /usr/bin/login, and after micad.service, so the first prompt
+ carries micad's device code; they never require it. The console policy of every board: getty@tty1 is
  masked, so the VT the boot logo lands on stays idle even for logind's
  on-demand autovt, and logind reserves tty2 as the one login VT (NAutoVTs=0,
  ReserveVT=2).

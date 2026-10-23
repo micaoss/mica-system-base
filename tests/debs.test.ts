@@ -294,6 +294,16 @@ describe('the mica-systemd payload', () => {
       expect(readFileSync(join(payload, `etc/systemd/system/${unit}.service.d/10-mica-console.conf`), 'utf8')).toMatch(/^ConditionPathExists=\/usr\/bin\/login$/m)
   })
 
+  // The first prompt carries micad's device code (/etc/issue.d): every getty starts
+  // after micad, and never needs it, so a root without micad still gets a prompt.
+  test('starts every getty after micad, without requiring it', () => {
+    for (const unit of ['getty@', 'serial-getty@']) {
+      const dropIn = readFileSync(join(payload, `etc/systemd/system/${unit}.service.d/10-mica-console.conf`), 'utf8')
+      expect(dropIn).toMatch(/^After=micad\.service$/m)
+      expect(dropIn).not.toMatch(/^(?:Requires|Wants|BindsTo)=/m)
+    }
+  })
+
   // The console policy of every board: tty1 never gets a getty, not even logind's
   // on-demand autovt (a mask, which no preset overrides); tty2 is the one login VT.
   test('masks getty@tty1 and gives logind one reserved VT, tty2', () => {

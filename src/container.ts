@@ -623,11 +623,17 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '  { ip -4 addr show dev eth0; cat /etc/resolv.conf /etc/hosts; } | sed "s/^/boot-test: /" >/dev/console',
     '# An app account, added live as micad adds one, and resolved by name.',
     '  /usr/lib/mica/mica-accounts add boottest 30000 && id boottest | sed "s/^/boot-test: /" >/dev/console',
-    '  (sleep 3; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
+    '# micad\'s device code, written as micad writes it: the prompt mica-getty started before',
+    '# the gate (after *) shows nothing of it; the prompt it starts again shows it.',
+    '  sleep 2',
+    '  printf \'Device code: TEST-0000-ABC\\n\\n\' >/run/mica/device-code.issue.new && mv /run/mica/device-code.issue.new /run/mica/device-code.issue',
+    '  (rc-service mica-getty restart; sleep 5; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
     '',
   ].join('\n'),
+  // The console option's login, for mica-getty to start agetty on ttyS0; nobody logs in.
+  'usr/bin/login': '#!/bin/sh\nexit 1\n',
 }
 
 const BOOT_TEST_INIT = [
@@ -662,7 +668,7 @@ cp -a overlay/. root/
 # What mica-build's pack stage does: the factory copy mica-shadow-reconcile builds from.
 mkdir -p root/usr/share/factory/etc
 cp -a root/etc/shadow root/usr/share/factory/etc/shadow
-chmod 0755 root/usr/local/bin/mica-deploy
+chmod 0755 root/usr/local/bin/mica-deploy root/usr/bin/login
 mke2fs -q -t ext4 -L root -d root root.img 768M
 mke2fs -q -t ext4 -L data -O quota,project -E quotatype=prjquota data.img 512M
 accel=tcg; [ -c /dev/kvm ] && accel=kvm
@@ -743,6 +749,11 @@ async function bootTest(argv: string[]): Promise<number> {
     const missing = BOOT_TEST_EXPECT.filter(line => !log.includes(line))
     if (missing.length)
       fail(`the serial log lacks: ${missing.join('; ')} (_out/boot-test.log)`)
+    // The login prompts agetty rendered, each from its /etc/issue banner: the first
+    // has no device code, the last, after micad's file appeared, shows it.
+    const prompts = log.split(`${HOSTNAME} login: `).slice(0, -1).map(text => text.slice(text.lastIndexOf('Mica OS Base ')))
+    if (prompts.length < 2 || !prompts[0]!.startsWith('Mica OS Base ') || prompts[0]!.includes('Device code:') || !prompts.at(-1)!.includes('Device code: TEST-0000-ABC'))
+      fail(`the login prompts do not show the device code only once it exists: ${JSON.stringify(prompts)} (_out/boot-test.log)`)
     // No daemon keeps CAP_SYS_RESOURCE (capability 24), the DATA quota limit.
     const bounding = /boot-test: dbus-daemon CapBnd:\s*([0-9a-f]+)/.exec(log)?.[1]
     if (!bounding || (BigInt(`0x${bounding}`) >> 24n) & 1n)

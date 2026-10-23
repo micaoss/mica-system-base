@@ -82,8 +82,13 @@ Every product installs exactly one.
 | Watchdog | systemd's hardware watchdog | busybox `watchdog`, 90 s |
 | Health gate | `mica-health.service`, `mica-boot-failure` on failure, both writing to the journal, their verdict echoed to the console best effort (two seconds at most); `/etc/mica/health.conf` requires `micad` alone, with no wait for the boot or the network to settle | `mica-health`, last, the same, in the foreground: its lines reach the console |
 | Resource limits | no service keeps `CAP_SYS_RESOURCE` (DATA's project quotas hold) | the same, `/etc/rc.conf.d/mica.conf` |
-| Console | no getty until the console option installs `/usr/bin/login`; `getty@tty1` masked, so the VT the boot logo lands on stays idle; logind's one login VT is tty2 | no getty; a product that installs the console adds one |
+| Console | no getty until the console option installs `/usr/bin/login`; every getty after `micad.service`, never requiring it; `getty@tty1` masked, so the VT the boot logo lands on stays idle; logind's one login VT is tty2 | `mica-getty`, in `default`, after `micad`: no prompt until the console option installs `/usr/bin/login`; then agetty on every serial console of the kernel command line and, where a display exists, on tty2; tty1 stays idle |
 | Enablement | links in the packages' payload | runlevel links in the packages' payload |
+
+The login prompt shows micad's device code under both: `/etc/issue.d/50-mica-device-code.issue`
+(mica-system) links to `/run/mica/device-code.issue`, which micad writes, and agetty prints
+`/etc/issue.d/*.issue` after `/etc/issue`. While micad has written none the link dangles and
+the prompt shows nothing of it.
 
 `/etc/mtab` links to `/proc/self/mounts` under both. The kernel file systems under OpenRC
 are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
