@@ -6,6 +6,7 @@ import { describe, expect, test } from 'bun:test'
 import { inputsHash, readDeclaration } from '@mica/build-tools'
 import { buildPlan, declared } from '../src/debs/docker.ts'
 import { lstatExists } from '../src/rootfs.ts'
+import { inputRoots } from '../src/pin-inputs.ts'
 import { UPSTREAM, upstreamOf, upstreamVersion } from '../src/update.ts'
 import { selectBuild, selectInputs, selectRuntime, selectSource } from '../src/lock.ts'
 import { REPO, run } from './fixture.ts'
@@ -28,17 +29,31 @@ test('a build for one architecture takes its own and the all packages, filed int
   ])
 })
 
-// The packages taking inputs are Architecture: all, built in the amd64 image for
-// the armhf pool too, so armhf's inputs are amd64's: what the armhf build caches.
-test('armhf takes the amd64 inputs', () => {
+// An `all` package taking inputs is built in the amd64 image for the armhf pool
+// too, so armhf's build takes amd64's inputs for it; a package of armhf's own
+// takes armhf's. Both are what the armhf build caches.
+test('armhf takes the amd64 inputs, and its own for its own packages', () => {
   expect(selectInputs(REPO, 'amd64').some(row => row.architecture === 'amd64')).toBe(true)
-  expect(selectInputs(REPO, 'armhf')).toEqual(selectInputs(REPO, 'amd64'))
+  expect(selectInputs(REPO, 'amd64').some(row => row.architecture === 'armhf')).toBe(false)
+  const armhf = selectInputs(REPO, 'armhf')
+  expect(armhf.filter(row => row.architecture !== 'armhf')).toEqual(selectInputs(REPO, 'amd64'))
+  expect(armhf.filter(row => row.architecture === 'armhf').map(row => row.name).sort()).toEqual(['openssh-client', 'openssh-server'])
+})
+
+test('an input is pinned for the architectures that build the packages taking it', () => {
+  const packages = [
+    { arches: ['all' as const], inputs: ['data'] },
+    { arches: ['amd64' as const, 'armhf' as const], inputs: ['tool'] },
+  ]
+  expect(inputRoots(packages, 'amd64')).toEqual(['data', 'tool'])
+  expect(inputRoots(packages, 'arm64')).toEqual(['data'])
+  expect(inputRoots(packages, 'armhf')).toEqual(['tool'])
 })
 
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
-    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-ssh', 'mica-storage-ubi', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
+    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-openssh', 'mica-ssh', 'mica-storage-ubi', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
     expect(packages.find(entry => entry.name === 'mica-busybox')).toMatchObject({ arches: ['amd64', 'arm64', 'armhf'], inputs: [], build: [], sources: ['busybox'] })
@@ -416,6 +431,8 @@ describe('the mica-openrc payload', () => {
 describe('the option packages\' OpenRC scripts', () => {
   test.each([
     ['mica-ssh', 'mica-dropbear'],
+    ['mica-ssh', 'mica-sshd'],
+    ['mica-openssh', 'mica-sshd'],
     ['mica-wifi', 'mica-wifi-client'],
     ['mica-wifi-ap', 'mica-wifi-ap'],
   ])('%s installs /etc/init.d/%s, an openrc-run script that parses as sh', (name, service) => {
@@ -472,13 +489,25 @@ describe('mica-bluetooth', () => {
 describe('mica-ssh', () => {
   const directory = join(REPO, 'debs/mica-ssh')
 
-  test('carries SSH: dropbear, its unit, prestart and preset, on top of mica-system', () => {
-    const depends = /^Depends: (.*)$/m.exec(readFileSync(join(directory, 'control'), 'utf8'))?.[1] ?? ''
+  test('carries SSH: dropbear, its units, prestarts and presets, on top of mica-system', () => {
+    const control = readFileSync(join(directory, 'control'), 'utf8')
+    const depends = /^Depends: (.*)$/m.exec(control)?.[1] ?? ''
     expect(depends.split(', ')).toEqual(['dropbear-bin', 'mica-system'])
     expect(depends).not.toMatch(/openssh/)
     expect(readFileSync(join(directory, '50-mica-dropbear.preset'), 'utf8')).toBe('disable dropbear.service\n')
-    for (const file of ['dropbear.service', 'mica-dropbear-prestart'])
+    for (const file of ['dropbear.service', 'mica-dropbear-prestart', 'mica-sshd.service', 'mica-sshd-prestart'])
       expect(existsSync(join(directory, file))).toBe(true)
+  })
+
+  // One SSH server per root: the two packages ship the same mica-sshd paths, which
+  // the pool gate allows only between packages that conflict with each other.
+  test('conflicts with mica-openssh, both providing mica-ssh-server', () => {
+    for (const [name, other] of [['mica-ssh', 'mica-openssh'], ['mica-openssh', 'mica-ssh']]) {
+      const control = readFileSync(join(REPO, 'debs', name!, 'control'), 'utf8')
+      expect(control).toMatch(new RegExp(`^Conflicts: ${other}$`, 'm'))
+      expect(control).toMatch(/^Provides: mica-ssh-server$/m)
+      expect(control).not.toMatch(/^Replaces:/m)
+    }
   })
 
   // dropbear reaches an account through crypt(3) against /etc/shadow, not through
@@ -488,6 +517,46 @@ describe('mica-ssh', () => {
     expect(declared(REPO).find(entry => entry.name === 'mica-ssh')).toMatchObject({ arches: ['all'], inputs: ['dropbear-bin'] })
     expect(dockerfile).toContain('dropbear-bin depends on PAM')
     expect(dockerfile).toContain('names libpam')
+  })
+})
+
+describe('mica-openssh', () => {
+  const directory = join(REPO, 'debs/mica-openssh')
+
+  // The Debian packages need debconf, ucf and systemd's sysusers: their binaries
+  // are payload, built for each architecture out of the pinned archives.
+  test('carries sshd, sshd-session, sshd-auth and ssh-keygen of the pinned OpenSSH, with their libraries in Depends', () => {
+    expect(declared(REPO).find(entry => entry.name === 'mica-openssh')).toMatchObject({ arches: ['amd64', 'arm64', 'armhf'], inputs: ['openssh-server', 'openssh-client'] })
+    const control = readFileSync(join(directory, 'control'), 'utf8')
+    const server = selectInputs(REPO, 'amd64').find(row => row.name === 'openssh-server')!
+    expect(control).toMatch(new RegExp(`^Version: ${server.version.replace(/^\d+:/, '').replace(/-[^-]*$/, '').replaceAll('.', '\\.')}-mica\\d+$`, 'm'))
+    const depends = (/^Depends: (.*)$/m.exec(control)?.[1] ?? '').split(', ')
+    expect(depends).toEqual(['mica-system', 'libaudit1', 'libcom-err2', 'libcrypt1', 'libgssapi-krb5-2', 'libkrb5-3', 'libpam0g', 'libselinux1', 'libssl3t64', 'libwrap0', 'libwtmpdb0', 'zlib1g'])
+    expect(depends.filter(name => name.startsWith('openssh'))).toEqual([])
+    const dockerfile = readFileSync(join(directory, 'Dockerfile'), 'utf8')
+    for (const path of ['/stage/usr/sbin/sshd', '/stage/usr/lib/openssh/sshd-session', '/stage/usr/lib/openssh/sshd-auth', '/stage/usr/bin/ssh-keygen'])
+      expect(dockerfile).toContain(` ${path};`)
+    expect(dockerfile).toContain('which no Depends of debs/mica-openssh/control provides')
+    // No client, no /etc/ssh and no sftp-server: SFTP is the root's /usr/lib/sftp-server.
+    for (const absent of [' /stage/usr/bin/ssh;', '/stage/etc/ssh', '/stage/usr/lib/openssh/sftp-server'])
+      expect(dockerfile).not.toContain(absent)
+  })
+
+  // Every library a pinned binary needs is a Depends, and every Depends a library a
+  // root can install: a row of the release.
+  test.each(['amd64', 'arm64', 'armhf'] as const)('%s: its libraries are pinned for later stages', (arch) => {
+    const control = readFileSync(join(directory, 'control'), 'utf8')
+    const rows = selectRuntime(REPO, arch, { kind: 'all' }).map(row => row.name)
+    for (const name of (/^Depends: (.*)$/m.exec(control)?.[1] ?? '').split(', ').filter(name => name !== 'mica-system'))
+      expect(rows).toContain(name)
+  })
+
+  test('adds the sshd account, uid 22, and refuses an enabled unit', () => {
+    const postinst = readFileSync(join(directory, 'postinst'), 'utf8')
+    expect(postinst).toContain('ENTRY="${NAME}:x:${ID}:65534:OpenSSH privilege separation:/run/sshd:/usr/sbin/nologin"')
+    expect(postinst).toMatch(/^ID=22$/m)
+    expect(postinst).toContain('LINK=/etc/systemd/system/multi-user.target.wants/mica-sshd.service')
+    expect(run(['sh', '-n', join(directory, 'postinst')]).code).toBe(0)
   })
 })
 

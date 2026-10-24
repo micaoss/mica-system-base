@@ -1,6 +1,6 @@
 Package: mica-openrc
-Version: 0.56-mica8
-Source-Date-Epoch: 1792820861
+Version: 0.56-mica9
+Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin

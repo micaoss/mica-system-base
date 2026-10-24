@@ -6,7 +6,7 @@ description="Build /etc/shadow in RAM from the accounts the image ships"
 
 depend() {
     need mica-mounts
-    before micad dropbear apid
+    before micad mica-sshd mica-dropbear apid
 }
 
 start() {

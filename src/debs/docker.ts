@@ -14,7 +14,8 @@
 // where <arch> is amd64, arm64 or armhf.
 //
 // `inputs` names Debian archives pinned as input.<input> in locks/upstream.lock
-// (`bun src/container.ts pin-inputs` writes them); each is passed as the build
+// (`bun src/container.ts pin-inputs` writes them), the build architecture's own;
+// each is passed as the build
 // argument MICA_INPUT_<NAME> holding its sha256, readable in the `cache` context
 // at sha256/<sha256>. `build` names the Debian packages the build stage installs;
 // their closure is pinned per architecture as build.<package>.<name> and passed as
@@ -113,8 +114,9 @@ export function buildDebs(context: BuildContext, only: string[] = [], target?: A
     const entry = packages.find(candidate => candidate.name === name)!
     const rowsArch = arch === 'all' ? context.native : arch
     const args: string[] = []
+    const inputs = selectInputs(context.repo, rowsArch).filter(row => row.architecture === rowsArch || row.architecture === 'all')
     for (const input of entry.inputs)
-      args.push('--build-arg', `${argName('MICA_INPUT', input)}=${sha(selectInputs(context.repo, rowsArch), input, `input of debs/${entry.name}`)}`)
+      args.push('--build-arg', `${argName('MICA_INPUT', input)}=${sha(inputs, input, `input of debs/${entry.name}`)}`)
     for (const source of entry.sources) {
       const { version, url, sha256 } = selectSource(context.repo, source)
       args.push('--build-arg', `${argName('MICA_SOURCE', source)}_VERSION=${version}`, '--build-arg', `${argName('MICA_SOURCE', source)}_URL=${url}`, '--build-arg', `${argName('MICA_SOURCE', source)}_SHA256=${sha256}`)

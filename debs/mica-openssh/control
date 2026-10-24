@@ -1,0 +1,30 @@
+Package: mica-openssh
+Version: 10.0p1-mica1
+Source-Date-Epoch: 1792823171
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: net
+Priority: optional
+Depends: mica-system, libaudit1, libcom-err2, libcrypt1, libgssapi-krb5-2, libkrb5-3, libpam0g, libselinux1, libssl3t64, libwrap0, libwtmpdb0, zlib1g
+Provides: mica-ssh-server
+Conflicts: mica-ssh
+Description: Mica OS SSH: OpenSSH, disabled until micad enables it
+ SSH as an option on the floor, in place of mica-ssh's dropbear: sshd,
+ sshd-session, sshd-auth and ssh-keygen of the pinned openssh-server and
+ openssh-client, carried as payload with their libraries in Depends (the Debian
+ packages themselves need debconf, ucf and systemd's sysusers), and
+ mica-sshd.service, its prestart /usr/lib/mica/mica-sshd-prestart and the preset
+ that keeps the unit disabled. micad enables and starts it at runtime scope after
+ writing /run/mica/sshd.env; the prestart makes the ed25519 host key on the
+ STATE partition at the first start and renders /run/mica/sshd_config. The unit
+ requires mica-shadow-reconcile.service, so the shadow file is built in RAM
+ before a login can read it. No ssh client; SFTP is the root's
+ /usr/lib/sftp-server.
+ .
+ UsePAM no: sshd checks a password through crypt(3) against /etc/shadow, as
+ dropbear does, and refuses every login, keys included, to an account whose
+ shadow field is `!`; `*` is an account with no password. The postinst adds
+ sshd's privilege separation account, sshd, uid 22.
+ .
+ On an OpenRC root the same service is /etc/init.d/mica-sshd, in no runlevel:
+ micad starts it the same way.

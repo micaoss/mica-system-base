@@ -2,9 +2,9 @@
 Description=Build /etc/shadow in RAM from the accounts the image ships
 Documentation=file:/usr/lib/mica/mica-shadow-reconcile
 # After the app accounts are bound, so each gets its locked entry, and before
-# everything that reads /etc/shadow (dropbear, logind) or writes it (micad).
+# everything that reads /etc/shadow (the SSH server, logind) or writes it (micad).
 After=mica-accounts.service
-Before=micad.service dropbear.service systemd-logind.service systemd-user-sessions.service
+Before=micad.service mica-sshd.service dropbear.service systemd-logind.service systemd-user-sessions.service
 
 [Service]
 Type=oneshot

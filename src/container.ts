@@ -10,11 +10,11 @@ import { buildDebs, declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
 import { ARCHES, hostArch, IMAGE_ARCHES, imageArch, lockRows, parseRows, SELECTIONS, selectRuntime, selectSource, sourceRows, UPSTREAM_LOCK, UPSTREAM_PKGS } from './lock.ts'
-import { addedNames, runtimeRoots, tagUpstream } from './pin-inputs.ts'
+import { addedNames, inputRoots, runtimeRoots, tagUpstream } from './pin-inputs.ts'
 import { assertEnvironmentImage, environment, REPO, sources } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
 import type { Init } from './rootfs.ts'
-import { basePackages, HOSTNAME, initRoots, INITS, ISSUE_ENV } from './rootfs.ts'
+import { basePackages, HOSTNAME, initRoots, INITS, installedPackages, ISSUE_ENV } from './rootfs.ts'
 
 const COMMANDS = ['cache', 'verify', 'select', 'bootstrap', 'pin-inputs', 'test', 'test-bootstrap']
 const IN_CONTAINER = '/mica-system-base'
@@ -300,15 +300,27 @@ const byBytes = (a: string, b: string): number => Buffer.compare(Buffer.from(a),
 // source rows stay. --check only compares.
 async function pinInputs(check: boolean): Promise<void> {
   const resolved: string[][] = []
-  // The packages that take inputs are Architecture: all, built in an environment image.
+  // An `all` package takes its inputs on each environment image's architecture, which
+  // builds it; an architecture's own package takes its own. An input is one or the
+  // other, so its rows are those architectures' alone.
+  const packages = declared(REPO)
+  const ofAll = new Set(packages.filter(entry => entry.arches.includes('all')).flatMap(entry => entry.inputs))
+  const shared = [...ofAll].filter(name => packages.some(entry => !entry.arches.includes('all') && entry.inputs.includes(name)))
+  if (shared.length)
+    fail(`${shared.join(', ')} is an input of an \`all\` package and of an architecture's own`)
   const inputs = new Map<Arch, Row[]>()
-  for (const arch of IMAGE_ARCHES)
-    inputs.set(arch, await runPinInputs(arch, 'inputs', []))
-  for (const name of declared(REPO).flatMap(entry => entry.inputs)) {
-    if (IMAGE_ARCHES.some(arch => !inputs.get(arch)!.some(row => row.name === name)))
-      fail(`the snapshot resolved no ${name}`)
+  for (const arch of ARCHES.filter(each => inputRoots(packages, each).length)) {
+    const rows = await runPinInputs(arch, 'inputs', [], { foreign: true })
+    const missing = inputRoots(packages, arch).filter(name => !rows.some(row => row.name === name))
+    if (missing.length)
+      fail(`the snapshot resolved no ${missing.join(', ')} for ${arch}`)
+    inputs.set(arch, rows)
   }
-  resolved.push(...lockRows('input.', inputs))
+  const pick = (keep: (name: string) => boolean, arches: Arch[]): Map<Arch, Row[]> =>
+    new Map([...inputs].filter(([arch]) => arches.includes(arch)).map(([arch, rows]) => [arch, rows.filter(row => keep(row.name))]))
+  resolved.push(...lockRows('input.', pick(name => ofAll.has(name), IMAGE_ARCHES)))
+  for (const arch of ARCHES)
+    resolved.push(...lockRows('input.', pick(name => !ofAll.has(name), [arch])))
   for (const entry of declared(REPO).filter(candidate => candidate.build.length)) {
     const build = new Map<Arch, Row[]>()
     for (const arch of entry.arches.includes('all') ? IMAGE_ARCHES : entry.arches as Arch[])
@@ -607,8 +619,11 @@ async function debs(argv: string[]): Promise<number> {
 // that loads the modules this kernel keeps out of its image -- virtio_blk, and the
 // quota format DATA's project quotas need -- and hands over to openrc-init. A stand-in mica-deploy
 // reports a deployment and, when the health gate confirms it, powers the machine
-// off, so the run covers the boot, the gate and the shutdown. The serial log is kept
-// in _out/boot-test.log.
+// off, so the run covers the boot, the gate and the shutdown. The root carries
+// mica-openssh, as built, and its libraries: before the shutdown the stand-in starts
+// mica-sshd as micad would, and the host logs in through QEMU's forwarded port with
+// a key, as root and as mica. The serial log is kept in _out/boot-test.log, the
+// host's side of the logins in _out/boot-test-ssh.log.
 const BOOT_TEST_OVERLAY: Record<string, string> = {
   'etc/fstab': '/dev/vdb /mnt/data ext4 noatime,prjquota 0 2\n',
   'etc/mica/health.conf': 'require=boot-settled\nsettle-sec=120\nprobe-timeout-sec=10\nvar-threshold-pct=85\n',
@@ -627,7 +642,15 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '# the gate (after *) shows nothing of it; the prompt it starts again shows it.',
     '  sleep 2',
     '  printf \'Device code: TEST-0000-ABC\\n\\n\' >/run/mica/device-code.issue.new && mv /run/mica/device-code.issue.new /run/mica/device-code.issue',
-    '  (rc-service mica-getty restart; sleep 5; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
+    '# SSH through mica-openssh: micad\'s settings and the authorized keys of root and mica, as',
+    '# micad writes them, then mica-sshd; the host logs in as both and says when it is done.',
+    '  printf \'SSH_LISTEN="22"\\nSSH_PASSWORD=no\\nSSH_ROOT_LOGIN=yes\\n\' >/run/mica/sshd.env',
+    '  for home in /root /home/mica; do mkdir -p -m 0700 $home/.ssh && cp /usr/local/share/boot-test/client.pub $home/.ssh/authorized_keys && chmod 0600 $home/.ssh/authorized_keys; done',
+    '  chown -R mica:mica /home/mica/.ssh',
+    '  rc-service mica-sshd start >/dev/null 2>&1 && echo \'boot-test: mica-sshd started\' >/dev/console',
+    '  (i=0; while [ ! -e /run/boot-test-ssh-done ] && [ $i -lt 180 ]; do sleep 1; i=$((i + 1)); done',
+    '   logread | grep mica-sshd | sed \'s/^/boot-test: sshd log: /\' >/dev/console',
+    '   rc-service mica-getty restart; sleep 5; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
     '',
@@ -665,6 +688,12 @@ install -m 0755 init initrd/init
 (cd initrd && find . | /rootfs/usr/bin/busybox cpio -o -H newc 2>/dev/null) | gzip -9 >initrd.img
 cp -a /rootfs root
 cp -a overlay/. root/
+# The SSH option the boot logs in through: mica-openssh and the libraries it adds to the
+# root, with a key the host logs in with.
+dpkg --root=root --install ssh/*.deb >/dev/null
+mkdir -p root/usr/local/share/boot-test
+ssh-keygen -q -t ed25519 -N '' -f client
+cp client.pub root/usr/local/share/boot-test/client.pub
 # What mica-build's pack stage does: the factory copy mica-shadow-reconcile builds from.
 mkdir -p root/usr/share/factory/etc
 cp -a root/etc/shadow root/usr/share/factory/etc/shadow
@@ -673,9 +702,19 @@ mke2fs -q -t ext4 -L root -d root root.img 768M
 mke2fs -q -t ext4 -L data -O quota,project -E quotatype=prjquota data.img 512M
 accel=tcg; [ -c /dev/kvm ] && accel=kvm
 timeout 600 qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m 1024 -smp 2 \\
-  -display none -no-reboot -serial file:serial.log -nic user,model=virtio-net-pci \\
+  -display none -no-reboot -serial file:serial.log -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:2222-:22 \\
   -kernel "kernel/boot/vmlinuz-$version" -initrd initrd.img -append 'console=ttyS0 panic=-1' \\
-  -drive file=root.img,if=virtio,format=raw,readonly=on -drive file=data.img,if=virtio,format=raw
+  -drive file=root.img,if=virtio,format=raw,readonly=on -drive file=data.img,if=virtio,format=raw &
+qemu=$!
+# Once the guest has started mica-sshd: a key login as root and as mica, then the word
+# that lets it shut down.
+for i in $(seq 400); do grep -q 'boot-test: mica-sshd started' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
+ssh="ssh -p 2222 -i client -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
+for user in root mica; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id)"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
+# A login on a terminal is the one sshd records, in wtmpdb's /var/lib/wtmpdb/wtmp.db.
+$ssh -tt root@127.0.0.1 true >/dev/null 2>&1 || echo "ssh-login: root on a terminal failed" >>ssh.log
+$ssh root@127.0.0.1 'ls -lL /var/lib/wtmpdb/wtmp.db 2>&1 | sed "s/^/ssh-wtmpdb: /"; touch /run/boot-test-ssh-done' >>ssh.log 2>&1 || true
+wait $qemu
 `
 
 // The expectations of the boot test's serial log.
@@ -691,7 +730,18 @@ const BOOT_TEST_EXPECT = [
   `boot-test: 127.0.1.1\t${HOSTNAME}`,
   // mica-accounts: an app account bound over /etc/passwd and /etc/group.
   'boot-test: uid=30000(boottest) gid=30000(boottest)',
+  // mica-openssh: mica-sshd started from micad's settings.
+  'boot-test: mica-sshd started',
 ]
+
+// The pinned rows mica-openssh's Depends add to `root`: the closure of each library
+// root locks/upstream.pkgs pins for later stages, less what the root has installed.
+function sshLibraries(root: string): Row[] {
+  const control = readFileSync(join(REPO, 'debs/mica-openssh/control'), 'utf8')
+  const depends = (/^Depends: (.*)$/m.exec(control)?.[1] ?? '').split(', ').map(name => `upstream-${name}`)
+  const installed = new Set(installedPackages(root))
+  return selectRuntime(REPO, 'amd64', { kind: 'all' }).filter(row => !installed.has(row.name) && row.consumers.some(consumer => depends.includes(consumer)))
+}
 
 async function bootTest(argv: string[]): Promise<number> {
   if (argv.join(' ') !== '--init openrc')
@@ -701,10 +751,12 @@ async function bootTest(argv: string[]): Promise<number> {
   const root = join(REPO, '_out/rootfs/amd64-openrc')
   if (!existsSync(join(root, 'usr/sbin/openrc-init')))
     fail(`${root} is not an OpenRC root; compose it with: bun src/container.ts rootfs --arch amd64 --init openrc`)
-  // qemu and mke2fs, from the snapshot the lock is resolved from, on the environment image.
+  // qemu, mke2fs and the ssh client, from the snapshot the lock is resolved from, on the
+  // environment image.
   const { mirror, suite } = sources()
   const base = `${environment().image}:amd64`
-  const tag = `ai-agent/mica-system-base-qemu:${new Bun.CryptoHasher('sha256').update(capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', base]).stdout + mirror).digest('hex').slice(0, 16)}`
+  const tools = 'qemu-system-x86 e2fsprogs openssh-client'
+  const tag = `ai-agent/mica-system-base-qemu:${new Bun.CryptoHasher('sha256').update(capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', base]).stdout + mirror + tools).digest('hex').slice(0, 16)}`
   const work = scratch('boot-test')
   try {
     if (capture(['docker', 'image', 'inspect', tag]).code !== 0) {
@@ -716,7 +768,7 @@ async function bootTest(argv: string[]): Promise<number> {
         'RUN echo "deb [check-valid-until=no] ${MIRROR} ${SUITE} main" >/tmp/snapshot.list && \\',
         '    apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- update -qq && \\',
         '    DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- \\',
-        '        install -y -qq --no-install-recommends qemu-system-x86 e2fsprogs >/dev/null && \\',
+        `        install -y -qq --no-install-recommends ${tools} >/dev/null && \\`,
         '    rm -rf /var/lib/apt/lists/* /tmp/snapshot.list',
         '',
       ].join('\n'))
@@ -732,6 +784,21 @@ async function bootTest(argv: string[]): Promise<number> {
     catch {
       await reposGet(join(work, 'repos'), kernel.sha256, kernel.url, join(work, 'kernel.deb'))
     }
+    // mica-openssh as built, and the pinned libraries it depends on that the root lacks.
+    const openssh = declared(REPO).find(entry => entry.name === 'mica-openssh')!
+    const archive = join(REPO, '_out/debs/amd64/pool', `mica-openssh_${openssh.version}_amd64.deb`)
+    if (!existsSync(archive))
+      fail(`${archive} is missing; build it with: bun src/container.ts debs --arch amd64`)
+    mkdirSync(join(work, 'ssh'))
+    copyFileSync(archive, join(work, 'ssh', basename(archive)))
+    for (const row of sshLibraries(root)) {
+      try {
+        copyFileSync(reposLookup(join(REPO, 'repos'), row.sha256), join(work, 'ssh', `${row.name}.deb`))
+      }
+      catch {
+        await reposGet(join(work, 'repos'), row.sha256, row.url, join(work, 'ssh', `${row.name}.deb`))
+      }
+    }
     for (const [path, content] of Object.entries(BOOT_TEST_OVERLAY)) {
       mkdirSync(dirname(join(work, 'overlay', path)), { recursive: true })
       writeFileSync(join(work, 'overlay', path), content)
@@ -743,7 +810,9 @@ async function bootTest(argv: string[]): Promise<number> {
       args.push('--device', '/dev/kvm')
     const code = attached([...args, tag, 'bash', '-c', BOOT_TEST_SCRIPT])
     const log = existsSync(join(work, 'serial.log')) ? readFileSync(join(work, 'serial.log'), 'utf8') : ''
+    const ssh = existsSync(join(work, 'ssh.log')) ? readFileSync(join(work, 'ssh.log'), 'utf8') : ''
     writeFileSync(join(REPO, '_out/boot-test.log'), log)
+    writeFileSync(join(REPO, '_out/boot-test-ssh.log'), ssh)
     if (code !== 0)
       fail(`the boot test ended with ${code} (a timeout is 124); the serial log is in _out/boot-test.log`)
     const missing = BOOT_TEST_EXPECT.filter(line => !log.includes(line))
@@ -754,6 +823,13 @@ async function bootTest(argv: string[]): Promise<number> {
     const prompts = log.split(`${HOSTNAME} login: `).slice(0, -1).map(text => text.slice(text.lastIndexOf('Mica OS Base ')))
     if (prompts.length < 2 || !prompts[0]!.startsWith('Mica OS Base ') || prompts[0]!.includes('Device code:') || !prompts.at(-1)!.includes('Device code: TEST-0000-ABC'))
       fail(`the login prompts do not show the device code only once it exists: ${JSON.stringify(prompts)} (_out/boot-test.log)`)
+    // A key login to root and to mica through OpenSSH: their shadow fields are `*`.
+    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)']) {
+      if (!ssh.includes(login))
+        fail(`no ${login} through mica-sshd (_out/boot-test-ssh.log)`)
+    }
+    if (!/^ssh-wtmpdb: -rw\S* .* \/var\/lib\/wtmpdb\/wtmp\.db$/m.test(ssh) || /sshd log: .*wtmp/i.test(log))
+      fail('sshd did not record the terminal login in /var/lib/wtmpdb/wtmp.db, or logged a wtmpdb error (_out/boot-test-ssh.log, _out/boot-test.log)')
     // No daemon keeps CAP_SYS_RESOURCE (capability 24), the DATA quota limit.
     const bounding = /boot-test: dbus-daemon CapBnd:\s*([0-9a-f]+)/.exec(log)?.[1]
     if (!bounding || (BigInt(`0x${bounding}`) >> 24n) & 1n)

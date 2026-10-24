@@ -96,7 +96,7 @@ libgmp10	base,mica-system,upstream-coreutils,upstream-curl,upstream-dropbear-bin
 libgnutls30t64	upstream-curl
 libgomp1	upstream-alsa-utils
 libgpiod3	upstream-gpiod
-libgssapi-krb5-2	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-lsof
+libgssapi-krb5-2	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-libgssapi-krb5-2,upstream-lsof
 libhogweed6t64	upstream-curl
 libi2c0	upstream-i2c-tools
 libidn2-0	upstream-bind9-dnsutils,upstream-curl,upstream-iputils-ping
@@ -105,11 +105,11 @@ libjansson4	upstream-mtr-tiny,upstream-nftables
 libjemalloc2	upstream-bind9-dnsutils,upstream-tmux
 libjq1	upstream-jq
 libjson-c5	upstream-bind9-dnsutils,upstream-libjson-c5
-libk5crypto3	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-lsof
-libkeyutils1	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-lsof
+libk5crypto3	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-libgssapi-krb5-2,upstream-lsof
+libkeyutils1	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-libgssapi-krb5-2,upstream-lsof
 libkmod2	upstream-alsa-utils,upstream-bluez,upstream-i2c-tools,upstream-kmod,upstream-pciutils,upstream-udev
-libkrb5-3	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-lsof
-libkrb5support0	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-lsof
+libkrb5-3	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-libgssapi-krb5-2,upstream-lsof
+libkrb5support0	upstream-bind9-dnsutils,upstream-curl,upstream-iproute2,upstream-libgssapi-krb5-2,upstream-lsof
 liblastlog2-2	base
 libldap2	upstream-curl
 liblmdb0	upstream-bind9-dnsutils
@@ -164,7 +164,7 @@ libsmartcols1	base,mica-system
 libsqlite3-0	base,mica-system
 libss2	mica-system
 libssh2-1t64	upstream-curl
-libssl3t64	base,upstream-alsa-utils,upstream-bind9-dnsutils,upstream-bluez,upstream-coreutils,upstream-curl,upstream-i2c-tools,upstream-iperf3,upstream-iproute2,upstream-kmod,upstream-libssl3t64,upstream-lsof,upstream-openssl,upstream-pciutils,upstream-rsync,upstream-socat,upstream-systemd,upstream-systemd-repart,upstream-systemd-resolved,upstream-systemd-sysv,upstream-systemd-timesyncd,upstream-tcpdump,upstream-udev
+libssl3t64	base,upstream-alsa-utils,upstream-bind9-dnsutils,upstream-bluez,upstream-coreutils,upstream-curl,upstream-i2c-tools,upstream-iperf3,upstream-iproute2,upstream-kmod,upstream-libgssapi-krb5-2,upstream-libssl3t64,upstream-lsof,upstream-openssl,upstream-pciutils,upstream-rsync,upstream-socat,upstream-systemd,upstream-systemd-repart,upstream-systemd-resolved,upstream-systemd-sysv,upstream-systemd-timesyncd,upstream-tcpdump,upstream-udev
 libstdc++6	upstream-bind9-dnsutils,upstream-gdisk,upstream-gpiod,upstream-tmux,upstream-zstd
 libsubid5	upstream-libsubid5
 libsystemd-shared	upstream-bluez,upstream-i2c-tools,upstream-systemd,upstream-systemd-repart,upstream-systemd-resolved,upstream-systemd-sysv,upstream-systemd-timesyncd,upstream-udev
@@ -182,7 +182,8 @@ liburcu8t64	upstream-bind9-dnsutils
 libusb-1.0-0	upstream-usbutils
 libuuid1	base,mica-system
 libuv1t64	upstream-bind9-dnsutils
-libwrap0	upstream-socat
+libwrap0	upstream-libwrap0,upstream-socat
+libwtmpdb0	upstream-libwtmpdb0
 libxml2	upstream-bind9-dnsutils
 libxtables12	upstream-iproute2,upstream-nftables
 libxxhash0	upstream-rsync,upstream-zstd
@@ -201,7 +202,7 @@ netcat-openbsd	upstream-netcat-openbsd
 nftables	upstream-nftables
 openrc	upstream-openrc
 openssl	upstream-openssl
-openssl-provider-legacy	base,upstream-alsa-utils,upstream-bind9-dnsutils,upstream-bluez,upstream-coreutils,upstream-curl,upstream-i2c-tools,upstream-iperf3,upstream-iproute2,upstream-kmod,upstream-libssl3t64,upstream-lsof,upstream-openssl,upstream-pciutils,upstream-rsync,upstream-socat,upstream-systemd,upstream-systemd-repart,upstream-systemd-resolved,upstream-systemd-sysv,upstream-systemd-timesyncd,upstream-tcpdump,upstream-udev
+openssl-provider-legacy	base,upstream-alsa-utils,upstream-bind9-dnsutils,upstream-bluez,upstream-coreutils,upstream-curl,upstream-i2c-tools,upstream-iperf3,upstream-iproute2,upstream-kmod,upstream-libgssapi-krb5-2,upstream-libssl3t64,upstream-lsof,upstream-openssl,upstream-pciutils,upstream-rsync,upstream-socat,upstream-systemd,upstream-systemd-repart,upstream-systemd-resolved,upstream-systemd-sysv,upstream-systemd-timesyncd,upstream-tcpdump,upstream-udev
 parted	upstream-parted
 passwd	base,mica-system
 pci.ids	upstream-pciutils

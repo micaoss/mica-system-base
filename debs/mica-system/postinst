@@ -59,9 +59,11 @@ extra="$(awk -F: -v n="${NAME}" '$1 != n && $4 ~ "(^|,)" n "(,|$)" { print $1 }'
 [ -z "${extra}" ] ||
     { echo "error: ${NAME} is a member of supplementary group(s): ${extra}; this package grants none, and no sudo" >&2; exit 1; }
 
-# Locked, never empty (an empty field accepts no password) and never a hash (a
-# hash in an image is shared by every device).
+# No password, never empty (an empty field accepts no password) and never a hash
+# (a hash in an image is shared by every device). `*`, not useradd's `!`: OpenSSH
+# without PAM refuses every login, keys included, to an account marked `!`.
 mh="$(awk -F: -v n="${NAME}" '$1 == n { print $2; exit }' /etc/shadow)"
+[ "${mh}" != '!' ] || { usermod -p '*' "${NAME}"; mh='*'; }
 case "${mh}" in
 "") echo "error: the ${NAME} entry in /etc/shadow has an EMPTY password field, which means PASSWORDLESS login: pam_unix accepts any password, including none. Empty is not a locked marker" >&2; exit 1 ;;
 '!'* | '*'*) ;;

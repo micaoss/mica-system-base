@@ -1,6 +1,6 @@
 Package: mica-system
-Version: 13.8+deb13u7-mica4
-Source-Date-Epoch: 1792792090
+Version: 13.8+deb13u7-mica5
+Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -20,14 +20,15 @@ Description: Mica OS board-independent system policy
  quotas are mica-deploy's: its runkit sets them when it mounts DATA.
  .
  SSH and the console are options, not part of this package: mica-ssh carries
- dropbear, and a getty starts only once the console option has installed
+ dropbear and mica-openssh OpenSSH, and a getty starts only once the console option has installed
  /usr/bin/login. /etc/issue.d/50-mica-device-code.issue links to
  /run/mica/device-code.issue, so the login prompt shows the device code micad
  writes there, and nothing while it has written none.
  .
  /etc/shadow is built in RAM at every boot from the image's factory copy, every
- account locked; a transient root password set through micad lasts until the
- next boot.
+ account locked; the operator account mica's is `*`, no password, which OpenSSH
+ without PAM takes key logins to, as it does not to `!`. A transient root
+ password set through micad lasts until the next boot.
  .
  The postinst creates the operator account mica, uid and gid 1000, home
  /home/mica on DATA, shell /bin/sh, with no supplementary groups and no

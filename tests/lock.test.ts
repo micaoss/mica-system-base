@@ -121,8 +121,9 @@ test.each(ARCHES)('%s: curl and iproute2 stay out of the floor, iptables out of 
     expect(all).not.toContain(removed)
 })
 
-// The SSH server is dropbear, an option pinned for later stages; OpenSSH is not in the lock.
-test.each(ARCHES)('%s: SSH is dropbear, pinned for later stages, never OpenSSH', (arch) => {
+// The SSH server is dropbear, an option pinned for later stages, or mica-openssh's
+// binaries: OpenSSH's packages are inputs only, never rows a root installs.
+test.each(ARCHES)('%s: SSH is dropbear, pinned for later stages, never OpenSSH\'s packages', (arch) => {
   const rows = selectRuntime(REPO, arch, { kind: 'all' })
   for (const removed of ['openssh-server', 'openssh-client', 'openssh-sftp-server', 'libfido2-1'])
     expect(rows.map(row => row.name)).not.toContain(removed)

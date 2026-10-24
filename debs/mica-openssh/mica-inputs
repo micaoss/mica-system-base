@@ -1,0 +1,4 @@
+# mica-inputs v1
+package mica-openssh
+source input.openssh-server
+source input.openssh-client

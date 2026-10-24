@@ -36,12 +36,15 @@ libasound2t64
 libatomic1
 libdw1t64
 libglib2.0-0t64
+libgssapi-krb5-2
 libjson-c5
 libnl-genl-3-200
 libreadline8t64
 libseccomp2
 libssl3t64
 libsubid5
+libwrap0
+libwtmpdb0
 login
 nftables
 procps

@@ -1,0 +1,50 @@
+#!/bin/sh
+# mica-sshd.service's ExecStartPre (mica-ssh), and mica-sshd's start_pre on OpenRC.
+#
+# Reads micad's /run/mica/sshd.env from the environment:
+#   SSH_LISTEN      listeners, each <port> (every address) or <address>:<port>
+#                   (an IPv6 address in brackets)
+#   SSH_PASSWORD    yes|no: password logins
+#   SSH_ROOT_LOGIN  yes|no: root logins
+# Refuses anything else, and translates it into dropbear's arguments, written as
+# DROPBEAR_ARGS="..." to /run/mica/sshd-dropbear.env for the server to start
+# with: -p per listener, -s without password logins, -w without root logins.
+# mica-dropbear-prestart makes the host key.
+set -eu
+
+out=${MICA_SSHD_DROPBEAR_ENV:-/run/mica/sshd-dropbear.env}
+
+refuse() { echo "mica-sshd-prestart: $*" >&2; exit 1; }
+
+[ -n "${SSH_LISTEN:-}" ] || refuse "SSH_LISTEN from /run/mica/sshd.env names no listener"
+args=
+for listener in $SSH_LISTEN; do
+    bad="SSH_LISTEN names '$listener', neither <port> nor <address>:<port>"
+    case "$listener" in
+    *[!0-9a-fA-F:.[\]]*) refuse "$bad" ;;
+    *[!0-9]*) ;;
+    *) args="$args -p $listener"; continue ;;
+    esac
+    address=${listener%:*} port=${listener##*:}
+    case "$port" in '' | *[!0-9]*) refuse "$bad" ;; esac
+    case "$address" in
+    \[*:*\]) ;;
+    *[!0-9.]* | '') refuse "$bad" ;;
+    esac
+    args="$args -p $listener"
+done
+case "${SSH_PASSWORD:-}" in
+yes) ;;
+no) args="$args -s" ;;
+*) refuse "SSH_PASSWORD is '${SSH_PASSWORD:-}', not yes or no" ;;
+esac
+case "${SSH_ROOT_LOGIN:-}" in
+yes) ;;
+no) args="$args -w" ;;
+*) refuse "SSH_ROOT_LOGIN is '${SSH_ROOT_LOGIN:-}', not yes or no" ;;
+esac
+args=${args# }
+
+DROPBEAR_ARGS=$args /usr/lib/mica/mica-dropbear-prestart
+printf 'DROPBEAR_ARGS="%s"\n' "$args" >"$out.new"
+mv "$out.new" "$out"

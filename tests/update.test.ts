@@ -21,6 +21,8 @@ test('a version is its upstream\'s with a mica revision', () => {
   expect(() => nextVersion('1.0.0', '1.0.0')).toThrow('is not <upstream>-[mica]<revision>')
   expect(upstreamOf('2026c-0+deb13u1')).toBe('2026c')
   expect(upstreamOf('13.8+deb13u7')).toBe('13.8+deb13u7')
+  // A package's version carries no epoch: the upstream's is dropped.
+  expect(upstreamOf('1:10.0p1-7+deb13u4')).toBe('10.0p1')
 })
 
 test('the latest release in a download listing is the highest version, not the last listed', () => {

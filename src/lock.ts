@@ -172,10 +172,12 @@ export function selectRuntime(repo: string, arch: Arch, selection: Selection): R
 }
 
 // Inputs: archives a package of debs/ takes files out of (input.<name>); unpacked
-// at build time, never installed in a root. The packages taking them are
-// Architecture: all, built in an environment image: armhf's are amd64's.
+// at build time, never installed in a root. An `all` package is built in an
+// environment image, so armhf's build takes amd64's inputs for it, and armhf's own
+// for a package of its own.
 export function selectInputs(repo: string, arch: Arch): Row[] {
-  return debianRows(repo, imageArch(arch), INPUT)
+  const own = arch === imageArch(arch) ? [] : debianRows(repo, arch, INPUT).filter(row => row.architecture === arch)
+  return [...debianRows(repo, imageArch(arch), INPUT), ...own]
 }
 
 // Build pins: the closure of the build tools a package installs into its build

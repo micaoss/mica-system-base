@@ -26,6 +26,7 @@ Building and publishing run on [mica-build-tools](https://github.com/micaoss/mic
 | `mica-mdev` | all | device nodes without udev, for `mica-openrc` |
 | `mica-systemd-boot` | amd64, arm64 | the systemd-boot EFI loader, with persisted boot attempts |
 | `mica-ssh` | all | SSH: dropbear, started by micad |
+| `mica-openssh` | amd64, arm64, armhf | SSH: OpenSSH's sshd, started by micad, in place of `mica-ssh` |
 | `mica-storage-ubi` | armhf | stands in for e2fsprogs and fdisk where DATA is UBIFS |
 | `mica-wifi` | amd64, arm64 | a minimal `wpa_supplicant` |
 | `mica-wifi-ap` | amd64, arm64 | a minimal `hostapd` |
@@ -112,6 +113,10 @@ account exists for a person, not as a privilege boundary.
 dropbear reaches an account through `crypt(3)` against `/etc/shadow`. SSH is the only route
 into a fielded device, so the build of mica-ssh refuses a pinned `dropbear-bin` that depends
 on PAM or whose binary names `libpam` (a byte check: it can only err towards refusing).
+mica-openssh's sshd runs with `UsePAM no` and does the same. Without PAM, sshd refuses every
+login, keys included, to an account whose shadow field is `!`; `*` is one with no password,
+and it is the marker mica-system gives `mica`. Its privilege separation account `sshd`
+(uid 22, group `nogroup`, no shell) is added by mica-openssh's postinst.
 
 ### The container graphroot's mount options are a default, not a boundary
 

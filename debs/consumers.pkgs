@@ -6,6 +6,7 @@ mica-busybox
 mica-ca-trust
 mica-mdev
 mica-openrc
+mica-openssh
 mica-ssh
 mica-storage-ubi
 mica-system

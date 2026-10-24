@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# mica-sshd.service on an OpenRC root, with OpenSSH: the settings micad writes to
+# /run/mica/sshd.env, rendered by mica-sshd-prestart into /run/mica/sshd_config.
+# In no runlevel; micad starts and stops it from access.ssh. The same service as
+# mica-ssh's.
+
+description="SSH server (OpenSSH)"
+command=/usr/sbin/sshd
+command_args="-D -e -f /run/mica/sshd_config"
+supervisor=supervise-daemon
+respawn_delay=2
+error_logger="busybox logger -t mica-sshd"
+
+depend() {
+    need mica-mounts mica-shadow-reconcile
+    after net
+}
+
+start_pre() {
+    if [ ! -r /run/mica/sshd.env ]; then
+        eerror "/run/mica/sshd.env is absent: micad has not configured SSH"
+        return 1
+    fi
+    set -a
+    . /run/mica/sshd.env
+    set +a
+    # The privilege separation directory sshd requires.
+    checkpath -d -m 0755 -o root:root /run/sshd
+    /usr/lib/mica/mica-sshd-prestart
+}

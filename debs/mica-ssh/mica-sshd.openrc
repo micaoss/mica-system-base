@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# mica-sshd.service on an OpenRC root, with dropbear: the settings micad writes to
+# /run/mica/sshd.env, translated by mica-sshd-prestart. In no runlevel; micad
+# starts and stops it from access.ssh. The same service as mica-openssh's.
+
+description="SSH server (dropbear)"
+command=/usr/sbin/dropbear
+supervisor=supervise-daemon
+respawn_delay=2
+error_logger="busybox logger -t mica-sshd"
+
+depend() {
+    need mica-mounts mica-shadow-reconcile
+    after net
+}
+
+start_pre() {
+    if [ ! -r /run/mica/sshd.env ]; then
+        eerror "/run/mica/sshd.env is absent: micad has not configured SSH"
+        return 1
+    fi
+    set -a
+    . /run/mica/sshd.env
+    set +a
+    /usr/lib/mica/mica-sshd-prestart || return 1
+    . /run/mica/sshd-dropbear.env
+    command_args="-F -E -r /mnt/data/state/ssh/dropbear_ed25519_host_key ${DROPBEAR_ARGS}"
+}

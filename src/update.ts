@@ -38,6 +38,7 @@ export const UPSTREAM: Record<string, string> = {
   'mica-ca-trust': 'input.ca-certificates',
   'mica-mdev': 'source.busybox',
   'mica-openrc': 'openrc',
+  'mica-openssh': 'input.openssh-server',
   'mica-ssh': 'input.dropbear-bin',
   'mica-storage-ubi': 'base-files',
   'mica-system': 'base-files',
@@ -48,9 +49,10 @@ export const UPSTREAM: Record<string, string> = {
   'mica-wifi-ap': 'source.hostapd',
 }
 
-// The upstream part of a Debian version: no revision.
+// The upstream part of a Debian version: no epoch and no revision.
 export function upstreamOf(version: string): string {
-  return version.includes('-') ? version.slice(0, version.lastIndexOf('-')) : version
+  const upstream = version.replace(/^\d+:/, '')
+  return upstream.includes('-') ? upstream.slice(0, upstream.lastIndexOf('-')) : upstream
 }
 
 // The version of the lock row `name` (the amd64 or architecture-independent one).

@@ -1,6 +1,7 @@
-// Access: /etc/shadow built in RAM (payload/usr/lib/mica/mica-shadow-reconcile)
-// and dropbear.service's prestart (debs/mica-ssh/mica-dropbear-prestart) with the
-// static half of the dropbear contract.
+// Access: /etc/shadow built in RAM (payload/usr/lib/mica/mica-shadow-reconcile),
+// dropbear.service's prestart (debs/mica-ssh/mica-dropbear-prestart) and
+// mica-sshd.service's, mica-ssh's and mica-openssh's, with the static half of
+// their contract.
 import { chmodSync, chownSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
@@ -248,9 +249,200 @@ describe('the dropbear contract in mica-ssh', () => {
     expect(readFileSync(join(REPO, 'debs/mica-ssh/mica-dropbear-prestart'), 'utf8')).toContain('state=${MICA_SSH_STATE:-/mnt/data/state/ssh}')
   })
 
-  test('the postinst refuses the link, and no OpenSSH is anywhere', () => {
-    expect(readFileSync(join(REPO, 'debs/mica-ssh/postinst'), 'utf8')).toMatch(/^DROPBEAR_LINK=\/etc\/systemd\/system\/multi-user\.target\.wants\/dropbear\.service$/m)
+  test('the postinst refuses either link, and no OpenSSH is in the floor', () => {
+    const postinst = readFileSync(join(REPO, 'debs/mica-ssh/postinst'), 'utf8')
+    expect(postinst).toContain('for unit in mica-sshd.service dropbear.service; do')
+    expect(postinst).toContain('LINK="/etc/systemd/system/multi-user.target.wants/${unit}"')
     expect(existsSync(join(PAYLOAD, 'etc/ssh'))).toBe(false)
     expect(existsSync(join(PAYLOAD, 'etc/systemd/system/etc-ssh.mount'))).toBe(false)
+  })
+})
+
+// micad's /run/mica/sshd.env, whichever server the product carries.
+const SSHD_ENV = { SSH_LISTEN: '22', SSH_PASSWORD: 'no', SSH_ROOT_LOGIN: 'yes' }
+const BAD_ENVS: Record<string, string>[] = [
+  {},
+  { ...SSHD_ENV, SSH_LISTEN: '' },
+  { ...SSHD_ENV, SSH_LISTEN: '22;reboot' },
+  { ...SSHD_ENV, SSH_LISTEN: '192.0.2.5' },
+  { ...SSHD_ENV, SSH_LISTEN: 'host.example:22' },
+  { ...SSHD_ENV, SSH_LISTEN: '[2001:db8::5]' },
+  { ...SSHD_ENV, SSH_PASSWORD: 'maybe' },
+  { ...SSHD_ENV, SSH_ROOT_LOGIN: '' },
+]
+
+describe('mica-sshd-prestart of mica-ssh (dropbear)', () => {
+  const bin = join(box.dir, 'sshd-dropbear-bin')
+  const trace = join(box.dir, 'sshd-dropbear-trace')
+  fake(bin, 'dropbearkey', 'printf \'dropbearkey %s\\n\' "$*" >>"$MICA_TEST_TRACE"\n[ ! -e "$4" ] || exit 1\nprintf \'generated %s\\n\' "$2" >"$4"\nprintf \'public\\n\' >"$4.pub"')
+  const script = join(box.dir, 'mica-sshd-prestart.dropbear')
+  writeFileSync(script, readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd-prestart'), 'utf8').replace('/usr/lib/mica/mica-dropbear-prestart', join(REPO, 'debs/mica-ssh/mica-dropbear-prestart')))
+  const newCase = (name: string): { state: string, out: string } => {
+    const state = join(box.dir, 'sshd-dropbear', name, 'ssh')
+    mkdirSync(state, { recursive: true })
+    chmodSync(state, 0o700)
+    writeFileSync(trace, '')
+    return { state, out: join(state, '..', 'sshd-dropbear.env') }
+  }
+  const prestart = (c: { state: string, out: string }, env: Record<string, string>): number =>
+    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_DROPBEAR_ENV: c.out, ...env }).code
+
+  test('translates the settings into dropbear\'s arguments and makes the dropbear key', () => {
+    const c = newCase('every-address')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 22 -s"\n')
+    expect(readFileSync(join(c.state, 'dropbear_ed25519_host_key'), 'utf8')).toBe('generated ed25519\n')
+    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no' })).toBe(0)
+    expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 192.0.2.5:22 -p [2001:db8::5]:2222 -w"\n')
+    expect(readFileSync(trace, 'utf8').split('\n').filter(Boolean)).toHaveLength(1)
+  })
+
+  test('refuses settings that are not micad\'s, before making a key', () => {
+    for (const env of BAD_ENVS) {
+      const c = newCase('refused')
+      rmSync(c.out, { force: true })
+      expect(prestart(c, env)).not.toBe(0)
+      expect(existsSync(c.out)).toBe(false)
+      expect(readdirSync(c.state)).toEqual([])
+    }
+  })
+})
+
+describe('mica-sshd-prestart of mica-openssh', () => {
+  const script = join(REPO, 'debs/mica-openssh/mica-sshd-prestart')
+  const bin = join(box.dir, 'openssh-bin')
+  const trace = join(box.dir, 'openssh-trace')
+  // ssh-keygen writes the key and <file>.pub, and refuses an existing file; sshd -t
+  // fails on demand.
+  fake(bin, 'ssh-keygen', 'printf \'ssh-keygen %s\\n\' "$*" >>"$MICA_TEST_TRACE"\nfor key; do :; done\n[ ! -e "$key" ] || exit 1\nprintf \'generated ed25519\\n\' >"$key"\nprintf \'public\\n\' >"$key.pub"')
+  fake(bin, 'sshd', 'printf \'sshd %s\\n\' "$*" >>"$MICA_TEST_TRACE"\n[ -z "${MICA_TEST_SSHD_FAIL:-}" ]')
+  const newCase = (name: string): { state: string, key: string, config: string } => {
+    const state = join(box.dir, 'openssh', name, 'ssh')
+    mkdirSync(state, { recursive: true })
+    chmodSync(state, 0o700)
+    writeFileSync(trace, '')
+    return { state, key: join(state, 'ssh_host_ed25519_key'), config: join(state, '..', 'sshd_config') }
+  }
+  const prestart = (c: { state: string, config: string }, env: Record<string, string>): number =>
+    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, ...env }).code
+  const rendered = (c: { key: string }, listen: string[], password: string, root: string): string => [
+    '# Rendered by /usr/lib/mica/mica-sshd-prestart from /run/mica/sshd.env.',
+    ...listen.map(listener => `ListenAddress ${listener}`),
+    `HostKey ${c.key}`,
+    `PasswordAuthentication ${password}`,
+    `PermitRootLogin ${root}`,
+    'KbdInteractiveAuthentication no',
+    'PubkeyAuthentication yes',
+    'AuthorizedKeysFile .ssh/authorized_keys',
+    'StrictModes yes',
+    'UsePAM no',
+    'UseDNS no',
+    'X11Forwarding no',
+    'PrintMotd no',
+    'PrintLastLog no',
+    'PidFile none',
+    'KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256',
+    'Subsystem sftp /usr/lib/sftp-server',
+    '',
+  ].join('\n')
+
+  test('renders sshd_config from the settings, checked by sshd -t, with no PAM', () => {
+    const c = newCase('render')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
+    expect(readFileSync(trace, 'utf8')).toContain(`sshd -t -f ${c.config}.new\n`)
+    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no' })).toBe(0)
+    expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['192.0.2.5:22', '[2001:db8::5]:2222'], 'yes', 'no'))
+  })
+
+  test('the first start generates an owner-only ed25519 key on STATE, and later starts keep it', () => {
+    const c = newCase('key')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.key, 'utf8')).toBe('generated ed25519\n')
+    expect(mode(c.key)).toBe('600')
+    expect(readdirSync(c.state)).toEqual(['ssh_host_ed25519_key'])
+    expect(readFileSync(trace, 'utf8')).toContain(`ssh-keygen -q -t ed25519 -N  -C  -f ${c.key}.new\n`)
+    writeFileSync(trace, '')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.key, 'utf8')).toBe('generated ed25519\n')
+    expect(readFileSync(trace, 'utf8')).not.toContain('ssh-keygen')
+  })
+
+  test('refuses STATE and keys another user could have planted or read', () => {
+    const writable = newCase('writable-dir')
+    chmodSync(writable.state, 0o777)
+    expect(prestart(writable, SSHD_ENV)).not.toBe(0)
+    expect(existsSync(writable.key)).toBe(false)
+    const readable = newCase('readable-key')
+    writeFileSync(readable.key, 'mine\n', { mode: 0o644 })
+    chmodSync(readable.key, 0o644)
+    expect(prestart(readable, SSHD_ENV)).not.toBe(0)
+    const linked = newCase('symlink-key')
+    writeFileSync(join(linked.state, '..', 'elsewhere'), 'elsewhere\n')
+    symlinkSync(join(linked.state, '..', 'elsewhere'), linked.key)
+    expect(prestart(linked, SSHD_ENV)).not.toBe(0)
+    expect(existsSync(linked.config)).toBe(false)
+  })
+
+  test('a configuration sshd refuses leaves the last one in place', () => {
+    const c = newCase('sshd-refuses')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    const before = readFileSync(c.config, 'utf8')
+    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes', MICA_TEST_SSHD_FAIL: '1' })).not.toBe(0)
+    expect(readFileSync(c.config, 'utf8')).toBe(before)
+    expect(existsSync(`${c.config}.new`)).toBe(false)
+  })
+
+  test('refuses settings that are not micad\'s, before making a key', () => {
+    for (const env of BAD_ENVS) {
+      const c = newCase('refused')
+      expect(prestart(c, env)).not.toBe(0)
+      expect(readdirSync(c.state)).toEqual([])
+      expect(existsSync(c.config)).toBe(false)
+    }
+  })
+})
+
+// One service, two servers: micad drives mica-sshd whichever the product carries.
+describe.each(['mica-ssh', 'mica-openssh'])('the mica-sshd contract in %s', (name) => {
+  const directory = join(REPO, 'debs', name)
+  const unit = readFileSync(join(directory, 'mica-sshd.service'), 'utf8').split('\n')
+  const openrc = readFileSync(join(directory, 'mica-sshd.openrc'), 'utf8')
+
+  test('the unit needs micad\'s settings, the shadow file and STATE, keeps sessions and logs as mica-sshd', () => {
+    for (const line of [
+      'EnvironmentFile=/run/mica/sshd.env',
+      'ExecStartPre=/usr/lib/mica/mica-sshd-prestart',
+      'Requires=mica-shadow-reconcile.service',
+      'RequiresMountsFor=/mnt/data/state',
+      'SyslogIdentifier=mica-sshd',
+      'KillMode=process',
+      'WantedBy=multi-user.target',
+    ])
+      expect(unit).toContain(line)
+    expect(unit.some(line => /^After=.*\bmica-shadow-reconcile\.service\b/.test(line))).toBe(true)
+    expect(readFileSync(join(directory, '50-mica-sshd.preset'), 'utf8')).toBe('disable mica-sshd.service\n')
+  })
+
+  test('the OpenRC service reads the same settings, runs the same prestart and logs as mica-sshd', () => {
+    for (const text of ['. /run/mica/sshd.env', '/usr/lib/mica/mica-sshd-prestart', 'need mica-mounts mica-shadow-reconcile', 'error_logger="busybox logger -t mica-sshd"', 'supervisor=supervise-daemon'])
+      expect(openrc).toContain(text)
+  })
+})
+
+describe('the servers behind mica-sshd', () => {
+  test('dropbear starts with the arguments mica-ssh\'s prestart writes', () => {
+    const unit = readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd.service'), 'utf8').split('\n')
+    expect(unit).toContain('EnvironmentFile=-/run/mica/sshd-dropbear.env')
+    expect(unit).toContain('ExecStart=/usr/sbin/dropbear -F -E -r /mnt/data/state/ssh/dropbear_ed25519_host_key $DROPBEAR_ARGS')
+  })
+
+  test('sshd starts on the rendered configuration, with its privilege separation directory', () => {
+    const unit = readFileSync(join(REPO, 'debs/mica-openssh/mica-sshd.service'), 'utf8').split('\n')
+    for (const line of ['ExecStart=/usr/sbin/sshd -D -e -f /run/mica/sshd_config', 'RuntimeDirectory=sshd', 'RuntimeDirectoryMode=0755'])
+      expect(unit).toContain(line)
+    const openrc = readFileSync(join(REPO, 'debs/mica-openssh/mica-sshd.openrc'), 'utf8')
+    expect(openrc).toContain('command_args="-D -e -f /run/mica/sshd_config"')
+    expect(openrc).toContain('checkpath -d -m 0755 -o root:root /run/sshd')
   })
 })

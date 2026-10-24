@@ -1,0 +1,96 @@
+#!/bin/sh
+# mica-sshd.service's ExecStartPre (mica-openssh), and mica-sshd's start_pre on
+# OpenRC.
+#
+# Reads micad's /run/mica/sshd.env from the environment:
+#   SSH_LISTEN      listeners, each <port> (every address) or <address>:<port>
+#                   (an IPv6 address in brackets)
+#   SSH_PASSWORD    yes|no: password logins
+#   SSH_ROOT_LOGIN  yes|no: root logins
+# Refuses anything else. Makes the ed25519 host key on DATA/state at the first
+# start -- written to a temporary name and renamed, so an interrupted start leaves
+# no truncated key; an existing key is kept. Symbolic links, foreign owners, a
+# group/world-writable directory and group/world-readable keys are refused. Then
+# renders /run/mica/sshd_config, which sshd -t checks before it replaces the last
+# one.
+set -eu
+
+state=${MICA_SSH_STATE:-/mnt/data/state/ssh}
+owner=${MICA_SSH_OWNER:-0}
+config=${MICA_SSHD_CONFIG:-/run/mica/sshd_config}
+key=$state/ssh_host_ed25519_key
+
+refuse() { echo "mica-sshd-prestart: $*" >&2; exit 1; }
+
+[ -n "${SSH_LISTEN:-}" ] || refuse "SSH_LISTEN from /run/mica/sshd.env names no listener"
+listen=
+for listener in $SSH_LISTEN; do
+    bad="SSH_LISTEN names '$listener', neither <port> nor <address>:<port>"
+    case "$listener" in
+    *[!0-9a-fA-F:.[\]]*) refuse "$bad" ;;
+    *[!0-9]*) ;;
+    *) listen="$listen 0.0.0.0:$listener [::]:$listener"; continue ;;
+    esac
+    address=${listener%:*} port=${listener##*:}
+    case "$port" in '' | *[!0-9]*) refuse "$bad" ;; esac
+    case "$address" in
+    \[*:*\]) ;;
+    *[!0-9.]* | '') refuse "$bad" ;;
+    esac
+    listen="$listen $listener"
+done
+case "${SSH_PASSWORD:-}" in yes | no) ;; *) refuse "SSH_PASSWORD is '${SSH_PASSWORD:-}', not yes or no" ;; esac
+case "${SSH_ROOT_LOGIN:-}" in yes | no) ;; *) refuse "SSH_ROOT_LOGIN is '${SSH_ROOT_LOGIN:-}', not yes or no" ;; esac
+
+# $1: a path owned by $owner with none of the permission bits in $2 (octal).
+private() {
+    [ ! -L "$1" ] || refuse "$1 is a symbolic link"
+    set -- "$1" "$2" "$(stat -c '%u %a' "$1")"
+    [ "${3%% *}" = "$owner" ] || refuse "$1 is owned by uid ${3%% *}, not $owner"
+    [ $((0${3#* } & $2)) -eq 0 ] || refuse "$1 has mode ${3#* }"
+}
+
+[ -d "$state" ] && [ ! -L "$state" ] || refuse "$state is not a directory; mica-seed-state creates it"
+private "$state" 022
+if [ -e "$key" ] || [ -L "$key" ]; then
+    private "$key" 077
+    [ -f "$key" ] || refuse "$key is not a regular file"
+else
+    rm -f "$key.new" "$key.new.pub"
+    ssh-keygen -q -t ed25519 -N '' -C '' -f "$key.new" >/dev/null ||
+        { rm -f "$key.new" "$key.new.pub"; exit 1; }
+    rm -f "$key.new.pub"
+    echo "mica-sshd-prestart: generated $key"
+    chmod 0600 "$key.new"
+    sync "$key.new"
+    mv "$key.new" "$key"
+    sync -f "$state"
+fi
+
+# No PAM: sshd checks a password with crypt(3) against /etc/shadow, as dropbear
+# does. An account whose shadow field is `!` is locked for every login, keys
+# included; `*` is one with no password.
+{
+    echo "# Rendered by /usr/lib/mica/mica-sshd-prestart from /run/mica/sshd.env."
+    for listener in $listen; do
+        echo "ListenAddress $listener"
+    done
+    echo "HostKey $key"
+    echo "PasswordAuthentication $SSH_PASSWORD"
+    echo "PermitRootLogin $SSH_ROOT_LOGIN"
+    echo "KbdInteractiveAuthentication no"
+    echo "PubkeyAuthentication yes"
+    echo "AuthorizedKeysFile .ssh/authorized_keys"
+    echo "StrictModes yes"
+    echo "UsePAM no"
+    echo "UseDNS no"
+    echo "X11Forwarding no"
+    echo "PrintMotd no"
+    echo "PrintLastLog no"
+    echo "PidFile none"
+    # The root carries no /etc/ssh/moduli for the group-exchange methods.
+    echo "KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256"
+    echo "Subsystem sftp /usr/lib/sftp-server"
+} >"$config.new"
+sshd -t -f "$config.new" || { rm -f "$config.new"; refuse "sshd refuses the rendered $config"; }
+mv "$config.new" "$config"

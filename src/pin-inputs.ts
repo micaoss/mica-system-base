@@ -1,6 +1,7 @@
 // Resolve the archives pinned outside the runtime lock: inside the environment
 // image, the inputs this repository's packages take files out of; inside a
 // package's build image, the closure of the build tools it installs.
+import type { Declared } from './debs/docker.ts'
 import type { Arch, Row } from './lock.ts'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,19 +10,22 @@ import { streamToFile } from '@mica/build-tools'
 import { declared } from './debs/docker.ts'
 import { fail } from './errors.ts'
 import { output } from './exec.ts'
-import { ARCHES, buildSnapshot, formatRows, lines, selectRuntime } from './lock.ts'
+import { ARCHES, buildSnapshot, formatRows, IMAGE_ARCHES, lines, selectRuntime } from './lock.ts'
 import { REPO, sources } from './pins.ts'
 import { DROPPED, ORPHANED, STRIPPED } from './rootfs.ts'
 
-// The inputs every package under debs/ declares; the archives themselves, never
-// their closure: nothing here is installed.
-function inputRoots(repo: string): string[] {
-  return [...new Set(declared(repo).flatMap(entry => entry.inputs))].sort()
+// The inputs the packages under debs/ built for `arch` declare: an `all` package's
+// on each environment image's architecture, which builds it, an architecture's own
+// package's on that architecture. The archives themselves, never their closure:
+// nothing here is installed.
+export function inputRoots(packages: Pick<Declared, 'arches' | 'inputs'>[], arch: Arch): string[] {
+  return [...new Set(packages.filter(entry => entry.arches.includes(arch) || (entry.arches.includes('all') && (IMAGE_ARCHES as Arch[]).includes(arch))).flatMap(entry => entry.inputs))].sort()
 }
 
+// Any architecture's, from the native environment image.
 export async function resolveInputs(arch: Arch, destination: string | undefined): Promise<void> {
   const { mirror, suite } = sources()
-  await resolve({ what: 'inputs', lists: [`deb [check-valid-until=no] ${mirror} ${suite} main`], roots: inputRoots(REPO), install: false }, arch, destination)
+  await resolve({ what: 'inputs', lists: [`deb [arch=${arch} check-valid-until=no] ${mirror} ${suite} main`], roots: inputRoots(declared(REPO), arch), install: false, foreign: true }, arch, destination)
 }
 
 // The build tools of debs/<name> and whatever the running image lacks of their

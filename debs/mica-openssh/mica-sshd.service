@@ -1,0 +1,25 @@
+[Unit]
+Description=SSH server (OpenSSH)
+Documentation=file:/usr/lib/mica/mica-sshd-prestart
+# Disabled in the image (50-mica-sshd.preset). micad enables and starts it at
+# runtime scope after writing /run/mica/sshd.env; it runs only after the shadow
+# file is built. The same unit as mica-ssh's, so micad drives either server.
+Requires=mica-shadow-reconcile.service
+After=network.target mica-seed-state.service mica-shadow-reconcile.service
+RequiresMountsFor=/mnt/data/state
+
+[Service]
+# micad's SSH_LISTEN, SSH_PASSWORD and SSH_ROOT_LOGIN. Required: no file, no start.
+EnvironmentFile=/run/mica/sshd.env
+# The privilege separation directory sshd requires.
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/lib/mica/mica-sshd-prestart
+ExecStart=/usr/sbin/sshd -D -e -f /run/mica/sshd_config
+SyslogIdentifier=mica-sshd
+# micad restarts the unit for new settings; established sessions survive it.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

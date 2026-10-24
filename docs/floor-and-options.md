@@ -55,6 +55,7 @@ is 3.6 MB.
 | `mica-mdev` | all | init: device nodes without udev, for mica-openrc | mica-busybox |
 | `mica-systemd-boot` | amd64, arm64 | boot: the systemd-boot EFI loader of the pinned systemd, with persisted boot attempts | |
 | `mica-ssh` | all | option: SSH (dropbear), started by micad | dropbear-bin, mica-system |
+| `mica-openssh` | amd64, arm64, armhf | option: SSH (OpenSSH's sshd of the pinned openssh-server), started by micad; conflicts with mica-ssh | mica-system, the libraries of sshd |
 | `mica-storage-ubi` | armhf | floor on armhf: stands in for e2fsprogs and fdisk where DATA is UBIFS | |
 | `mica-wifi` | amd64, arm64 | option: a minimal `wpa_supplicant` from upstream hostap | libnl, libssl3t64, iw, rfkill |
 | `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap, with ACS | libnl, libssl3t64, iw, rfkill |
@@ -185,7 +186,8 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 
 | Service | Package | systemd | OpenRC | Started by |
 | --- | --- | --- | --- | --- |
-| SSH | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
+| SSH | mica-ssh or mica-openssh | `mica-sshd.service`, disabled by preset | `mica-sshd`, in no runlevel | micad, after writing `/run/mica/sshd.env` (`SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`); both packages provide `mica-ssh-server` |
+| SSH, dropbear's own | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
 | Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/run/mica/wifi-client.env` |
 | Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/run/mica/wifi-ap.env` |
 | Bluetooth HCI attach | mica-bluetooth | `mica-bt.service`, enabled, inert without `/etc/mica/bt.conf` | `mica-bt`, in no runlevel, starts nothing without `/etc/mica/bt.conf` | boot (systemd); the product links it into `default` (OpenRC) |
@@ -250,7 +252,7 @@ on this contract of `mica-unit`, under both inits:
 
 | Option | What a product installs | Where it is pinned |
 | --- | --- | --- |
-| SSH | `mica-ssh` | pool; dropbear-bin is an `upstream` row |
+| SSH | `mica-ssh` (dropbear) or `mica-openssh` (OpenSSH) | pool; dropbear-bin and the libraries of sshd are `upstream` rows, openssh-server and openssh-client `input` rows per architecture |
 | Console login | `login` (gettys start once it is there) | `upstream` row |
 | Firewall | `nftables`, never enabled at boot (`50-mica-nftables.preset`) | `upstream` row |
 | Module loading | `kmod` (udev loads modules through libkmod without it) | `upstream` row |
