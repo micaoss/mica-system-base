@@ -111,6 +111,25 @@ describe('mica-udhcpc', () => {
       expect(event('deconfig', { interface: name })).toBe(0)
   })
 
+  // micad's `internet: false`: the stanza's `internet 0`, which ifupdown exports as
+  // IF_INTERNET. The lease's address and DNS, no default route.
+  test('IF_INTERNET=0 keeps the interface off the default route; 1 or unset keeps it on', () => {
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5', router: '10.8.0.1', dns: '10.8.0.53', IF_METRIC: '100', IF_INTERNET: '0' })).toBe(0)
+    expect(event('renew', { interface: 'eth8', ip: '10.8.0.5', router: '10.8.0.1', dns: '10.8.0.53', IF_METRIC: '100', IF_INTERNET: '0' })).toBe(0)
+    expect(event('bound', { interface: 'eth9', ip: '10.9.0.5', router: '10.9.0.1', IF_METRIC: '110', IF_INTERNET: '1' })).toBe(0)
+    expect(event('bound', { interface: 'wlan0', ip: '10.2.0.5', router: '10.2.0.1', IF_METRIC: '600' })).toBe(0)
+    const lines = readFileSync(calls, 'utf8').split('\n')
+    expect(lines).toEqual(expect.arrayContaining(['ip -4 addr add 10.8.0.5/24 dev eth8']))
+    expect(lines.filter(line => line.includes('route'))).toEqual([
+      'ip -4 route replace default via 10.9.0.1 dev eth9 metric 110',
+      'ip -4 route replace default via 10.2.0.1 dev wlan0 metric 600',
+    ])
+    expect(readFileSync(join(run, 'resolv.d/eth8'), 'utf8')).toBe('nameserver 10.8.0.53\n')
+    for (const name of ['eth8', 'eth9', 'wlan0'])
+      expect(event('deconfig', { interface: name })).toBe(0)
+  })
+
   // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.
   test('global, while it exists, makes up resolv.conf alone, through every lease change', () => {
     const resolvers = join(run, 'resolv.d')

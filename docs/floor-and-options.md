@@ -118,8 +118,10 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   with `metric $IF_METRIC` when `IF_METRIC` is set and not empty, and without a metric
   otherwise. busybox ifupdown exports a DHCP stanza's `metric <n>` line as `IF_METRIC`;
   `mica-wifi-client` passes `metric=` of `/run/mica/wifi-client.env`. With a metric per
-  interface, two uplinks keep a default route each. Under systemd micad renders the metric
-  into the networkd units.
+  interface, two uplinks keep a default route each. With `IF_INTERNET=0` (a stanza's
+  `internet 0`, an interface micad keeps off the internet) it sets the lease's address and
+  subnet route and its DNS servers, and no default route; any other value, or none, keeps the
+  default route. Under systemd micad renders the metric and the gateway into the networkd units.
 
 **Accounts.** micad runs each of the user's apps under an account of its own. The image's
 `/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)

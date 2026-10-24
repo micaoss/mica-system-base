@@ -2,7 +2,8 @@
 # udhcpc's script for mica-network: the lease's address, router and DNS on the
 # interface, its servers in /run/mica/resolv.d/<interface>, and /run/mica/resolv.conf
 # rebuilt (mica-resolv). udhcpc passes the event in $1 and the lease in the environment,
-# with the default route's metric in IF_METRIC when micad gives one.
+# with the default route's metric in IF_METRIC when micad gives one, and IF_INTERNET=0
+# for an interface micad keeps off the default route.
 set -eu
 resolvers=/run/mica/resolv.d
 
@@ -24,8 +25,9 @@ bound | renew)
     ip -4 addr flush dev "$interface"
     ip -4 addr add "$ip/${mask:-24}" ${broadcast:+broadcast "$broadcast"} dev "$interface"
     # micad's metric for the interface (IF_METRIC: the stanza's `metric`, or
-    # mica-wifi-client's), so two uplinks keep a default route each.
-    for gateway in ${router:-}; do
+    # mica-wifi-client's), so two uplinks keep a default route each. An interface kept
+    # off the internet (IF_INTERNET=0, the stanza's `internet 0`) takes no default route.
+    [ "${IF_INTERNET:-}" = 0 ] || for gateway in ${router:-}; do
         ip -4 route replace default via "$gateway" dev "$interface" ${IF_METRIC:+metric "$IF_METRIC"}
         break
     done
