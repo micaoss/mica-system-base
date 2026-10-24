@@ -69,8 +69,8 @@ describe('mica-udhcpc', () => {
   const bin = join(box.dir, 'udhcpc-bin')
   const calls = join(box.dir, 'ip-calls')
   const run = join(box.dir, 'run')
-  // mica-udhcpc calls busybox's ip applet.
-  fake(bin, 'busybox', 'echo "$*" >> "$CALLS"')
+  // mica-udhcpc calls busybox's ip and logger applets; a route to 198.51.100.0/24 fails.
+  fake(bin, 'busybox', 'echo "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"*) exit 2 ;; esac')
   // The scripts write under /run/mica; the sandbox's run directory stands in for it.
   const resolv = join(box.dir, 'mica-resolv')
   writeFileSync(resolv, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', run))
@@ -128,6 +128,54 @@ describe('mica-udhcpc', () => {
     expect(readFileSync(join(run, 'resolv.d/eth8'), 'utf8')).toBe('nameserver 10.8.0.53\n')
     for (const name of ['eth8', 'eth9', 'wlan0'])
       expect(event('deconfig', { interface: name })).toBe(0)
+  })
+
+  // The interface's static routes: the stanza's route_<n>, which ifupdown exports as
+  // IF_ROUTE_<n>, after the lease's address and default route, whatever IF_INTERNET says.
+  test('IF_ROUTE_<n> are set in order after the default route and deleted on deconfig', () => {
+    const lease = { interface: 'eth8', ip: '10.8.0.5', router: '10.8.0.1', IF_INTERNET: '0', IF_ROUTE_1: '192.168.50.0/24 via 10.8.0.254 metric 50', IF_ROUTE_2: '10.80.0.0/16', IF_ROUTE_4: '10.99.0.0/16' }
+    for (const name of ['bound', 'renew']) {
+      writeFileSync(calls, '')
+      expect(event(name, lease)).toBe(0)
+      const lines = readFileSync(calls, 'utf8').split('\n')
+      expect(lines.filter(line => line.includes('route'))).toEqual([
+        'ip -4 route replace 192.168.50.0/24 via 10.8.0.254 metric 50 dev eth8',
+        'ip -4 route replace 10.80.0.0/16 dev eth8',
+      ])
+      expect(lines.indexOf('ip -4 route replace 192.168.50.0/24 via 10.8.0.254 metric 50 dev eth8')).toBeGreaterThan(lines.indexOf('ip -4 addr add 10.8.0.5/24 dev eth8'))
+    }
+    writeFileSync(calls, '')
+    expect(event('deconfig', lease)).toBe(0)
+    const lines = readFileSync(calls, 'utf8').split('\n')
+    expect(lines.slice(0, 3)).toEqual([
+      'ip -4 route del 192.168.50.0/24 via 10.8.0.254 metric 50 dev eth8',
+      'ip -4 route del 10.80.0.0/16 dev eth8',
+      'ip -4 addr flush dev eth8',
+    ])
+  })
+
+  test('the default route comes before the static routes', () => {
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth9', ip: '10.9.0.5', router: '10.9.0.1', IF_METRIC: '110', IF_ROUTE_1: '10.90.0.0/16 via 10.9.0.254' })).toBe(0)
+    expect(readFileSync(calls, 'utf8').split('\n').filter(line => line.includes('route'))).toEqual([
+      'ip -4 route replace default via 10.9.0.1 dev eth9 metric 110',
+      'ip -4 route replace 10.90.0.0/16 via 10.9.0.254 dev eth9',
+    ])
+    expect(event('deconfig', { interface: 'eth9' })).toBe(0)
+  })
+
+  test('no IF_ROUTE_<n>, no route beyond the default; a failing route is logged and the next one still applies', () => {
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5' })).toBe(0)
+    expect(readFileSync(calls, 'utf8')).not.toContain('route')
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5', IF_ROUTE_1: '198.51.100.0/24 via 10.8.0.254', IF_ROUTE_2: '10.80.0.0/16' })).toBe(0)
+    expect(readFileSync(calls, 'utf8').split('\n').filter(line => line.includes('route'))).toEqual([
+      'ip -4 route replace 198.51.100.0/24 via 10.8.0.254 dev eth8',
+      'logger -t mica-udhcpc route 198.51.100.0/24 via 10.8.0.254 dev eth8 failed',
+      'ip -4 route replace 10.80.0.0/16 dev eth8',
+    ])
+    expect(event('deconfig', { interface: 'eth8' })).toBe(0)
   })
 
   // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.

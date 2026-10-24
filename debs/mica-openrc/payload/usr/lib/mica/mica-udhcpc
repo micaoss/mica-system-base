@@ -3,7 +3,9 @@
 # interface, its servers in /run/mica/resolv.d/<interface>, and /run/mica/resolv.conf
 # rebuilt (mica-resolv). udhcpc passes the event in $1 and the lease in the environment,
 # with the default route's metric in IF_METRIC when micad gives one, and IF_INTERNET=0
-# for an interface micad keeps off the default route.
+# for an interface micad keeps off the default route; the interface's static routes come
+# as IF_ROUTE_1, IF_ROUTE_2, ... (the stanza's route_<n>), each `<destination> [via
+# <gateway>] [metric <m>]`.
 set -eu
 resolvers=/run/mica/resolv.d
 
@@ -14,8 +16,23 @@ write_resolv() {
     /usr/lib/mica/mica-resolv
 }
 
+# ip -4 route <add|del> for each IF_ROUTE_<n> on the interface, in order. The value is
+# split into words on purpose: micad writes only addresses, `via` and `metric`.
+routes() {
+    n=1
+    while eval "r=\${IF_ROUTE_$n:-}"; [ -n "$r" ]; do
+        case "$1" in
+        add) ip -4 route replace $r dev "$interface" ||
+            { busybox logger -t mica-udhcpc "route $r dev $interface failed" || :; } ;;
+        del) ip -4 route del $r dev "$interface" 2>/dev/null || : ;;
+        esac
+        n=$((n + 1))
+    done
+}
+
 case "$1" in
 deconfig)
+    routes del
     ip -4 addr flush dev "$interface"
     ip link set "$interface" up
     rm -f "$resolvers/$interface"
@@ -31,6 +48,9 @@ bound | renew)
         ip -4 route replace default via "$gateway" dev "$interface" ${IF_METRIC:+metric "$IF_METRIC"}
         break
     done
+    # After the address and the default route, so a route via a gateway in the lease's
+    # subnet finds it; IF_INTERNET does not touch these.
+    routes add
     mkdir -p "$resolvers"
     {
         [ -z "${domain:-}" ] || echo "search $domain"
