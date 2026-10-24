@@ -5,7 +5,8 @@
 # with the default route's metric in IF_METRIC when micad gives one, and IF_INTERNET=0
 # for an interface micad keeps off the default route; the interface's static routes come
 # as IF_ROUTE_1, IF_ROUTE_2, ... (the stanza's route_<n>), each `<destination> [via
-# <gateway>] [metric <m>]`.
+# <gateway>] [metric <m>]`. With no lease it falls back to an IPv4 link-local address:
+# BusyBox zcip, which runs this script too, with MICA_ZCIP set.
 set -eu
 resolvers=/run/mica/resolv.d
 
@@ -30,8 +31,35 @@ routes() {
     done
 }
 
+# zcip's events: the 169.254.0.0/16 address it claimed, with its subnet route alone.
+if [ -n "${MICA_ZCIP:-}" ]; then
+    case "$1" in
+    init) ip link set "$interface" up ;;
+    config) ip -4 addr add "$ip/16" dev "$interface" scope link ;;
+    deconfig) ip -4 addr del "$ip/16" dev "$interface" 2>/dev/null || : ;;
+    esac
+    exit 0
+fi
+
+# One zcip per interface, while it has no lease; udhcpc (-b) goes on asking.
+zcip_pid=/run/mica-zcip.$interface.pid
+zcip_start() {
+    if [ -e "$zcip_pid" ] && kill -0 "$(cat "$zcip_pid")" 2>/dev/null; then
+        return 0
+    fi
+    MICA_ZCIP=1 busybox zcip -f "$interface" /usr/lib/mica/mica-udhcpc </dev/null >/dev/null 2>&1 &
+    echo $! >"$zcip_pid"
+}
+# The address flush that follows removes its address.
+zcip_stop() {
+    [ -e "$zcip_pid" ] || return 0
+    kill "$(cat "$zcip_pid")" 2>/dev/null || :
+    rm -f "$zcip_pid"
+}
+
 case "$1" in
 deconfig)
+    zcip_stop
     routes del
     ip -4 addr flush dev "$interface"
     ip link set "$interface" up
@@ -39,6 +67,7 @@ deconfig)
     write_resolv
     ;;
 bound | renew)
+    zcip_stop
     ip -4 addr flush dev "$interface"
     ip -4 addr add "$ip/${mask:-24}" ${broadcast:+broadcast "$broadcast"} dev "$interface"
     # micad's metric for the interface (IF_METRIC: the stanza's `metric`, or
@@ -60,7 +89,10 @@ bound | renew)
     } >"$resolvers/$interface"
     write_resolv
     ;;
-leasefail | nak)
+leasefail)
+    zcip_start
+    ;;
+nak)
     ;;
 esac
 exit 0

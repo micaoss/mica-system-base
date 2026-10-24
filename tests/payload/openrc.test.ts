@@ -2,7 +2,7 @@
 // rc-service, rc-status and openrc-shutdown; mica-udhcpc against a fake ip, and the metric
 // mica-wifi-client hands it; mica-ntpd's
 // servers.
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { exec, fake, sandbox, SYSTEM_PATH } from './harness.ts'
@@ -69,8 +69,9 @@ describe('mica-udhcpc', () => {
   const bin = join(box.dir, 'udhcpc-bin')
   const calls = join(box.dir, 'ip-calls')
   const run = join(box.dir, 'run')
-  // mica-udhcpc calls busybox's ip and logger applets; a route to 198.51.100.0/24 fails.
-  fake(bin, 'busybox', 'echo "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"*) exit 2 ;; esac')
+  // mica-udhcpc calls busybox's ip, logger and zcip applets; a route to 198.51.100.0/24
+  // fails, and zcip stays up until it is stopped.
+  fake(bin, 'busybox', 'case "$1" in zcip) echo "MICA_ZCIP=$MICA_ZCIP $*" >> "$CALLS.zcip"; exec sleep 30 ;; esac\necho "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"*) exit 2 ;; esac')
   // The scripts write under /run/mica; the sandbox's run directory stands in for it.
   const resolv = join(box.dir, 'mica-resolv')
   writeFileSync(resolv, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', run))
@@ -176,6 +177,49 @@ describe('mica-udhcpc', () => {
       'ip -4 route replace 10.80.0.0/16 dev eth8',
     ])
     expect(event('deconfig', { interface: 'eth8' })).toBe(0)
+  })
+
+  // No DHCP server: a link-local address from BusyBox zcip until a lease comes.
+  test('leasefail starts zcip once on the interface; bound stops it', () => {
+    const zcipCalls = `${calls}.zcip`
+    const pidfile = `${run}-zcip.eth7.pid`
+    writeFileSync(zcipCalls, '')
+    const started = (): string[] => {
+      for (let i = 0; i < 50 && readFileSync(zcipCalls, 'utf8') === ''; i++)
+        Bun.sleepSync(20)
+      return readFileSync(zcipCalls, 'utf8').split('\n').filter(Boolean)
+    }
+    expect(event('leasefail', { interface: 'eth7' })).toBe(0)
+    expect(started()).toEqual(['MICA_ZCIP=1 zcip -f eth7 /usr/lib/mica/mica-udhcpc'])
+    const pid = Number(readFileSync(pidfile, 'utf8'))
+    expect(() => process.kill(pid, 0)).not.toThrow()
+    // udhcpc goes on asking, and each failure runs leasefail again: the same zcip stays.
+    expect(event('leasefail', { interface: 'eth7' })).toBe(0)
+    Bun.sleepSync(200)
+    expect(started()).toHaveLength(1)
+    expect(Number(readFileSync(pidfile, 'utf8'))).toBe(pid)
+    // A lease stops it and takes its pid file away.
+    expect(event('bound', { interface: 'eth7', ip: '10.7.0.5' })).toBe(0)
+    // Stopped is gone or a zombie: nothing in the test container reaps an orphan.
+    const alive = (): boolean => existsSync(`/proc/${pid}/stat`) && !/^\d+ \(.*\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'))
+    for (let i = 0; i < 50 && alive(); i++)
+      Bun.sleepSync(20)
+    expect(alive()).toBe(false)
+    expect(existsSync(pidfile)).toBe(false)
+    expect(event('deconfig', { interface: 'eth7' })).toBe(0)
+  })
+
+  test('zcip\'s events: the link-local address with its subnet route, and no default route', () => {
+    writeFileSync(calls, '')
+    const zcip = (name: string, env: Record<string, string> = {}): number => event(name, { MICA_ZCIP: '1', interface: 'eth7', ...env })
+    expect(zcip('init')).toBe(0)
+    expect(zcip('config', { ip: '169.254.10.20' })).toBe(0)
+    expect(zcip('deconfig', { ip: '169.254.10.20' })).toBe(0)
+    expect(readFileSync(calls, 'utf8').split('\n').filter(Boolean)).toEqual([
+      'ip link set eth7 up',
+      'ip -4 addr add 169.254.10.20/16 dev eth7 scope link',
+      'ip -4 addr del 169.254.10.20/16 dev eth7',
+    ])
   })
 
   // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.

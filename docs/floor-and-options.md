@@ -125,7 +125,10 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   `IF_ROUTE_<n>`, each `<destination> [via <gateway>] [metric <m>]`) are set after the lease's
   address and default route with `ip -4 route replace <value> dev <interface>`, whatever
   `IF_INTERNET` says, and deleted on `deconfig`; a route that fails is logged (syslog tag
-  `mica-udhcpc`) and the others still apply. Under systemd micad renders the metric, the
+  `mica-udhcpc`) and the others still apply. With no lease (`leasefail`; udhcpc runs with
+  `-b` and goes on asking) mica-udhcpc starts BusyBox `zcip` on the interface, one per
+  interface, which claims and defends a `169.254.0.0/16` address with its subnet route and no
+  default route; `bound` stops it, and the address flush removes the address. Under systemd micad renders the metric, the
   gateway and the routes into the networkd units.
 
 **Accounts.** micad runs each of the user's apps under an account of its own. The image's
