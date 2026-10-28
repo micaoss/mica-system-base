@@ -322,7 +322,7 @@ describe('the required set', () => {
     expect(ran.code).toBe(1)
     expect(markedGood(c)).toBe(false)
     expect(ran.out).toContain('requires `micadd`')
-    expect(ran.out).toContain('boot-settled, micad, apid')
+    expect(ran.out).toContain('init, boot-settled, micad, apid')
   })
 
   test('each require= line is what makes its member fatal', () => {
@@ -342,13 +342,88 @@ describe('the required set', () => {
   })
 })
 
-// A device may run with no network at all: the shipped gate establishes that micad
-// answers and nothing else, and never waits on the boot or the network to settle.
+describe('the init member', () => {
+  test('passes while the boot is still starting, without waiting on it', () => {
+    const c = newCase('init-starting')
+    healthyFakes(c)
+    setRequired(c, 'init')
+    const ran = runHealth(c, { FAKE_SYS_STATE: 'starting', FAKE_JOBS: '2 systemd-networkd-wait-online.service start running\n' })
+    expect(ran.code).toBe(0)
+    expect(markedGood(c)).toBe(true)
+    expect(ran.out).toContain('required member init: OK (starting)')
+    expect(calls(c).some(line => line.startsWith('systemctl list-jobs'))).toBe(false)
+  })
+
+  test.each(['maintenance', 'stopping', 'offline'])('fails an init in state %p', (state) => {
+    const c = newCase(`init-${state}`)
+    healthyFakes(c)
+    setRequired(c, 'init')
+    const ran = runHealth(c, { FAKE_SYS_STATE: state })
+    expect(ran.code).toBe(1)
+    expect(markedGood(c)).toBe(false)
+    expect(ran.out).toContain('required member init: init state')
+  })
+})
+
+describe('the optional components', () => {
+  function optional(name: string, ...members: string[]): Case {
+    const c = newCase(name)
+    healthyFakes(c)
+    setRequired(c, 'init')
+    writeFileSync(c.conf, readFileSync(c.conf, 'utf8') + members.map(member => `if-installed=${member}\n`).join(''))
+    return c
+  }
+
+  test('are required where the image carries them', () => {
+    const c = optional('optional-installed', 'micad', 'apid')
+    const ran = runHealth(c, { FAKE_DBUS_RC: '1' })
+    expect(ran.code).toBe(1)
+    expect(markedGood(c)).toBe(false)
+    expect(ran.out).toContain('required member micad')
+    const up = optional('optional-installed-up', 'micad', 'apid')
+    expect(runHealth(up).code).toBe(0)
+    expect(calls(up)).toContain('mica-apid --healthcheck')
+  })
+
+  test('are not checked where it does not, so a device without micad confirms on the init', () => {
+    const c = optional('optional-absent', 'micad', 'apid')
+    const ran = runHealth(c, { FAKE_UNITS: 'none', FAKE_DBUS_RC: '1', FAKE_APID_RC: '1' })
+    expect(ran.code).toBe(0)
+    expect(markedGood(c)).toBe(true)
+    expect(ran.out).toContain('optional component micad is not installed; not checked')
+    expect(readFileSync(c.calls, 'utf8')).not.toContain('com.mica.micad1 GetState')
+    expect(calls(c).some(line => line.startsWith('mica-apid '))).toBe(false)
+  })
+
+  test('name only micad or apid', () => {
+    const c = optional('optional-unknown', 'boot-settled')
+    const ran = runHealth(c)
+    expect(ran.code).toBe(1)
+    expect(markedGood(c)).toBe(false)
+    expect(ran.out).toContain('not an optional component')
+  })
+})
+
+// A device may run with no network at all: the shipped gate establishes that the init
+// is up and micad, where the image carries it, answers, and never waits on the boot or
+// the network to settle.
 describe('the shipped configuration', () => {
   const shipped = join(PAYLOAD, 'etc/mica/health.conf')
+  const lines = (prefix: string) => readFileSync(shipped, 'utf8').split('\n').filter(line => line.startsWith(prefix))
 
-  test('requires micad alone', () => {
-    expect(readFileSync(shipped, 'utf8').split('\n').filter(line => line.startsWith('require='))).toEqual(['require=micad'])
+  test('requires the init, and micad where it is installed', () => {
+    expect(lines('require=')).toEqual(['require=init'])
+    expect(lines('if-installed=')).toEqual(['if-installed=micad'])
+  })
+
+  test('confirms without micad on the init alone', () => {
+    const c = newCase('shipped-no-micad')
+    healthyFakes(c)
+    writeFileSync(c.conf, readFileSync(shipped, 'utf8'))
+    const ran = runHealth(c, { FAKE_UNITS: 'none', FAKE_SYS_STATE: 'starting' })
+    expect(ran.code).toBe(0)
+    expect(markedGood(c)).toBe(true)
+    expect(ran.out).toContain('required set: init')
   })
 
   test('confirms with only micad answering while wait-online is still running, without waiting', () => {
@@ -359,7 +434,7 @@ describe('the shipped configuration', () => {
     const ran = runHealth(c, { FAKE_SYS_STATE: 'starting', FAKE_JOBS: '1 mica-health.service start running\n2 systemd-networkd-wait-online.service start running\n', FAKE_APID_RC: '7' })
     expect(ran.code).toBe(0)
     expect(markedGood(c)).toBe(true)
-    expect(ran.out).toContain('required set: micad')
+    expect(ran.out).toContain('required set: init micad')
     expect(ran.out).toContain('required member micad: OK')
     // No settle poll: the boot's jobs are never read, and no second goes by.
     expect(calls(c).some(line => line.startsWith('systemctl list-jobs'))).toBe(false)

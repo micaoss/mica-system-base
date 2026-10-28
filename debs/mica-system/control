@@ -1,5 +1,5 @@
 Package: mica-system
-Version: 13.8+deb13u7-mica5
+Version: 13.8+deb13u7-mica6
 Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>

@@ -2,9 +2,9 @@
 # Mica OS health gate: confirm the booted deployment (PENDING_CONFIRM ->
 # CONFIRMED) once this slot can still be reached and updated.
 #
-# The members named by `require=` in /etc/mica/health.conf must pass; everything
-# else observed here (failed units, /var usage) is reported to micad and never
-# fatal. On failure, mica-boot-failure.service decides between reboot and
+# The members named by `require=` in /etc/mica/health.conf must pass, and those
+# named by `if-installed=` must too on an image that carries them; everything else
+# observed here (failed units, /var usage) is reported to micad and never fatal. On failure, mica-boot-failure.service decides between reboot and
 # poweroff.
 
 CONF=${MICA_HEALTH_CONF:-/etc/mica/health.conf}
@@ -80,13 +80,30 @@ REQUIRED=$(conf_all require)
     "refusing rather than confirming a slot nothing was checked on."
 for member in $REQUIRED; do
     case "$member" in
-    boot-settled | micad | apid) ;;
+    init | boot-settled | micad | apid) ;;
     *)
         fail "$CONF requires \`$member\`, which this gate does not implement." \
-            "The members are: boot-settled, micad, apid. Ignoring an unrecognised name" \
+            "The members are: init, boot-settled, micad, apid. Ignoring an unrecognised name" \
             "would shrink the required set silently."
         ;;
     esac
+done
+# The optional components: required where the image carries them, so an image
+# without micad confirms on the init alone, and one with micad only once it answers.
+for member in $(conf_all if-installed); do
+    case "$member" in
+    micad | apid) ;;
+    *)
+        fail "$CONF names \`$member\` in if-installed=, which is not an optional component." \
+            "The optional components are: micad, apid."
+        ;;
+    esac
+    if run "$INIT" installed "$member"; then
+        REQUIRED="$REQUIRED
+$member"
+    else
+        log "optional component $member is not installed; not checked"
+    fi
 done
 requires() {
     for m in $REQUIRED; do
@@ -95,6 +112,20 @@ requires() {
     return 1
 }
 log "required set: $(printf '%s ' $REQUIRED)"
+
+# --- required member: init -------------------------------------------------
+#
+# The init is up and has not given up on the boot: any state but `maintenance`
+# (an emergency or rescue target), `stopping` or none at all passes. Nothing is
+# waited for, so an offline device's network wait never delays the confirmation.
+if requires init; then
+    sysstate=$(run "$INIT" state 2>/dev/null)
+    case "$sysstate" in
+    initializing | starting | running | degraded) ;;
+    *) fail "required member init: init state = ${sysstate:-unknown}" ;;
+    esac
+    log "required member init: OK (${sysstate})"
+fi
 
 # --- required member: boot-settled -----------------------------------------
 #
