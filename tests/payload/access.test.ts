@@ -433,6 +433,7 @@ describe.each(['mica-ssh', 'mica-openssh'])('the mica-sshd contract in %s', (nam
   test('the unit starts at boot on micad\'s saved settings, after the shadow file and DATA, keeps sessions and logs as mica-sshd', () => {
     for (const line of [
       'EnvironmentFile=-/var/lib/mica/ssh/sshd.env',
+      'EnvironmentFile=-/usr/lib/mica/ssh/sshd.env',
       'ExecCondition=/bin/sh -c \'test "${SSH_ENABLED}" = yes\'',
       'ExecStartPre=/usr/lib/mica/mica-sshd-prestart',
       'Requires=mica-shadow-reconcile.service',
@@ -443,13 +444,15 @@ describe.each(['mica-ssh', 'mica-openssh'])('the mica-sshd contract in %s', (nam
     ])
       expect(unit).toContain(line)
     expect(unit.some(line => /^After=.*\bmica-shadow-reconcile\.service\b/.test(line))).toBe(true)
+    // micad's file after the image's, so its settings win once it has saved any.
+    expect(unit.indexOf('EnvironmentFile=-/usr/lib/mica/ssh/sshd.env')).toBeLessThan(unit.indexOf('EnvironmentFile=-/var/lib/mica/ssh/sshd.env'))
     expect(unit.some(line => line.includes('/run/mica/sshd.env'))).toBe(false)
     expect(readFileSync(join(directory, '50-mica-sshd.preset'), 'utf8')).toBe('enable mica-sshd.service\n')
     expect(dockerfile).toContain('ln -s /etc/systemd/system/mica-sshd.service /stage/etc/systemd/system/multi-user.target.wants/mica-sshd.service;')
   })
 
   test('the OpenRC service reads the same settings, refuses to start while SSH is off, runs the same prestart and logs as mica-sshd', () => {
-    for (const text of ['. /var/lib/mica/ssh/sshd.env', 'if [ "$SSH_ENABLED" != yes ]; then', '/usr/lib/mica/mica-sshd-prestart', 'need mica-mounts mica-shadow-reconcile', 'error_logger="busybox logger -t mica-sshd"', 'supervisor=supervise-daemon'])
+    for (const text of ['settings=/var/lib/mica/ssh/sshd.env', '[ -r "$settings" ] || settings=/usr/lib/mica/ssh/sshd.env', '. "$settings"', 'if [ "$SSH_ENABLED" != yes ]; then', '/usr/lib/mica/mica-sshd-prestart', 'need mica-mounts mica-shadow-reconcile', 'error_logger="busybox logger -t mica-sshd"', 'supervisor=supervise-daemon'])
       expect(openrc).toContain(text)
     expect(openrc).not.toContain('/run/mica/sshd.env')
   })
@@ -466,10 +469,12 @@ describe('mica-sshd-boot', () => {
   const bin = join(box.dir, 'sshd-boot-bin')
   const trace = join(box.dir, 'sshd-boot-trace')
   const settings = join(box.dir, 'sshd-boot', 'sshd.env')
+  const image = join(box.dir, 'sshd-boot', 'image.env')
   mkdirSync(join(box.dir, 'sshd-boot'), { recursive: true })
   fake(bin, 'rc-service', 'printf \'rc-service %s\\n\' "$*" >>"$MICA_TEST_TRACE"')
   const script = join(box.dir, 'mica-sshd-boot')
-  writeFileSync(script, readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd-boot.openrc'), 'utf8').replaceAll('/var/lib/mica/ssh/sshd.env', settings))
+  writeFileSync(script, readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd-boot.openrc'), 'utf8')
+    .replaceAll('/var/lib/mica/ssh/sshd.env', settings).replaceAll('/usr/lib/mica/ssh/sshd.env', image))
   const start = (): { code: number, calls: string } => {
     writeFileSync(trace, '')
     const { code } = exec(['sh', '-c', `einfo() { :; }; . ${script}; start`], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace })
@@ -486,6 +491,16 @@ describe('mica-sshd-boot', () => {
     expect(start()).toEqual({ code: 0, calls: '' })
     rmSync(settings)
     expect(start()).toEqual({ code: 0, calls: '' })
+  })
+
+  test('follows the image\'s settings until micad has saved its own', () => {
+    writeFileSync(image, 'SSH_ENABLED=yes\nSSH_LISTEN="22"\nSSH_PASSWORD=no\nSSH_ROOT_LOGIN=yes\n')
+    rmSync(settings, { force: true })
+    expect(start()).toEqual({ code: 0, calls: 'rc-service mica-sshd start\n' })
+    writeFileSync(settings, 'SSH_ENABLED=no\nSSH_LISTEN="22"\nSSH_PASSWORD=no\nSSH_ROOT_LOGIN=yes\n')
+    expect(start()).toEqual({ code: 0, calls: '' })
+    rmSync(image)
+    rmSync(settings)
   })
 })
 

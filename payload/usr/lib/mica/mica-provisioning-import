@@ -5,10 +5,19 @@
 # mica-provisioning.toml, at the filesystem root. Media are mounted read-only
 # and never written; a source that cannot be read is skipped, and the boot never
 # fails here.
+#
+# On an image without micad, nothing reads that document. A medium may instead
+# carry mica-authorized-keys, one OpenSSH public key a line (`#` comments and
+# blank lines allowed, no options), and the keys are added to root's and mica's
+# ~/.ssh/authorized_keys: the first way into a device that has no other. With
+# micad, the keys are the document's to give, and the file is not read.
 set -eu
 
 STAGING_ROOT=${MICA_PROVISIONING_ROOT:-/run/mica/provisioning}
 DOCUMENT=mica-provisioning.toml
+KEYS=mica-authorized-keys
+INIT=${MICA_INIT:-/usr/lib/mica/mica-init}
+ADD_KEYS=${MICA_ADD_KEYS:-/usr/lib/mica/mica-add-keys}
 # Boards without an ESP rely on removable media.
 BOOT_PARTLABEL=esp
 # The medium is operator-supplied: nothing runs off it and nothing writes to it.
@@ -40,8 +49,11 @@ mkdir -p "${STAGING_ROOT%/*}"
 mkdir -p "$STAGING_ROOT"
 chmod 0700 "$STAGING_ROOT"
 
-# Mount a device read-only and keep it only if the document is a regular file
-# (not a link, directory or device node).
+# A regular file (not a link, directory or device node).
+regular() { [ -f "$1" ] && [ ! -L "$1" ]; }
+
+# Mount a device read-only and keep it only if the document or the key file is a
+# regular file.
 try_source() {
     source=$1
     device=$2
@@ -52,8 +64,8 @@ try_source() {
         rmdir "$dir" 2>/dev/null || :
         return 1
     fi
-    if [ -f "${dir}/${DOCUMENT}" ] && [ ! -L "${dir}/${DOCUMENT}" ]; then
-        log "staged a ${source} document from ${device} at ${dir}/${DOCUMENT}"
+    if regular "${dir}/${DOCUMENT}" || regular "${dir}/${KEYS}"; then
+        log "staged ${source} media from ${device} at ${dir}"
         return 0
     fi
     umount "$dir" 2>/dev/null || :
@@ -94,7 +106,16 @@ fi
 
 if [ -z "$staged" ]; then
     log "no provisioning document on the boot medium or on removable media"
-else
-    log "${staged} document staged; micad validates and applies it"
+    exit 0
+fi
+dir=${STAGING_ROOT}/${staged}
+if [ -x "$INIT" ] && "$INIT" installed micad; then
+    regular "${dir}/${DOCUMENT}" && log "${staged} document staged; micad validates and applies it"
+    regular "${dir}/${KEYS}" && log "$KEYS is for an image without micad; the document gives micad its keys"
+    exit 0
+fi
+regular "${dir}/${DOCUMENT}" && log "micad is not installed; ${DOCUMENT} is not applied"
+if regular "${dir}/${KEYS}"; then
+    "$ADD_KEYS" "${dir}/${KEYS}" || log "the keys of $KEYS were not added"
 fi
 exit 0

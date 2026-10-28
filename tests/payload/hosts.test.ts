@@ -23,6 +23,14 @@ describe('mica-hosts', () => {
     expect(readdirSync(run)).toEqual(['hosts'])
   })
 
+  test('adds the static records micad saved on STATE', () => {
+    const records = join(box.dir, 'records')
+    writeFileSync(records, '192.168.1.5\tnas.lan\t# the NAS\n')
+    writeFileSync(name, 'edge\n')
+    expect(exec(['sh', script], { PATH: SYSTEM_PATH, MICA_HOSTNAME_FILE: name, MICA_HOSTS_RECORDS: records }).code).toBe(0)
+    expect(readFileSync(join(run, 'hosts'), 'utf8')).toBe('127.0.0.1\tlocalhost\n::1\tlocalhost\n127.0.1.1\tedge\n192.168.1.5\tnas.lan\t# the NAS\n')
+  })
+
   test('replaces what was there, with the hostname of now', () => {
     writeFileSync(join(run, 'hosts'), '127.0.0.1\tlocalhost\n10.0.0.9\tnas\n')
     writeFileSync(name, 'harbour\n')

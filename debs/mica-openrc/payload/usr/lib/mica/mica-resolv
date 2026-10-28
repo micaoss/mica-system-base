@@ -1,17 +1,19 @@
 #!/bin/sh
 # /run/mica/resolv.conf, where /etc/resolv.conf links, built from /run/mica/resolv.d.
-# When micad has written resolv.d/global, the global DNS it is told, that file alone
-# makes it up and every interface's servers are ignored; otherwise every interface's
-# file does, as mica-udhcpc wrote them. Names starting with a dot are never read, so
-# a writer can stage a file there and rename it into place. mica-udhcpc runs this
-# after every lease change, micad after it writes or removes global.
+# When micad has saved /var/lib/mica/dns/resolv.global on DATA, the global DNS it is
+# told, that file alone makes it up and every interface's servers are ignored;
+# otherwise every interface's file does, as mica-udhcpc wrote them. Names starting
+# with a dot are never read, so a writer can stage a file there and rename it into
+# place. mica-udhcpc runs this after every lease change, micad after it writes or
+# removes the global file.
 set -eu
 resolvers=/run/mica/resolv.d
+global=/var/lib/mica/dns/resolv.global
 conf=/run/mica/resolv.conf
 
 mkdir -p "$resolvers"
-if [ -f "$resolvers/global" ]; then
-    cat "$resolvers/global" >"$conf.$$"
+if [ -f "$global" ]; then
+    cat "$global" >"$conf.$$"
 else
     cat "$resolvers"/* 2>/dev/null >"$conf.$$" || : >"$conf.$$"
 fi

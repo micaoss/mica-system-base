@@ -11,8 +11,10 @@ After=network.target mica-seed-state.service mica-shadow-reconcile.service
 RequiresMountsFor=/mnt/data/state /var/lib/mica
 
 [Service]
-# micad's SSH_ENABLED, SSH_LISTEN, SSH_PASSWORD and SSH_ROOT_LOGIN. No file, or SSH
-# turned off, skips the start without failing it.
+# micad's SSH_ENABLED, SSH_LISTEN, SSH_PASSWORD and SSH_ROOT_LOGIN, over the image's
+# until micad has saved its own; micad writes all four. Neither file, or SSH turned
+# off, skips the start without failing it.
+EnvironmentFile=-/usr/lib/mica/ssh/sshd.env
 EnvironmentFile=-/var/lib/mica/ssh/sshd.env
 ExecCondition=/bin/sh -c 'test "${SSH_ENABLED}" = yes'
 # The prestart writes dropbear's arguments here; systemd reads the file again

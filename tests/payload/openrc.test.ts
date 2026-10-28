@@ -74,7 +74,8 @@ describe('mica-udhcpc', () => {
   fake(bin, 'busybox', 'case "$1" in zcip) echo "MICA_ZCIP=$MICA_ZCIP $*" >> "$CALLS.zcip"; exec sleep 30 ;; esac\necho "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"*) exit 2 ;; esac')
   // The scripts write under /run/mica; the sandbox's run directory stands in for it.
   const resolv = join(box.dir, 'mica-resolv')
-  writeFileSync(resolv, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', run))
+  const dns = join(box.dir, 'dns')
+  writeFileSync(resolv, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', run).replaceAll('/var/lib/mica/dns', dns))
   const script = join(box.dir, 'mica-udhcpc')
   writeFileSync(script, readFileSync(join(OPENRC, 'mica-udhcpc'), 'utf8').replaceAll('/run/mica', run).replaceAll('/usr/lib/mica/mica-resolv', `sh ${resolv}`))
   const event = (name: string, lease: Record<string, string>): number =>
@@ -222,18 +223,19 @@ describe('mica-udhcpc', () => {
     ])
   })
 
-  // micad's global DNS: resolv.d/global, while it exists, is resolv.conf alone.
+  // micad's global DNS: resolv.global on DATA, while it exists, is resolv.conf alone.
   test('global, while it exists, makes up resolv.conf alone, through every lease change', () => {
     const resolvers = join(run, 'resolv.d')
     expect(event('bound', { interface: 'eth0', ip: '10.0.0.5', dns: '10.0.0.53' })).toBe(0)
-    writeFileSync(join(resolvers, 'global'), 'nameserver 9.9.9.9\n')
-    // A file micad stages under a dot name is never read.
+    mkdirSync(dns, { recursive: true })
+    writeFileSync(join(dns, 'resolv.global'), 'nameserver 9.9.9.9\n')
+    // A file a writer stages under a dot name is never read.
     writeFileSync(join(resolvers, '.global.new'), 'nameserver 1.1.1.1\n')
     expect(exec(['sh', resolv], { PATH: SYSTEM_PATH }).code).toBe(0)
     expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 9.9.9.9\n')
     expect(event('renew', { interface: 'eth0', ip: '10.0.0.5', dns: '10.0.0.54' })).toBe(0)
     expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 9.9.9.9\n')
-    rmSync(join(resolvers, 'global'))
+    rmSync(join(dns, 'resolv.global'))
     rmSync(join(resolvers, '.global.new'))
     expect(exec(['sh', resolv], { PATH: SYSTEM_PATH }).code).toBe(0)
     expect(readFileSync(join(run, 'resolv.conf'), 'utf8')).toBe('nameserver 10.0.0.54\nnameserver 10.1.0.53\nnameserver 10.1.0.54\n')

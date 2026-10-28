@@ -101,20 +101,27 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   resolves a name: `mica-hosts.service` under systemd (after `mica-apply-hostname.service`,
   before `sysinit.target`, `systemd-resolved.service` and `nss-lookup.target`), `mica-mounts`
   under OpenRC (right after `hostname -F /etc/hostname`, before `mica-network`, `mica-dbus`
-  and every service that needs `mica-mounts`). It holds exactly
-  `127.0.0.1<TAB>localhost`, `::1<TAB>localhost` and `127.0.1.1<TAB><hostname>`, mode 0644.
+  and every service that needs `mica-mounts`). It holds
+  `127.0.0.1<TAB>localhost`, `::1<TAB>localhost` and `127.0.1.1<TAB><hostname>`, mode 0644,
+  then the static records micad saved in `/var/lib/mica/dns/hosts`, read on STATE
+  (`/mnt/data/state/mica/dns/hosts`) because `/var/lib/mica` is not bound yet.
   micad replaces the whole file with those three lines, for the hostname of the moment,
   followed by the user's static records, written to a temporary name in `/run/mica` and
   renamed over it. Its readers -- glibc's `files` lookup (dropbear, `hostname -f`, every
   program) and systemd-resolved, which reloads it when it changes -- read it on each lookup,
   so no reader holds a stale copy and none starts before the first one is in place.
 - OpenRC: `/etc/resolv.conf` links to `/run/mica/resolv.conf`, which `/usr/lib/mica/mica-resolv`
-  builds from `/run/mica/resolv.d`. When `resolv.d/global` exists, it alone is
-  `resolv.conf` and every interface's file is ignored; when it does not, the interfaces'
-  files (`resolv.d/<interface>`, mica-udhcpc's) make it up. micad writes `global` (a name
-  starting with a dot in `resolv.d`, or any name in `/run/mica`, then renamed) or removes it,
-  and runs `mica-resolv`; mica-udhcpc runs it after every lease change. Under systemd the
-  global DNS is resolved's.
+  builds from `/run/mica/resolv.d`. When `/var/lib/mica/dns/resolv.global` exists on DATA,
+  it alone is `resolv.conf` and every interface's file is ignored; when it does not, the
+  interfaces' files (`resolv.d/<interface>`, mica-udhcpc's) make it up. A name starting with
+  a dot in `resolv.d` is never read. micad writes the global file or removes it, and runs
+  `mica-resolv`; mica-udhcpc runs it after every lease change. Under systemd the global DNS
+  is resolved's.
+- systemd: `/run/systemd/network` and `/run/systemd/resolved.conf.d`, where micad writes
+  networkd's units and resolved's drop-in, are links to `/var/lib/mica/network/networkd` and
+  `/var/lib/mica/dns/resolved.conf.d` on DATA (mica-systemd's `mica-network.conf`, made by
+  `systemd-tmpfiles-setup`, which networkd and resolved start after), so the init applies
+  the network micad last configured at boot, with or without micad.
 - OpenRC default routes: mica-udhcpc installs a lease's first router as the default route
   with `metric $IF_METRIC` when `IF_METRIC` is set and not empty, and without a metric
   otherwise. busybox ifupdown exports a DHCP stanza's `metric <n>` line as `IF_METRIC`;
@@ -186,7 +193,7 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 
 | Service | Package | systemd | OpenRC | Started by |
 | --- | --- | --- | --- | --- |
-| SSH | mica-ssh or mica-openssh | `mica-sshd.service`, enabled, skipped while SSH is off | `mica-sshd`, in no runlevel; `mica-sshd-boot`, in `default`, starts it while SSH is on | boot, from the settings micad saves in `/var/lib/mica/ssh/sshd.env` on DATA (`SSH_ENABLED`, `SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`), with or without micad; off until micad has saved `SSH_ENABLED=yes`, and password logins only while a transient root password is set. micad restarts it for new settings and stops it; both packages provide `mica-ssh-server` |
+| SSH | mica-ssh or mica-openssh | `mica-sshd.service`, enabled, skipped while SSH is off | `mica-sshd`, in no runlevel; `mica-sshd-boot`, in `default`, starts it while SSH is on | boot, from the settings micad saves in `/var/lib/mica/ssh/sshd.env` on DATA (`SSH_ENABLED`, `SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`), with or without micad, and until micad has saved them from the image's `/usr/lib/mica/ssh/sshd.env`, which mica-build writes on or off as the product's `SSH=` says; password logins only while a transient root password is set. Without micad, `mica-add-keys` adds the keys of a provisioning medium's `mica-authorized-keys` to root's and mica's `authorized_keys`. micad restarts it for new settings and stops it; both packages provide `mica-ssh-server` |
 | SSH, dropbear's own | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
 | Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/run/mica/wifi-client.env` |
 | Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/run/mica/wifi-ap.env` |

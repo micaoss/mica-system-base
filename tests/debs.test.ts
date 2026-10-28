@@ -303,6 +303,21 @@ describe('the mica-systemd payload', () => {
     expect(readFileSync(join(payload, 'etc/systemd/system/systemd-timesyncd.service.d/10-data.conf'), 'utf8')).toMatch(/^After=.*\bvar-lib-mica\.mount\b/m)
   })
 
+  test('keeps the network and DNS micad configures on DATA, linked in before networkd and resolved start', () => {
+    const lines = readFileSync(join(payload, 'usr/lib/tmpfiles.d/mica-network.conf'), 'utf8').split('\n').filter(l => l !== '' && !l.startsWith('#'))
+    expect(lines.map(l => l.split(/\s+/).filter(f => f !== '-').join(' '))).toEqual([
+      'd /var/lib/mica/network/networkd 0755 root root',
+      'L /run/systemd/network /var/lib/mica/network/networkd',
+      'd /var/lib/mica/dns/resolved.conf.d 0755 root root',
+      'L /run/systemd/resolved.conf.d /var/lib/mica/dns/resolved.conf.d',
+    ])
+    for (const unit of ['systemd-networkd', 'systemd-resolved']) {
+      const conf = readFileSync(join(payload, `etc/systemd/system/${unit}.service.d/10-data.conf`), 'utf8')
+      expect(conf).toMatch(/^After=.*\bvar-lib-mica\.mount\b/m)
+      expect(conf).toMatch(/^After=.*\bsystemd-tmpfiles-setup\.service\b/m)
+    }
+  })
+
   test('disables nftables.service by preset', () => {
     expect(readFileSync(join(payload, 'usr/lib/systemd/system-preset/50-mica-nftables.preset'), 'utf8')).toBe('disable nftables.service\n')
     expect(readFileSync(join(REPO, 'debs/mica-systemd/postinst'), 'utf8')).toContain('NFT_LINK=/etc/systemd/system/sysinit.target.wants/nftables.service')

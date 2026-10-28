@@ -1,6 +1,7 @@
 #!/sbin/openrc-run
 # Starts mica-sshd at boot when the settings micad last saved on DATA
-# (/var/lib/mica/ssh/sshd.env) turn SSH on, as mica-sshd.service is started under
+# (/var/lib/mica/ssh/sshd.env), or the image's (/usr/lib/mica/ssh/sshd.env) until it
+# has saved any, turn SSH on, as mica-sshd.service is started under
 # systemd, so SSH does not wait for micad. mica-sshd itself stays in no runlevel,
 # where SSH turned off is not a failed start at every boot.
 
@@ -13,7 +14,9 @@ depend() {
 
 start() {
     SSH_ENABLED=
-    [ ! -r /var/lib/mica/ssh/sshd.env ] || . /var/lib/mica/ssh/sshd.env
+    settings=/var/lib/mica/ssh/sshd.env
+    [ -r "$settings" ] || settings=/usr/lib/mica/ssh/sshd.env
+    [ ! -r "$settings" ] || . "$settings"
     if [ "$SSH_ENABLED" != yes ]; then
         einfo "SSH is off"
         return 0

@@ -3,13 +3,18 @@
 # under /run and micad rewrites it. Written at every boot once the persisted hostname
 # is applied and before any service resolves a name (mica-hosts.service under systemd,
 # mica-mounts under OpenRC): localhost and this host's name, the lines micad's file
-# starts with too, followed by the user's static records. Written to a temporary name
-# and renamed, so a reader never sees half a file.
+# starts with too, followed by the static records micad saved in
+# /var/lib/mica/dns/hosts, read on STATE before /var/lib/mica is bound. Written to a
+# temporary name and renamed, so a reader never sees half a file.
 set -eu
 hosts=/run/mica/hosts
+records=${MICA_HOSTS_RECORDS:-/mnt/data/state/mica/dns/hosts}
 name=$(cat "${MICA_HOSTNAME_FILE:-/proc/sys/kernel/hostname}")
 
 mkdir -p "${hosts%/*}"
-printf '127.0.0.1\tlocalhost\n::1\tlocalhost\n127.0.1.1\t%s\n' "$name" >"$hosts.$$"
+{
+    printf '127.0.0.1\tlocalhost\n::1\tlocalhost\n127.0.1.1\t%s\n' "$name"
+    if [ -f "$records" ]; then cat "$records"; fi
+} >"$hosts.$$"
 chmod 0644 "$hosts.$$"
 mv "$hosts.$$" "$hosts"

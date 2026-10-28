@@ -1,0 +1,71 @@
+#!/bin/sh
+# mica-add-keys <file>: add the OpenSSH public keys of <file> to root's and mica's
+# ~/.ssh/authorized_keys, each key an account does not hold yet; nothing is
+# removed. The way keys reach an image without micad: mica-provisioning-import
+# runs it on a medium's mica-authorized-keys, and an operator can run it too. With
+# micad, its access.ssh.authorizedKeys is the list, and micad rewrites these files.
+#
+# One key a line, `#` comments and blank lines allowed, no options. The file is
+# refused whole on a line that is not a plain public key: a key silently dropped
+# would leave the operator locked out with no word why.
+set -eu
+
+PASSWD=${MICA_PASSWD:-/etc/passwd}
+# The accounts micad renders its keys for.
+ACCOUNTS="root mica"
+# Bounds on the file: a key list, not a dump.
+MAX_KEYS_BYTES=65536
+MAX_KEYS=100
+
+log() { echo "mica-add-keys: $*"; }
+fail() { echo "mica-add-keys: $*" >&2; exit 1; }
+regular() { [ -f "$1" ] && [ ! -L "$1" ]; }
+
+[ "$#" = 1 ] || fail "usage: mica-add-keys <file>"
+file=$1
+regular "$file" || fail "$file is not a regular file"
+
+# Whether the file is a key list within the bounds.
+valid_keys() {
+    file=$1
+    [ "$(wc -c <"$file")" -le "$MAX_KEYS_BYTES" ] || { log "$file is over $MAX_KEYS_BYTES bytes; no key added"; return 1; }
+    bad=$(grep -nvE '^[[:space:]]*(#.*)?$|^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,2}( [[:print:]]*)?$' "$file" | head -1 | cut -d: -f1)
+    [ -z "$bad" ] || { log "$file line $bad is not an OpenSSH public key; no key added"; return 1; }
+    count=$(grep -cvE '^[[:space:]]*(#.*)?$' "$file" || :)
+    [ "$count" -gt 0 ] || { log "$file holds no key"; return 1; }
+    [ "$count" -le "$MAX_KEYS" ] || { log "$file holds $count keys, more than $MAX_KEYS; no key added"; return 1; }
+}
+
+# Add each key of the file that `account` does not hold yet. Nothing a link points
+# at is written: the home may be the account's own to change.
+add_keys() {
+    file=$1 account=$2
+    entry=$(awk -F: -v name="$account" '$1 == name { print $3 ":" $4 ":" $6; exit }' "$PASSWD")
+    [ -n "$entry" ] || { log "no account $account; no keys added for it"; return 0; }
+    uid=${entry%%:*} rest=${entry#*:}
+    gid=${rest%%:*} home=${rest#*:}
+    [ -d "$home" ] && [ ! -L "$home" ] || { log "$account has no home at $home; no keys added for it"; return 0; }
+    ssh=$home/.ssh target=$home/.ssh/authorized_keys
+    if [ -L "$ssh" ] || [ -L "$target" ]; then
+        log "$ssh or its authorized_keys is a link; no keys added for $account"
+        return 1
+    fi
+    mkdir -p "$ssh" && chmod 0700 "$ssh" && chown "$uid:$gid" "$ssh" || return 1
+    [ ! -e "$target" ] || regular "$target" || { log "$target is not a regular file; no keys added for $account"; return 1; }
+    # A link left in its place is removed, not written through.
+    new=$target.mica-add-keys
+    rm -f "$new" && { [ ! -e "$target" ] || cat "$target"; } >"$new" || return 1
+    grep -vE '^[[:space:]]*(#.*)?$' "$file" | while IFS= read -r key; do
+        grep -qxF "$key" "$new" || echo "$key" >>"$new"
+    done
+    added=$(($(grep -c . "$new" || :) - $( { [ ! -e "$target" ] || cat "$target"; } | grep -c . || :)))
+    chmod 0600 "$new" && chown "$uid:$gid" "$new" && mv "$new" "$target" || { rm -f "$new"; return 1; }
+    log "$added key(s) added for $account"
+}
+
+valid_keys "$file" || exit 1
+status=0
+for account in $ACCOUNTS; do
+    add_keys "$file" "$account" || { log "the keys were not added for $account"; status=1; }
+done
+exit "$status"

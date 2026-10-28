@@ -1,5 +1,5 @@
 Package: mica-openrc
-Version: 0.56-mica10
+Version: 0.56-mica11
 Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>

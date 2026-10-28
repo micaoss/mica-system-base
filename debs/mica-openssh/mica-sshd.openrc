@@ -19,13 +19,16 @@ depend() {
 
 start_pre() {
     SSH_ENABLED=
-    if [ -r /var/lib/mica/ssh/sshd.env ]; then
+    # The settings micad saved, else the image's, until it has.
+    settings=/var/lib/mica/ssh/sshd.env
+    [ -r "$settings" ] || settings=/usr/lib/mica/ssh/sshd.env
+    if [ -r "$settings" ]; then
         set -a
-        . /var/lib/mica/ssh/sshd.env
+        . "$settings"
         set +a
     fi
     if [ "$SSH_ENABLED" != yes ]; then
-        eerror "SSH is off: /var/lib/mica/ssh/sshd.env does not turn it on"
+        eerror "SSH is off: $settings does not turn it on"
         return 1
     fi
     # The privilege separation directory sshd requires.
