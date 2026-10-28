@@ -1,1 +1,1 @@
-disable mica-sshd.service
+enable mica-sshd.service

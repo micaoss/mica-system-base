@@ -621,8 +621,9 @@ async function debs(argv: string[]): Promise<number> {
 // quota format DATA's project quotas need -- and hands over to openrc-init. A stand-in mica-deploy
 // reports a deployment and, when the health gate confirms it, powers the machine
 // off, so the run covers the boot, the gate and the shutdown. The root carries
-// mica-openssh, as built, and its libraries: before the shutdown the stand-in starts
-// mica-sshd as micad would, and the host logs in through QEMU's forwarded port with
+// mica-openssh, as built, and its libraries: before the shutdown the stand-in saves
+// SSH settings as micad would and has mica-sshd-boot start mica-sshd from them, as a
+// boot does, and the host logs in through QEMU's forwarded port with
 // a key, as root and as mica. The serial log is kept in _out/boot-test.log, the
 // host's side of the logins in _out/boot-test-ssh.log.
 const BOOT_TEST_OVERLAY: Record<string, string> = {
@@ -645,12 +646,13 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '# the gate (after *) shows nothing of it; the prompt it starts again shows it.',
     '  sleep 2',
     '  printf \'Device code: TEST-0000-ABC\\n\\n\' >/run/mica/device-code.issue.new && mv /run/mica/device-code.issue.new /run/mica/device-code.issue',
-    '# SSH through mica-openssh: micad\'s settings and the authorized keys of root and mica, as',
-    '# micad writes them, then mica-sshd; the host logs in as both and says when it is done.',
-    '  printf \'SSH_LISTEN="22"\\nSSH_PASSWORD=no\\nSSH_ROOT_LOGIN=yes\\n\' >/run/mica/sshd.env',
+    '# SSH through mica-openssh: micad\'s saved settings and the authorized keys of root and',
+    '# mica, as micad writes them, then mica-sshd-boot, which started nothing at boot, starts',
+    '# mica-sshd from them; the host logs in as both and says when it is done.',
+    '  mkdir -p /var/lib/mica/ssh && printf \'SSH_ENABLED=yes\\nSSH_LISTEN="22"\\nSSH_PASSWORD=no\\nSSH_ROOT_LOGIN=yes\\n\' >/var/lib/mica/ssh/sshd.env',
     '  for home in /root /home/mica; do mkdir -p -m 0700 $home/.ssh && cp /usr/local/share/boot-test/client.pub $home/.ssh/authorized_keys && chmod 0600 $home/.ssh/authorized_keys; done',
     '  chown -R mica:mica /home/mica/.ssh',
-    '  rc-service mica-sshd start >/dev/null 2>&1 && echo \'boot-test: mica-sshd started\' >/dev/console',
+    '  rc-service mica-sshd-boot restart >/dev/null 2>&1 && rc-service mica-sshd status >/dev/null 2>&1 && echo \'boot-test: mica-sshd started\' >/dev/console',
     '  (i=0; while [ ! -e /run/boot-test-ssh-done ] && [ $i -lt 180 ]; do sleep 1; i=$((i + 1)); done',
     '   logread | grep mica-sshd | sed \'s/^/boot-test: sshd log: /\' >/dev/console',
     '   rc-service mica-getty restart; sleep 5; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',

@@ -1,5 +1,5 @@
 Package: mica-ssh
-Version: 2025.89-mica2
+Version: 2025.89-mica3
 Source-Date-Epoch: 1792823171
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
@@ -8,12 +8,13 @@ Priority: optional
 Depends: dropbear-bin, mica-system
 Provides: mica-ssh-server
 Conflicts: mica-openssh
-Description: Mica OS SSH: dropbear, disabled until micad enables it
+Description: Mica OS SSH: dropbear, started at boot as micad last configured it
  SSH as an option on the floor, in place of mica-openssh's OpenSSH:
  mica-sshd.service, its prestart /usr/lib/mica/mica-sshd-prestart and the
- preset that keeps the unit disabled. micad enables and starts it at runtime
- scope after writing /run/mica/sshd.env; the prestart translates it into
- dropbear's arguments, and mica-dropbear-prestart makes the ed25519 host key on
+ preset that enables the unit. It starts at boot when the settings micad saves
+ in /var/lib/mica/ssh/sshd.env on DATA turn SSH on, with or without micad, and
+ is off until they do; micad restarts it for new settings and stops it. The
+ prestart translates the settings into dropbear's arguments, and mica-dropbear-prestart makes the ed25519 host key on
  the STATE partition at the first start. The unit requires
  mica-shadow-reconcile.service, so the shadow file is built in RAM before a
  login can read it. dropbear.service, started the same way after
@@ -24,4 +25,5 @@ Description: Mica OS SSH: dropbear, disabled until micad enables it
  names libpam.
  .
  On an OpenRC root the same services are /etc/init.d/mica-sshd and
- /etc/init.d/mica-dropbear, in no runlevel: micad starts them the same way.
+ /etc/init.d/mica-dropbear, in no runlevel; mica-sshd-boot, in the default
+ runlevel, starts mica-sshd at boot when the saved settings turn SSH on.

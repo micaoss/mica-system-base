@@ -298,6 +298,11 @@ describe('the mica-systemd payload', () => {
     }
   })
 
+  test('gives timesyncd the NTP servers micad saved on DATA, once /var/lib/mica is mounted', () => {
+    expect(readlinkSync(join(payload, 'etc/systemd/timesyncd.conf.d/60-mica-servers.conf'))).toBe('/var/lib/mica/time/timesyncd.conf')
+    expect(readFileSync(join(payload, 'etc/systemd/system/systemd-timesyncd.service.d/10-data.conf'), 'utf8')).toMatch(/^After=.*\bvar-lib-mica\.mount\b/m)
+  })
+
   test('disables nftables.service by preset', () => {
     expect(readFileSync(join(payload, 'usr/lib/systemd/system-preset/50-mica-nftables.preset'), 'utf8')).toBe('disable nftables.service\n')
     expect(readFileSync(join(REPO, 'debs/mica-systemd/postinst'), 'utf8')).toContain('NFT_LINK=/etc/systemd/system/sysinit.target.wants/nftables.service')
@@ -432,7 +437,9 @@ describe('the option packages\' OpenRC scripts', () => {
   test.each([
     ['mica-ssh', 'mica-dropbear'],
     ['mica-ssh', 'mica-sshd'],
+    ['mica-ssh', 'mica-sshd-boot'],
     ['mica-openssh', 'mica-sshd'],
+    ['mica-openssh', 'mica-sshd-boot'],
     ['mica-wifi', 'mica-wifi-client'],
     ['mica-wifi-ap', 'mica-wifi-ap'],
   ])('%s installs /etc/init.d/%s, an openrc-run script that parses as sh', (name, service) => {
@@ -551,11 +558,11 @@ describe('mica-openssh', () => {
       expect(rows).toContain(name)
   })
 
-  test('adds the sshd account, uid 22, and refuses an enabled unit', () => {
+  test('adds the sshd account, uid 22', () => {
     const postinst = readFileSync(join(directory, 'postinst'), 'utf8')
     expect(postinst).toContain('ENTRY="${NAME}:x:${ID}:65534:OpenSSH privilege separation:/run/sshd:/usr/sbin/nologin"')
     expect(postinst).toMatch(/^ID=22$/m)
-    expect(postinst).toContain('LINK=/etc/systemd/system/multi-user.target.wants/mica-sshd.service')
+    expect(postinst).not.toContain('multi-user.target.wants/mica-sshd.service')
     expect(run(['sh', '-n', join(directory, 'postinst')]).code).toBe(0)
   })
 })

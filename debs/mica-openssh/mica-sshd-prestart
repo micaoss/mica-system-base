@@ -2,10 +2,11 @@
 # mica-sshd.service's ExecStartPre (mica-openssh), and mica-sshd's start_pre on
 # OpenRC.
 #
-# Reads micad's /run/mica/sshd.env from the environment:
+# Reads micad's saved /var/lib/mica/ssh/sshd.env from the environment:
 #   SSH_LISTEN      listeners, each <port> (every address) or <address>:<port>
 #                   (an IPv6 address in brackets)
-#   SSH_PASSWORD    yes|no: password logins
+#   SSH_PASSWORD    yes|no: password logins, and yes only while a transient root
+#                   password is set
 #   SSH_ROOT_LOGIN  yes|no: root logins
 # Refuses anything else. Makes the ed25519 host key on DATA/state at the first
 # start -- written to a temporary name and renamed, so an interrupted start leaves
@@ -22,7 +23,7 @@ key=$state/ssh_host_ed25519_key
 
 refuse() { echo "mica-sshd-prestart: $*" >&2; exit 1; }
 
-[ -n "${SSH_LISTEN:-}" ] || refuse "SSH_LISTEN from /run/mica/sshd.env names no listener"
+[ -n "${SSH_LISTEN:-}" ] || refuse "SSH_LISTEN from /var/lib/mica/ssh/sshd.env names no listener"
 listen=
 for listener in $SSH_LISTEN; do
     bad="SSH_LISTEN names '$listener', neither <port> nor <address>:<port>"
@@ -39,6 +40,11 @@ for listener in $SSH_LISTEN; do
     esac
     listen="$listen $listener"
 done
+# Password logins only while the transient root password micad set is in place:
+# its marker sits beside the shadow file in RAM and is gone at every boot, while
+# the saved settings are not.
+marker=${MICA_SSH_TRANSIENT_MARKER:-/run/mica/transient-root-password}
+if [ "${SSH_PASSWORD:-}" = yes ] && [ ! -s "$marker" ]; then SSH_PASSWORD=no; fi
 case "${SSH_PASSWORD:-}" in yes | no) ;; *) refuse "SSH_PASSWORD is '${SSH_PASSWORD:-}', not yes or no" ;; esac
 case "${SSH_ROOT_LOGIN:-}" in yes | no) ;; *) refuse "SSH_ROOT_LOGIN is '${SSH_ROOT_LOGIN:-}', not yes or no" ;; esac
 
@@ -71,7 +77,7 @@ fi
 # does. An account whose shadow field is `!` is locked for every login, keys
 # included; `*` is one with no password.
 {
-    echo "# Rendered by /usr/lib/mica/mica-sshd-prestart from /run/mica/sshd.env."
+    echo "# Rendered by /usr/lib/mica/mica-sshd-prestart from /var/lib/mica/ssh/sshd.env."
     for listener in $listen; do
         echo "ListenAddress $listener"
     done

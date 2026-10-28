@@ -1,6 +1,5 @@
 #!/bin/sh
-# Add sshd's privilege separation account, and refuse a root in which
-# mica-sshd.service is enabled.
+# Add sshd's privilege separation account.
 #
 # OpenSSH runs its unauthenticated half as the account `sshd`: a fixed uid, no
 # group of its own, no shell, its home the privilege separation directory. The
@@ -30,9 +29,4 @@ elif [ "${held}" != "${ENTRY}" ]; then
 fi
 [ "$(awk -F: -v n="${NAME}" '$1 == n' /etc/passwd)" = "${ENTRY}" ] ||
     { echo "error: the ${NAME} passwd entry is not the pinned one" >&2; exit 1; }
-
-# micad enables mica-sshd.service at runtime scope after writing its settings.
-LINK=/etc/systemd/system/multi-user.target.wants/mica-sshd.service
-[ ! -e "${LINK}" ] && [ ! -L "${LINK}" ] ||
-    { echo "error: ${LINK} exists, so mica-sshd.service would start at boot. SSH is disabled in the image and micad enables it at runtime; mica-openssh ships /usr/lib/systemd/system-preset/50-mica-sshd.preset to keep it disabled, and something enabled it anyway" >&2; exit 1; }
-echo "${NAME} account: ${ENTRY}; mica-sshd.service left DISABLED in the image (micad owns the lifecycle)"
+echo "${NAME} account: ${ENTRY}"

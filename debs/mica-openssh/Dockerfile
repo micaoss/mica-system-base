@@ -15,7 +15,7 @@ ARG MICA_DEB_SOURCE_REPO
 ARG SOURCE_DATE_EPOCH
 ARG MICA_INPUT_OPENSSH_SERVER
 ARG MICA_INPUT_OPENSSH_CLIENT
-COPY mica-sshd.service mica-sshd-prestart 50-mica-sshd.preset mica-sshd.openrc /in/ssh/
+COPY mica-sshd.service mica-sshd-prestart 50-mica-sshd.preset mica-sshd.openrc mica-sshd-boot.openrc /in/ssh/
 COPY postinst /in/scripts/
 RUN --mount=type=bind,from=cache,target=/cache \
     --mount=type=bind,from=debs,target=/in/debs \
@@ -63,6 +63,10 @@ RUN --mount=type=bind,from=cache,target=/cache \
     install -D -m 0755 /in/ssh/mica-sshd-prestart /stage/usr/lib/mica/mica-sshd-prestart; \
     install -D -m 0755 /in/ssh/mica-sshd.openrc /stage/etc/init.d/mica-sshd; \
     install -D -m 0644 /in/ssh/50-mica-sshd.preset /stage/usr/lib/systemd/system-preset/50-mica-sshd.preset; \
+    install -D -m 0755 /in/ssh/mica-sshd-boot.openrc /stage/etc/init.d/mica-sshd-boot; \
+    install -d -m 0755 /stage/etc/systemd/system/multi-user.target.wants /stage/etc/runlevels/default; \
+    ln -s /etc/systemd/system/mica-sshd.service /stage/etc/systemd/system/multi-user.target.wants/mica-sshd.service; \
+    ln -s /etc/init.d/mica-sshd-boot /stage/etc/runlevels/default/mica-sshd-boot; \
     install -d -m 0755 /stage/usr/share/doc/mica-openssh; \
     { \
         echo 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/'; \

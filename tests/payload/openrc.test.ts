@@ -276,9 +276,9 @@ describe('mica-wifi-client', () => {
 
 describe('mica-ntpd', () => {
   const run = join(box.dir, 'ntpd-run')
-  // The service reads /run/mica/ntpd.conf; the sandbox's directory stands in for it.
+  // The service reads /var/lib/mica/time/ntpd.conf; the sandbox's directory stands in for it.
   const script = join(box.dir, 'mica-ntpd')
-  writeFileSync(script, readFileSync(resolve(OPENRC, '../../../etc/init.d/mica-ntpd'), 'utf8').replaceAll('/run/mica', run))
+  writeFileSync(script, readFileSync(resolve(OPENRC, '../../../etc/init.d/mica-ntpd'), 'utf8').replaceAll('/var/lib/mica/time', run))
   const args = (): string => exec(['sh', '-c', `. ${script}; start_pre; echo "$command_args"`], { PATH: SYSTEM_PATH }).out.trim()
 
   test('runs on the servers micad renders, or on Debian\'s pool when it has rendered none', () => {

@@ -1,19 +1,19 @@
 #!/sbin/openrc-run
-# Network time: busybox ntpd against the ntp_servers of /run/mica/ntpd.conf, which
-# micad renders and then restarts this service, or Debian's pool while it has
-# rendered none.
+# Network time: busybox ntpd against the ntp_servers of /var/lib/mica/time/ntpd.conf,
+# which micad saves on DATA and then restarts this service, or Debian's pool while it
+# has saved none. Read at every start, so the boot uses the servers last configured.
 
 description="Network time synchronization"
 command=/usr/bin/busybox
 supervisor=supervise-daemon
 
 depend() {
-    need net
+    need net mica-mounts
 }
 
 start_pre() {
     ntp_servers=
-    [ ! -r /run/mica/ntpd.conf ] || . /run/mica/ntpd.conf
+    [ ! -r /var/lib/mica/time/ntpd.conf ] || . /var/lib/mica/time/ntpd.conf
     command_args="ntpd -n"
     for server in ${ntp_servers:-0.debian.pool.ntp.org 1.debian.pool.ntp.org 2.debian.pool.ntp.org 3.debian.pool.ntp.org}; do
         command_args="$command_args -p $server"

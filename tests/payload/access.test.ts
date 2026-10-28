@@ -249,17 +249,20 @@ describe('the dropbear contract in mica-ssh', () => {
     expect(readFileSync(join(REPO, 'debs/mica-ssh/mica-dropbear-prestart'), 'utf8')).toContain('state=${MICA_SSH_STATE:-/mnt/data/state/ssh}')
   })
 
-  test('the postinst refuses either link, and no OpenSSH is in the floor', () => {
+  test('the postinst refuses an enabled dropbear.service, and no OpenSSH is in the floor', () => {
     const postinst = readFileSync(join(REPO, 'debs/mica-ssh/postinst'), 'utf8')
-    expect(postinst).toContain('for unit in mica-sshd.service dropbear.service; do')
-    expect(postinst).toContain('LINK="/etc/systemd/system/multi-user.target.wants/${unit}"')
+    expect(postinst).toContain('LINK=/etc/systemd/system/multi-user.target.wants/dropbear.service')
+    expect(postinst).not.toContain('multi-user.target.wants/mica-sshd.service')
     expect(existsSync(join(PAYLOAD, 'etc/ssh'))).toBe(false)
     expect(existsSync(join(PAYLOAD, 'etc/systemd/system/etc-ssh.mount'))).toBe(false)
   })
 })
 
-// micad's /run/mica/sshd.env, whichever server the product carries.
+// micad's saved /var/lib/mica/ssh/sshd.env, whichever server the product carries.
 const SSHD_ENV = { SSH_LISTEN: '22', SSH_PASSWORD: 'no', SSH_ROOT_LOGIN: 'yes' }
+// A transient root password's marker, as micad writes it beside the shadow file.
+const MARKER = join(box.dir, 'transient-root-password')
+writeFileSync(MARKER, '$2b$12$hash\n')
 const BAD_ENVS: Record<string, string>[] = [
   {},
   { ...SSHD_ENV, SSH_LISTEN: '' },
@@ -285,16 +288,26 @@ describe('mica-sshd-prestart of mica-ssh (dropbear)', () => {
     return { state, out: join(state, '..', 'sshd-dropbear.env') }
   }
   const prestart = (c: { state: string, out: string }, env: Record<string, string>): number =>
-    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_DROPBEAR_ENV: c.out, ...env }).code
+    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_DROPBEAR_ENV: c.out, MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'no-marker'), ...env }).code
 
   test('translates the settings into dropbear\'s arguments and makes the dropbear key', () => {
     const c = newCase('every-address')
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 22 -s"\n')
     expect(readFileSync(join(c.state, 'dropbear_ed25519_host_key'), 'utf8')).toBe('generated ed25519\n')
-    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no' })).toBe(0)
+    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no', MICA_SSH_TRANSIENT_MARKER: MARKER })).toBe(0)
     expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 192.0.2.5:22 -p [2001:db8::5]:2222 -w"\n')
     expect(readFileSync(trace, 'utf8').split('\n').filter(Boolean)).toHaveLength(1)
+  })
+
+  // The saved settings outlive the boot; the transient password does not.
+  test('turns password logins off when no transient root password is set', () => {
+    const c = newCase('no-transient')
+    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes' })).toBe(0)
+    expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 22 -s"\n')
+    writeFileSync(join(box.dir, 'empty-marker'), '')
+    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes', MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'empty-marker') })).toBe(0)
+    expect(readFileSync(c.out, 'utf8')).toBe('DROPBEAR_ARGS="-p 22 -s"\n')
   })
 
   test('refuses settings that are not micad\'s, before making a key', () => {
@@ -324,9 +337,9 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     return { state, key: join(state, 'ssh_host_ed25519_key'), config: join(state, '..', 'sshd_config') }
   }
   const prestart = (c: { state: string, config: string }, env: Record<string, string>): number =>
-    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, ...env }).code
+    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'no-marker'), ...env }).code
   const rendered = (c: { key: string }, listen: string[], password: string, root: string): string => [
-    '# Rendered by /usr/lib/mica/mica-sshd-prestart from /run/mica/sshd.env.',
+    '# Rendered by /usr/lib/mica/mica-sshd-prestart from /var/lib/mica/ssh/sshd.env.',
     ...listen.map(listener => `ListenAddress ${listener}`),
     `HostKey ${c.key}`,
     `PasswordAuthentication ${password}`,
@@ -351,8 +364,14 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
     expect(readFileSync(trace, 'utf8')).toContain(`sshd -t -f ${c.config}.new\n`)
-    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no' })).toBe(0)
+    expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no', MICA_SSH_TRANSIENT_MARKER: MARKER })).toBe(0)
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['192.0.2.5:22', '[2001:db8::5]:2222'], 'yes', 'no'))
+  })
+
+  test('turns password logins off when no transient root password is set', () => {
+    const c = newCase('no-transient')
+    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes' })).toBe(0)
+    expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
   })
 
   test('the first start generates an owner-only ed25519 key on STATE, and later starts keep it', () => {
@@ -388,7 +407,7 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     const c = newCase('sshd-refuses')
     expect(prestart(c, SSHD_ENV)).toBe(0)
     const before = readFileSync(c.config, 'utf8')
-    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes', MICA_TEST_SSHD_FAIL: '1' })).not.toBe(0)
+    expect(prestart(c, { ...SSHD_ENV, SSH_PASSWORD: 'yes', MICA_SSH_TRANSIENT_MARKER: MARKER, MICA_TEST_SSHD_FAIL: '1' })).not.toBe(0)
     expect(readFileSync(c.config, 'utf8')).toBe(before)
     expect(existsSync(`${c.config}.new`)).toBe(false)
   })
@@ -403,30 +422,70 @@ describe('mica-sshd-prestart of mica-openssh', () => {
   })
 })
 
-// One service, two servers: micad drives mica-sshd whichever the product carries.
+// One service, two servers: micad drives mica-sshd whichever the product carries,
+// and the init starts it at boot from micad's saved settings, without micad.
 describe.each(['mica-ssh', 'mica-openssh'])('the mica-sshd contract in %s', (name) => {
   const directory = join(REPO, 'debs', name)
   const unit = readFileSync(join(directory, 'mica-sshd.service'), 'utf8').split('\n')
   const openrc = readFileSync(join(directory, 'mica-sshd.openrc'), 'utf8')
+  const dockerfile = readFileSync(join(directory, 'Dockerfile'), 'utf8')
 
-  test('the unit needs micad\'s settings, the shadow file and STATE, keeps sessions and logs as mica-sshd', () => {
+  test('the unit starts at boot on micad\'s saved settings, after the shadow file and DATA, keeps sessions and logs as mica-sshd', () => {
     for (const line of [
-      'EnvironmentFile=/run/mica/sshd.env',
+      'EnvironmentFile=-/var/lib/mica/ssh/sshd.env',
+      'ExecCondition=/bin/sh -c \'test "${SSH_ENABLED}" = yes\'',
       'ExecStartPre=/usr/lib/mica/mica-sshd-prestart',
       'Requires=mica-shadow-reconcile.service',
-      'RequiresMountsFor=/mnt/data/state',
+      'RequiresMountsFor=/mnt/data/state /var/lib/mica',
       'SyslogIdentifier=mica-sshd',
       'KillMode=process',
       'WantedBy=multi-user.target',
     ])
       expect(unit).toContain(line)
     expect(unit.some(line => /^After=.*\bmica-shadow-reconcile\.service\b/.test(line))).toBe(true)
-    expect(readFileSync(join(directory, '50-mica-sshd.preset'), 'utf8')).toBe('disable mica-sshd.service\n')
+    expect(unit.some(line => line.includes('/run/mica/sshd.env'))).toBe(false)
+    expect(readFileSync(join(directory, '50-mica-sshd.preset'), 'utf8')).toBe('enable mica-sshd.service\n')
+    expect(dockerfile).toContain('ln -s /etc/systemd/system/mica-sshd.service /stage/etc/systemd/system/multi-user.target.wants/mica-sshd.service;')
   })
 
-  test('the OpenRC service reads the same settings, runs the same prestart and logs as mica-sshd', () => {
-    for (const text of ['. /run/mica/sshd.env', '/usr/lib/mica/mica-sshd-prestart', 'need mica-mounts mica-shadow-reconcile', 'error_logger="busybox logger -t mica-sshd"', 'supervisor=supervise-daemon'])
+  test('the OpenRC service reads the same settings, refuses to start while SSH is off, runs the same prestart and logs as mica-sshd', () => {
+    for (const text of ['. /var/lib/mica/ssh/sshd.env', 'if [ "$SSH_ENABLED" != yes ]; then', '/usr/lib/mica/mica-sshd-prestart', 'need mica-mounts mica-shadow-reconcile', 'error_logger="busybox logger -t mica-sshd"', 'supervisor=supervise-daemon'])
       expect(openrc).toContain(text)
+    expect(openrc).not.toContain('/run/mica/sshd.env')
+  })
+
+  test('mica-sshd-boot, in the default runlevel, is the same script in both packages', () => {
+    expect(readFileSync(join(directory, 'mica-sshd-boot.openrc'), 'utf8')).toBe(readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd-boot.openrc'), 'utf8'))
+    expect(dockerfile).toContain('install -D -m 0755 /in/ssh/mica-sshd-boot.openrc /stage/etc/init.d/mica-sshd-boot;')
+    expect(dockerfile).toContain('ln -s /etc/init.d/mica-sshd-boot /stage/etc/runlevels/default/mica-sshd-boot;')
+  })
+})
+
+// mica-sshd-boot's start(), run by sh with OpenRC's helpers faked.
+describe('mica-sshd-boot', () => {
+  const bin = join(box.dir, 'sshd-boot-bin')
+  const trace = join(box.dir, 'sshd-boot-trace')
+  const settings = join(box.dir, 'sshd-boot', 'sshd.env')
+  mkdirSync(join(box.dir, 'sshd-boot'), { recursive: true })
+  fake(bin, 'rc-service', 'printf \'rc-service %s\\n\' "$*" >>"$MICA_TEST_TRACE"')
+  const script = join(box.dir, 'mica-sshd-boot')
+  writeFileSync(script, readFileSync(join(REPO, 'debs/mica-ssh/mica-sshd-boot.openrc'), 'utf8').replaceAll('/var/lib/mica/ssh/sshd.env', settings))
+  const start = (): { code: number, calls: string } => {
+    writeFileSync(trace, '')
+    const { code } = exec(['sh', '-c', `einfo() { :; }; . ${script}; start`], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace })
+    return { code, calls: readFileSync(trace, 'utf8') }
+  }
+
+  test('starts mica-sshd when the saved settings turn SSH on', () => {
+    writeFileSync(settings, 'SSH_ENABLED=yes\nSSH_LISTEN="22"\nSSH_PASSWORD=no\nSSH_ROOT_LOGIN=yes\n')
+    expect(start()).toEqual({ code: 0, calls: 'rc-service mica-sshd start\n' })
+  })
+
+  test('starts nothing, and does not fail, when SSH is off or was never configured', () => {
+    writeFileSync(settings, 'SSH_ENABLED=no\nSSH_LISTEN="22"\nSSH_PASSWORD=no\nSSH_ROOT_LOGIN=yes\n')
+    expect(start()).toEqual({ code: 0, calls: '' })
+    rmSync(settings)
+    expect(start()).toEqual({ code: 0, calls: '' })
   })
 })
 

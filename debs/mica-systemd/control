@@ -1,5 +1,5 @@
 Package: mica-systemd
-Version: 257.13-mica6
+Version: 257.13-mica7
 Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
@@ -15,7 +15,9 @@ Description: Mica OS on systemd
  /root, /var, /var/lib/mica, /etc/hostname and /usr/local/lib/systemd/system,
  the seed and reconcile services, the health gate and the boot-failure handler,
  the offline provisioning import -- with the default DHCP network, volatile
- journald storage, the network time policy, the hardware watchdog and the drop
+ journald storage, the network time policy and the NTP servers micad saves
+ on DATA (/var/lib/mica/time/timesyncd.conf, linked as a timesyncd drop-in), the
+ hardware watchdog and the drop
  of CAP_SYS_RESOURCE that keeps services inside DATA's project quotas;
  /usr/lib/mica/mica-init for systemd; and mica-grow-data, which grows DATA with
  systemd-repart.

@@ -54,8 +54,8 @@ is 3.6 MB.
 | `mica-openrc` | all | init: Mica OS on OpenRC | mica-system, mica-mdev, openrc, fdisk |
 | `mica-mdev` | all | init: device nodes without udev, for mica-openrc | mica-busybox |
 | `mica-systemd-boot` | amd64, arm64 | boot: the systemd-boot EFI loader of the pinned systemd, with persisted boot attempts | |
-| `mica-ssh` | all | option: SSH (dropbear), started by micad | dropbear-bin, mica-system |
-| `mica-openssh` | amd64, arm64, armhf | option: SSH (OpenSSH's sshd of the pinned openssh-server), started by micad; conflicts with mica-ssh | mica-system, the libraries of sshd |
+| `mica-ssh` | all | option: SSH (dropbear), started at boot from micad's saved settings | dropbear-bin, mica-system |
+| `mica-openssh` | amd64, arm64, armhf | option: SSH (OpenSSH's sshd of the pinned openssh-server), started at boot from micad's saved settings; conflicts with mica-ssh | mica-system, the libraries of sshd |
 | `mica-storage-ubi` | armhf | floor on armhf: stands in for e2fsprogs and fdisk where DATA is UBIFS | |
 | `mica-wifi` | amd64, arm64 | option: a minimal `wpa_supplicant` from upstream hostap | libnl, libssl3t64, iw, rfkill |
 | `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap, with ACS | libnl, libssl3t64, iw, rfkill |
@@ -78,7 +78,7 @@ Every product installs exactly one.
 | DATA | grown with `systemd-repart` (`mica-grow-data`), checked and mounted from `/etc/fstab`, laid out | grown with `sfdisk` (`mica-grow-data`), checked (`fsck -M`: not the DATA the runkit mounted), mounted from `/etc/fstab`, `x-systemd.growfs` honoured, laid out |
 | Binds and seeds | mount units: `/mica`, `/mica/containers`, `/srv`, STATE's hostname, `/var`, `/var/lib/mica`, `/root`, `/home` | `mica-mounts`, in the same order, then the `tmpfiles.d` entries |
 | Network | networkd, DHCP by default; resolved; `systemd-networkd-wait-online` masked, so nothing waits for a link and `network-online.target` comes with `network.target` | `/etc/network/interfaces` (a link to `/var/lib/mica/network/interfaces`, which micad writes) applied by busybox `ifup -a`; until it exists, DHCP on every `eth*` with busybox `udhcpc`; DNS in `/run/mica/resolv.conf` |
-| Time | timesyncd | busybox `ntpd` (`mica-ntpd`) on the `ntp_servers` micad renders in `/run/mica/ntpd.conf`, Debian's pool until then |
+| Time | timesyncd, on the NTP servers micad saves in `/var/lib/mica/time/timesyncd.conf` (linked as `/etc/systemd/timesyncd.conf.d/60-mica-servers.conf`) | busybox `ntpd` (`mica-ntpd`) on the `ntp_servers` micad saves in `/var/lib/mica/time/ntpd.conf`, Debian's pool until then |
 | Log | journald, volatile | busybox `syslogd` and `klogd` in RAM, read with `logread` |
 | Watchdog | systemd's hardware watchdog | busybox `watchdog`, 90 s |
 | Health gate | `mica-health.service`, `mica-boot-failure` on failure, both writing to the journal, their verdict echoed to the console best effort (two seconds at most); `/etc/mica/health.conf` requires `micad` alone, with no wait for the boot or the network to settle | `mica-health`, last, the same, in the foreground: its lines reach the console |
@@ -186,7 +186,7 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 
 | Service | Package | systemd | OpenRC | Started by |
 | --- | --- | --- | --- | --- |
-| SSH | mica-ssh or mica-openssh | `mica-sshd.service`, disabled by preset | `mica-sshd`, in no runlevel | micad, after writing `/run/mica/sshd.env` (`SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`); both packages provide `mica-ssh-server` |
+| SSH | mica-ssh or mica-openssh | `mica-sshd.service`, enabled, skipped while SSH is off | `mica-sshd`, in no runlevel; `mica-sshd-boot`, in `default`, starts it while SSH is on | boot, from the settings micad saves in `/var/lib/mica/ssh/sshd.env` on DATA (`SSH_ENABLED`, `SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`), with or without micad; off until micad has saved `SSH_ENABLED=yes`, and password logins only while a transient root password is set. micad restarts it for new settings and stops it; both packages provide `mica-ssh-server` |
 | SSH, dropbear's own | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
 | Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/run/mica/wifi-client.env` |
 | Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/run/mica/wifi-ap.env` |
