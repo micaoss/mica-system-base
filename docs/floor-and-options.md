@@ -84,7 +84,7 @@ Every product installs exactly one.
 | Health gate | `mica-health.service`, `mica-boot-failure` on failure, both writing to the journal, their verdict echoed to the console best effort (two seconds at most); `/etc/mica/health.conf` requires the init up and not in `maintenance` or `stopping`, and `micad` answering where the image carries it (`if-installed=micad`), with no wait for the boot or the network to settle | `mica-health`, last, the same, in the foreground: its lines reach the console |
 | Resource limits | no service keeps `CAP_SYS_RESOURCE` (DATA's project quotas hold) | the same, `/etc/rc.conf.d/mica.conf` |
 | Console | no getty until the console option installs `/usr/bin/login`; every getty after `micad.service`, never requiring it; `getty@tty1` masked, so the VT the boot logo lands on stays idle; logind's one login VT is tty2 | `mica-getty`, in `default`, after `micad`: no prompt until the console option installs `/usr/bin/login`; then agetty on every serial console of the kernel command line and, where a display exists, on tty2; tty1 stays idle |
-| Enablement | links in the packages' payload | runlevel links in the packages' payload |
+| Enablement | links in the packages' payload; what micad enables is saved in `/var/lib/mica/units/enabled` on DATA, and `mica-units.service` starts each listed unit at boot | runlevel links in the packages' payload; `mica-units`, in `default`, the same |
 
 The login prompt shows micad's device code under both: `/etc/issue.d/50-mica-device-code.issue`
 (mica-system) links to `/run/mica/device-code.issue`, which micad writes, and agetty prints
@@ -125,7 +125,7 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
 - OpenRC default routes: mica-udhcpc installs a lease's first router as the default route
   with `metric $IF_METRIC` when `IF_METRIC` is set and not empty, and without a metric
   otherwise. busybox ifupdown exports a DHCP stanza's `metric <n>` line as `IF_METRIC`;
-  `mica-wifi-client` passes `metric=` of `/run/mica/wifi-client.env`. With a metric per
+  `mica-wifi-client` passes `metric=` of `/var/lib/mica/wifi/client.env`. With a metric per
   interface, two uplinks keep a default route each. With `IF_INTERNET=0` (a stanza's
   `internet 0`, an interface micad keeps off the internet) it sets the lease's address and
   subnet route and its DNS servers, and no default route; any other value, or none, keeps the
@@ -195,12 +195,13 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 | --- | --- | --- | --- | --- |
 | SSH | mica-ssh or mica-openssh | `mica-sshd.service`, enabled, skipped while SSH is off | `mica-sshd`, in no runlevel; `mica-sshd-boot`, in `default`, starts it while SSH is on | boot, from the settings micad saves in `/var/lib/mica/ssh/sshd.env` on DATA (`SSH_ENABLED`, `SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`), with or without micad, and until micad has saved them from the image's `/usr/lib/mica/ssh/sshd.env`, which mica-build writes on or off as the product's `SSH=` says; password logins only while a transient root password is set. Without micad, `mica-add-keys` adds the keys of a provisioning medium's `mica-authorized-keys` to root's and mica's `authorized_keys`. micad restarts it for new settings and stops it; both packages provide `mica-ssh-server` |
 | SSH, dropbear's own | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
-| Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/run/mica/wifi-client.env` |
-| Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/run/mica/wifi-ap.env` |
+| Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/var/lib/mica/wifi/client.env`; at boot, `mica-units` while micad has it enabled |
+| Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/var/lib/mica/wifi/ap.env`; at boot, `mica-units` while micad has it enabled |
 | Bluetooth HCI attach | mica-bluetooth | `mica-bt.service`, enabled, inert without `/etc/mica/bt.conf` | `mica-bt`, in no runlevel, starts nothing without `/etc/mica/bt.conf` | boot (systemd); the product links it into `default` (OpenRC) |
-| Bluetooth daemon | mica-bluetooth (bluez) | bluez's `bluetooth.service` with mica-bluetooth's drop-in, `var-lib-bluetooth.mount` | `mica-bluetoothd`: the STATE bind, then bluetoothd | micad |
+| Bluetooth daemon | mica-bluetooth (bluez) | bluez's `bluetooth.service` with mica-bluetooth's drop-in, `var-lib-bluetooth.mount`, enabled | `mica-bluetoothd`: the STATE bind, then bluetoothd | boot where the adapter exists (systemd); micad (OpenRC) |
 | Network time | mica-systemd, mica-openrc | timesyncd | `mica-ntpd`, in `default` | boot; micad restarts it for new servers |
-| micad, apid, MQTT | mica-core's packages | their units | their scripts | their packages |
+| micad, apid | mica-core's packages | their units | their scripts | their packages |
+| MQTT broker and bridge | mica-pkgs' packages | `mica-mqtt-broker.service`, `mica-mqttd.service`, reading `/var/lib/mica/mqtt/broker.toml` and `/var/lib/mica/mqtt/mqttd-device.env` | `mica-mqtt-broker`, `mica-mqttd` | micad; at boot, `mica-units` while micad has them enabled |
 
 The board facts these services read -- `/etc/mica/bt.conf`, the radio modules and firmware,
 the hwinit programs -- are the board's package (its BSP).

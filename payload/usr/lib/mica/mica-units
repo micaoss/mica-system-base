@@ -1,0 +1,25 @@
+#!/bin/sh
+# Starts at boot the services micad turned on, as it saved them on DATA in
+# /var/lib/mica/units/enabled, one unit a line (the Wi-Fi station and access point,
+# the MQTT broker and bridge, the container engine): enablement on the read-only
+# root lasts only until the next boot, and this file is what lasts. Run by
+# mica-units.service under systemd and the mica-units service under OpenRC, with or
+# without micad. A line that does not name a service is skipped, and one service
+# that does not start does not keep the others from starting.
+set -u
+list=${MICA_UNITS_ENABLED:-/var/lib/mica/units/enabled}
+INIT=${MICA_INIT:-/usr/lib/mica/mica-init}
+
+[ -r "$list" ] || exit 0
+status=0
+while IFS= read -r unit; do
+    case "$unit" in
+    "" | *[!A-Za-z0-9@._-]* | [!A-Za-z0-9]*) continue ;;
+    *.service) ;;
+    *) continue ;;
+    esac
+    service=${unit%.service}
+    echo "mica-units: starting $service"
+    "$INIT" start "$service" || { echo "mica-units: $service did not start" >&2; status=1; }
+done <"$list"
+exit "$status"

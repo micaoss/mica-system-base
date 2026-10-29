@@ -252,7 +252,7 @@ describe('mica-udhcpc', () => {
   })
 })
 
-// mica-wifi's station hands micad's `metric` of /run/mica/wifi-client.env to udhcpc,
+// mica-wifi's station hands micad's `metric` of /var/lib/mica/wifi/client.env to udhcpc,
 // and so to mica-udhcpc, as IF_METRIC.
 describe('mica-wifi-client', () => {
   const bin = join(box.dir, 'wifi-bin')
@@ -261,7 +261,7 @@ describe('mica-wifi-client', () => {
   fake(bin, 'start-stop-daemon', 'exit 0')
   fake(bin, 'busybox', 'echo "IF_METRIC=${IF_METRIC-unset} $*" >> "$CALLS"')
   const script = join(box.dir, 'mica-wifi-client')
-  writeFileSync(script, readFileSync(resolve(import.meta.dir, '../../debs/mica-wifi/mica-wifi-client.openrc'), 'utf8').replaceAll('/run/mica/wifi-client.env', env))
+  writeFileSync(script, readFileSync(resolve(import.meta.dir, '../../debs/mica-wifi/mica-wifi-client.openrc'), 'utf8').replaceAll('/var/lib/mica/wifi/client.env', env))
   const start = (): string => {
     writeFileSync(calls, '')
     expect(exec(['sh', '-c', `ebegin() { :; }; eend() { return $1; }; eerror() { :; }; . ${script}; start`], { PATH: `${bin}:${SYSTEM_PATH}`, CALLS: calls }).code).toBe(0)

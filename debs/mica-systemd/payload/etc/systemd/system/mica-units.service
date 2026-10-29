@@ -1,0 +1,14 @@
+[Unit]
+Description=Start the services micad turned on, as saved on DATA
+Documentation=file:/usr/lib/mica/mica-units
+# The list is on /var/lib/mica; each start is queued, so nothing here waits on
+# what it starts.
+After=var-lib-mica.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-units
+
+[Install]
+WantedBy=multi-user.target

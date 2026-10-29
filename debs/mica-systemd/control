@@ -1,5 +1,5 @@
 Package: mica-systemd
-Version: 257.13-mica9
+Version: 257.13-mica10
 Source-Date-Epoch: 1792823256
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>

@@ -2,11 +2,11 @@
 # hostapd@<interface>.service and networkd's DHCPServer= on an OpenRC root: the
 # link addressed, hostapd on micad's configuration and busybox udhcpd serving the
 # pool. micad names the interface, configuration, address and udhcpd configuration
-# in /run/mica/wifi-ap.env, renders them and starts it; it is in no runlevel.
+# in /var/lib/mica/wifi/ap.env, renders them and starts it; it is in no runlevel.
 
 description="Wi-Fi access point"
 
-ENV=/run/mica/wifi-ap.env
+ENV=/var/lib/mica/wifi/ap.env
 HOSTAPD_PID=/run/mica-wifi-ap.hostapd.pid
 UDHCPD_PID=/run/mica-wifi-ap.udhcpd.pid
 

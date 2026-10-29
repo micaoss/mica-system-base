@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# Starts at boot the services micad turned on, as it saved them on DATA
+# (/usr/lib/mica/mica-units), as mica-units.service does under systemd.
+
+description="Start the services micad turned on"
+
+depend() {
+    need mica-mounts
+    after net mica-network
+}
+
+start() {
+    /usr/lib/mica/mica-units
+    return 0
+}

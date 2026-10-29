@@ -6,6 +6,7 @@
 #   mica-init reboot | poweroff    start it and return
 #   mica-init is-active <service>  exit 0 when it is active
 #   mica-init installed <service>  exit 0 when this root ships it
+#   mica-init start <service>      queue its start and return
 #   mica-init state                the boot's state: initializing, starting, running,
 #                                  degraded, maintenance or stopping
 #   mica-init jobs                 the services the boot is still starting, one a line
@@ -18,6 +19,9 @@ reboot | poweroff)
     ;;
 is-active)
     exec systemctl is-active --quiet "${2:?service required}.service"
+    ;;
+start)
+    exec systemctl --no-block start "${2:?service required}.service"
     ;;
 installed)
     # list-unit-files can exit 0 with no output for an absent unit: test the output.
@@ -36,7 +40,7 @@ failed)
     systemctl list-units --state=failed --no-legend --plain --full 2>/dev/null | awk '{ print $1 }'
     ;;
 *)
-    echo "usage: mica-init reboot|poweroff|is-active <service>|installed <service>|state|jobs|failed" >&2
+    echo "usage: mica-init reboot|poweroff|is-active <service>|installed <service>|start <service>|state|jobs|failed" >&2
     exit 2
     ;;
 esac

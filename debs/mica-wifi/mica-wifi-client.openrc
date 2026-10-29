@@ -1,13 +1,13 @@
 #!/sbin/openrc-run
 # wpa_supplicant@<interface>.service and networkd's DHCP on an OpenRC root:
 # wpa_supplicant on the interface and configuration micad names in
-# /run/mica/wifi-client.env, and busybox udhcpc on the link with mica-openrc's lease
+# /var/lib/mica/wifi/client.env, and busybox udhcpc on the link with mica-openrc's lease
 # script, the file's default-route metric (metric=) handed to it as IF_METRIC. One service rather than one per interface: an instance would be a link in
 # the read-only /etc/init.d. In no runlevel; micad renders both files and starts it.
 
 description="Wi-Fi station"
 
-ENV=/run/mica/wifi-client.env
+ENV=/var/lib/mica/wifi/client.env
 WPA_PID=/run/mica-wifi-client.wpa.pid
 DHCP_PID=/run/mica-wifi-client.dhcp.pid
 
