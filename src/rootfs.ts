@@ -314,7 +314,7 @@ export function assertSystemd(root: string, arch: Arch): void {
 const OPENRC_RUNLEVELS: Record<string, string[]> = {
   sysinit: ['cgroups', 'mica-kernfs', 'mica-mdev'],
   boot: ['mica-data-layout', 'mica-klogd', 'mica-mounts', 'mica-syslogd', 'mica-watchdog'],
-  default: ['mica-dbus', 'mica-getty', 'mica-health', 'mica-local', 'mica-network', 'mica-ntpd', 'mica-provisioning-import', 'mica-shadow-reconcile'],
+  default: ['mica-dbus', 'mica-getty', 'mica-health', 'mica-local', 'mica-network', 'mica-ntpd', 'mica-provisioning-import', 'mica-shadow-reconcile', 'mica-units'],
 }
 
 // A root composed from the floor with mica-openrc: the floor's promises, OpenRC
