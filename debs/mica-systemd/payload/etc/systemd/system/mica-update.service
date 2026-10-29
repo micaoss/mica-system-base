@@ -1,0 +1,13 @@
+[Unit]
+Description=Install the newest update on a device without micad
+# Where micad is installed it runs the updates, under its own policy and gates;
+# this is the base's, for a device without it. mica-deploy update --auto does
+# nothing unless the update policy (/mica/config/updates.json over the image's) is
+# auto, and never reboots: what it installs runs from the next boot.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c '! /usr/lib/mica/mica-init installed micad'
+ExecStart=/usr/bin/mica-deploy update --auto

@@ -318,6 +318,16 @@ describe('the mica-systemd payload', () => {
     }
   })
 
+  test('updates a device without micad daily, under the update policy, never rebooting', () => {
+    const system = join(payload, 'etc/systemd/system')
+    expect(readlinkSync(join(system, 'timers.target.wants/mica-update.timer'))).toBe('/etc/systemd/system/mica-update.timer')
+    expect(readFileSync(join(system, 'mica-update.timer'), 'utf8')).toMatch(/^OnUnitActiveSec=1d$/m)
+    const service = readFileSync(join(system, 'mica-update.service'), 'utf8')
+    expect(service).toMatch(/^ExecCondition=\/bin\/sh -c '! \/usr\/lib\/mica\/mica-init installed micad'$/m)
+    expect(service).toMatch(/^ExecStart=\/usr\/bin\/mica-deploy update --auto$/m)
+    expect(service).not.toContain('--reboot')
+  })
+
   test('disables nftables.service by preset', () => {
     expect(readFileSync(join(payload, 'usr/lib/systemd/system-preset/50-mica-nftables.preset'), 'utf8')).toBe('disable nftables.service\n')
     expect(readFileSync(join(REPO, 'debs/mica-systemd/postinst'), 'utf8')).toContain('NFT_LINK=/etc/systemd/system/sysinit.target.wants/nftables.service')
