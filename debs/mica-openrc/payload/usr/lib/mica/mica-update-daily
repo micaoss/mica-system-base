@@ -1,0 +1,17 @@
+#!/bin/sh
+# OpenRC's counterpart of mica-update.timer and mica-update.service: on a device
+# without micad, mica-deploy update --auto 15 minutes after the boot and then once a
+# day, each within an hour's random delay. update --auto does nothing unless the
+# update policy is auto, and never reboots. Run by the mica-update service under
+# supervise-daemon; a failed check waits for the next day, as the timer does.
+set -u
+DEPLOY=${MICA_DEPLOY:-/usr/bin/mica-deploy}
+
+# Up to an hour, from the kernel: busybox sh and dash alike lack $RANDOM.
+jitter() { echo $(($(od -An -N2 -tu2 /dev/urandom) % 3600)); }
+
+sleep $((900 + $(jitter)))
+while :; do
+    "$DEPLOY" update --auto || echo "mica-update: update --auto failed" >&2
+    sleep $((86400 + $(jitter)))
+done

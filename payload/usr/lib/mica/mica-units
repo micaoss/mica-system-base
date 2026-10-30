@@ -1,25 +1,77 @@
 #!/bin/sh
-# Starts at boot the services micad turned on, as it saved them on DATA in
-# /var/lib/mica/units/enabled, one unit a line (the Wi-Fi station and access point,
-# the MQTT broker and bridge, the container engine): enablement on the read-only
-# root lasts only until the next boot, and this file is what lasts. Run by
-# mica-units.service under systemd and the mica-units service under OpenRC, with or
-# without micad. A line that does not name a service is skipped, and one service
-# that does not start does not keep the others from starting.
+# The services switched on beyond what the image enables -- the Wi-Fi station and
+# access point, the MQTT broker and bridge, the container engine -- as saved on DATA
+# in /var/lib/mica/units/enabled, one unit a line: enablement on the read-only root
+# lasts only until the next boot, and this file is what lasts. micad keeps the file
+# where it is installed; without it, an operator does, with this command.
+#
+#   mica-units                     start every listed service: the boot's, run by
+#                                  mica-units.service under systemd and the
+#                                  mica-units service under OpenRC
+#   mica-units enable <service>    list it and start it
+#   mica-units disable <service>   take it off the list and stop it
+#   mica-units list                the listed units, one a line
+#
+# A service is named with or without .service (mica-containerd,
+# wpa_supplicant@wlan0.service). At boot a line that does not name a service is
+# skipped, and one service that does not start does not keep the others from
+# starting.
 set -u
 list=${MICA_UNITS_ENABLED:-/var/lib/mica/units/enabled}
 INIT=${MICA_INIT:-/usr/lib/mica/mica-init}
 
-[ -r "$list" ] || exit 0
-status=0
-while IFS= read -r unit; do
-    case "$unit" in
-    "" | *[!A-Za-z0-9@._-]* | [!A-Za-z0-9]*) continue ;;
-    *.service) ;;
-    *) continue ;;
+# Exit 0 when $1 names a service unit.
+is_unit() {
+    case "$1" in
+    "" | *[!A-Za-z0-9@._-]* | [!A-Za-z0-9]*) return 1 ;;
+    *.service) return 0 ;;
+    *) return 1 ;;
     esac
-    service=${unit%.service}
-    echo "mica-units: starting $service"
-    "$INIT" start "$service" || { echo "mica-units: $service did not start" >&2; status=1; }
-done <"$list"
-exit "$status"
+}
+
+# The unit $1 names, or a refusal.
+unit_of() {
+    unit=${1%.service}.service
+    is_unit "$unit" || { echo "mica-units: not a service name: $1" >&2; exit 2; }
+}
+
+# Rewrite the list: its lines but $1, then $2 when given; through a file beside
+# it, so a reader never sees half of one.
+rewrite() {
+    mkdir -p "${list%/*}" || exit 1
+    {
+        [ ! -r "$list" ] || grep -vxF -- "$1" "$list"
+        [ -z "${2:-}" ] || echo "$2"
+    } >"$list.new" && mv "$list.new" "$list" || { echo "mica-units: cannot write $list" >&2; exit 1; }
+}
+
+case "${1:-}" in
+"")
+    [ -r "$list" ] || exit 0
+    status=0
+    while IFS= read -r unit; do
+        is_unit "$unit" || continue
+        service=${unit%.service}
+        echo "mica-units: starting $service"
+        "$INIT" start "$service" || { echo "mica-units: $service did not start" >&2; status=1; }
+    done <"$list"
+    exit "$status"
+    ;;
+enable)
+    unit_of "${2:-}"
+    rewrite "$unit" "$unit"
+    exec "$INIT" start "${unit%.service}"
+    ;;
+disable)
+    unit_of "${2:-}"
+    rewrite "$unit"
+    exec "$INIT" stop "${unit%.service}"
+    ;;
+list)
+    [ ! -r "$list" ] || cat "$list"
+    ;;
+*)
+    echo "usage: mica-units [enable <service>|disable <service>|list]" >&2
+    exit 2
+    ;;
+esac

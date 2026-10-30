@@ -1,6 +1,6 @@
 Package: mica-bluetooth
-Version: 5.82-mica2
-Source-Date-Epoch: 1792643735
+Version: 5.82-mica3
+Source-Date-Epoch: 1793232000
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -15,8 +15,9 @@ Description: Mica OS Bluetooth support
  (ConditionPathExists=), and var-lib-bluetooth.mount with its
  local-fs.target.wants link. Under OpenRC: /etc/init.d/mica-bt, which starts
  nothing without /etc/mica/bt.conf, and /etc/init.d/mica-bluetoothd, which
- binds the pairing keys and runs bluetoothd under supervise-daemon; both in no
- runlevel -- the product links mica-bt, micad starts mica-bluetoothd.
+ binds the pairing keys and runs bluetoothd under supervise-daemon, in the
+ default runlevel as bluetooth.service is enabled under systemd; mica-bt is in
+ no runlevel -- the product links it.
  .
  bluetoothd reads /usr/lib/mica/bluetooth/main.conf through -f under both
  inits (a drop-in for bluez's bluetooth.service, and mica-bluetoothd), in place

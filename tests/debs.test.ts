@@ -493,14 +493,16 @@ describe('mica-bluetooth', () => {
     expect(run(['sh', '-n', join(payload, 'usr/lib/mica/hwinit-bt')]).code).toBe(0)
   })
 
-  test('under OpenRC: mica-bt and mica-bluetoothd, openrc-run scripts in no runlevel', () => {
+  test('under OpenRC: mica-bt, in no runlevel, and mica-bluetoothd, in default as bluetooth.service is enabled', () => {
     for (const service of ['mica-bt', 'mica-bluetoothd']) {
       const script = join(payload, 'etc/init.d', service)
       expect(readFileSync(script, 'utf8')).toStartWith('#!/sbin/openrc-run\n')
       expect(lstatSync(script).mode & 0o111).toBe(0o111)
       expect(run(['sh', '-n', script]).code).toBe(0)
     }
-    expect(existsSync(join(payload, 'etc/runlevels'))).toBe(false)
+    expect(readdirSync(join(payload, 'etc/runlevels'))).toEqual(['default'])
+    expect(readdirSync(join(payload, 'etc/runlevels/default'))).toEqual(['mica-bluetoothd'])
+    expect(readlinkSync(join(payload, 'etc/runlevels/default/mica-bluetoothd'))).toBe('/etc/init.d/mica-bluetoothd')
     expect(readFileSync(join(payload, 'etc/init.d/mica-bluetoothd'), 'utf8')).toContain('/mnt/data/state/bluetooth /var/lib/bluetooth')
   })
 

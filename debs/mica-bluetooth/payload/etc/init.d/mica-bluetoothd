@@ -2,8 +2,8 @@
 # bluetooth.service and var-lib-bluetooth.mount on an OpenRC root: the pairing keys
 # bound from STATE onto /var/lib/bluetooth, then bluetoothd under supervise-daemon
 # (bluez's own SysV script needs the LSB functions), reading mica-bluetooth's
-# main.conf as bluetooth.service does. In no runlevel; micad starts it when
-# Bluetooth is enabled.
+# main.conf as bluetooth.service does. In the default runlevel, as bluez enables
+# bluetooth.service under systemd; micad stops it while Bluetooth is off.
 
 description="Bluetooth daemon"
 command=/usr/libexec/bluetooth/bluetoothd

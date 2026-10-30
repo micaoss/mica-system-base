@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# Checks for updates daily on a device without micad (/usr/lib/mica/mica-update-daily),
+# as mica-update.timer does under systemd. Where micad is installed it runs the
+# updates, under its own policy and gates, and this service starts nothing.
+
+description="Check for updates daily on a device without micad"
+command=/usr/lib/mica/mica-update-daily
+supervisor=supervise-daemon
+output_logger="logger -t mica-update -p daemon.info"
+error_logger="logger -t mica-update -p daemon.warn"
+
+depend() {
+    need mica-mounts
+    after net
+}
+
+start() {
+    if /usr/lib/mica/mica-init installed micad; then
+        einfo "micad runs the updates"
+        return 0
+    fi
+    default_start
+}
+
+stop() {
+    /usr/lib/mica/mica-init installed micad && return 0
+    default_stop
+}

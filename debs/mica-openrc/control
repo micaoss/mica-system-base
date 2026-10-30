@@ -1,6 +1,6 @@
 Package: mica-openrc
-Version: 0.56-mica12
-Source-Date-Epoch: 1792823256
+Version: 0.56-mica13
+Source-Date-Epoch: 1793232000
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -20,7 +20,8 @@ Description: Mica OS on OpenRC
  the file on DATA, where micad writes it, DHCP on every wired interface until
  it has), network time (busybox ntpd on the servers micad saves in
  /var/lib/mica/time/ntpd.conf), the system log in RAM (busybox syslogd and klogd), the hardware
- watchdog and, last, the health gate; /usr/lib/mica/mica-init for OpenRC; and
+ watchdog, the daily update of a device without micad (mica-update) and, last,
+ the health gate; /usr/lib/mica/mica-init for OpenRC; and
  mica-grow-data, which grows DATA with sfdisk. Devices come from mica-mdev.
  .
  No daemon keeps CAP_SYS_RESOURCE (/etc/rc.conf.d/mica.conf). Membership of the

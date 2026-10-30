@@ -8,6 +8,7 @@
 #   mica-init installed <service>  exit 0 when this root ships it
 #   mica-init start <service>      start it; a template instance a@b is the
 #                                  multiplexed service a.b
+#   mica-init stop <service>       stop it, a@b as a.b
 #   mica-init state                the boot's state: starting, running, degraded
 #                                  or stopping
 #   mica-init jobs                 the services still starting, one a line
@@ -42,6 +43,10 @@ start)
     service=${2:?service required}
     exec rc-service "$(echo "$service" | sed 's/@/./')" start
     ;;
+stop)
+    service=${2:?service required}
+    exec rc-service "$(echo "$service" | sed 's/@/./')" stop
+    ;;
 installed)
     [ -x "/etc/init.d/${2:?service required}" ]
     ;;
@@ -63,7 +68,7 @@ failed)
     failed
     ;;
 *)
-    echo "usage: mica-init reboot|poweroff|is-active <service>|installed <service>|start <service>|state|jobs|failed" >&2
+    echo "usage: mica-init reboot|poweroff|is-active <service>|installed <service>|start <service>|stop <service>|state|jobs|failed" >&2
     exit 2
     ;;
 esac
