@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { localLock, publishPools } from '@mica/build-tools'
-import { offlineLayout, offlineRelease } from '../src/offline.ts'
+import { offlineLayout, offlineRelease, offlineSteps } from '../src/offline.ts'
 import { sources } from '../src/pins.ts'
 import { assertBanner, assertPools, dataAssets, dryRunLock, gate, parseLock, publishRootfs, readLayers, rootfsImages, sha256, writeLayer, writeLock } from '../src/publish.ts'
 import { issue, releaseOf } from '../src/release.ts'
@@ -383,6 +383,22 @@ describe('publication', () => {
     expect(() => offlineRelease(repo, {})).toThrow('uncommitted changes')
     rmSync(join(repo, 'untracked'))
     expect(existsSync(join(offline, 'oci/oci-layout'))).toBe(true)
+  })
+
+  // A clean checkout holds no archives: an offline build, like CI, fetches and
+  // verifies each architecture's pinned archives (the input rows included) before
+  // anything is built from them.
+  test('an offline build and CI fetch the pinned archives before the packages', () => {
+    const steps = offlineSteps(['amd64', 'arm64', 'armhf']).map(argv => argv.join(' '))
+    for (const arch of ['amd64', 'arm64', 'armhf']) {
+      const cache = steps.indexOf(`bun src/container.ts cache --arch ${arch} --all`)
+      expect(cache).toBeGreaterThanOrEqual(0)
+      expect(cache).toBeLessThan(steps.indexOf(`bun src/container.ts debs --arch ${arch}`))
+    }
+    const workflow = readFileSync(join(import.meta.dir, '../.github/workflows/build.yml'), 'utf8')
+    const cache = workflow.indexOf('run: bun src/container.ts cache --arch ${{ matrix.arch }} --all')
+    expect(cache).toBeGreaterThanOrEqual(0)
+    expect(cache).toBeLessThan(workflow.indexOf('run: bun src/container.ts debs --arch ${{ matrix.arch }}'))
   })
 
   test('the gate takes the declared packages, pool gate and pool guard; a Replaces is refused', async () => {

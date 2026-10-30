@@ -3,9 +3,10 @@
 //
 //   bun run offline        (bun src/offline.ts)
 //
-//   builds  per architecture: the packages, the base root and its layer
-//           (bun src/container.ts debs|rootfs, bun src/publish.ts layer), with
-//           one build time
+//   builds  per architecture: the pinned archives, fetched and verified into the
+//           cache, then the packages, the base root and its layer
+//           (bun src/container.ts cache --all|debs|rootfs, bun src/publish.ts
+//           layer), with one build time
 //   writes  _out/offline/mica-system-base.lock   the release lock of this commit,
 //                                                 release `offline`, every image
 //                                                 and pool `local/mica-system-base`
@@ -96,6 +97,17 @@ export function offlineLayout(repo: string, release: Release): string {
   return text
 }
 
+// The commands of an offline build, in order. A clean checkout has no archives, so
+// each architecture's are fetched and verified first, as CI does.
+export function offlineSteps(arches: readonly Arch[]): string[][] {
+  return arches.flatMap(arch => [
+    ['bun', 'src/container.ts', 'cache', '--arch', arch, '--all'],
+    ['bun', 'src/container.ts', 'debs', '--arch', arch],
+    ['bun', 'src/container.ts', 'rootfs', '--arch', arch],
+    ['bun', 'src/publish.ts', 'layer', '--arch', arch],
+  ])
+}
+
 function step(argv: string[], env: Record<string, string>): void {
   const run = Bun.spawnSync(argv, { cwd: REPO, stdout: 'inherit', stderr: 'inherit', env: { ...process.env, ...env } })
   if (run.exitCode !== 0)
@@ -108,11 +120,8 @@ function main(argv: string[]): void {
   const release = offlineRelease(REPO)
   // One build time for every root: the index carries one.
   const env = { MICA_BUILD_TIME: buildTime() }
-  for (const arch of ARCHES) {
-    step(['bun', 'src/container.ts', 'debs', '--arch', arch], env)
-    step(['bun', 'src/container.ts', 'rootfs', '--arch', arch], env)
-    step(['bun', 'src/publish.ts', 'layer', '--arch', arch], env)
-  }
+  for (const argv of offlineSteps(ARCHES))
+    step(argv, env)
   offlineLayout(REPO, release)
   console.log(`offline: ${release.repository} at ${release.commit} in ${join(REPO, '_out/offline')} (${ARCHES.join(', ')})`)
 }
