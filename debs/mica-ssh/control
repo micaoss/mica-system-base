@@ -1,6 +1,6 @@
 Package: mica-ssh
-Version: 2025.89-mica4
-Source-Date-Epoch: 1792823171
+Version: 2025.89-mica5
+Source-Date-Epoch: 1793527809
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: net
