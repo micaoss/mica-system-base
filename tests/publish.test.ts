@@ -2,6 +2,7 @@
 // tag, a later attempt finishing a release, the lock of a published release, the
 // gate, and the refusals. The pools themselves are mica-build-tools' `release
 // pool`, run here only to publish what the lock names.
+import type { poolGuard } from '@mica/build-tools'
 import type { RootfsBuild } from '../src/publish.ts'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -411,6 +412,24 @@ describe('publication', () => {
     deb('fixture-tool', 'arm64', ['arm64'], 'Replaces: fixture-data\n')
     await expect(gate(repo)).rejects.toThrow('declares Replaces')
     debs()
+  })
+
+  // The upstream update bumps the packages whose bytes moved: the gate guards every
+  // archive and names them all, any other refusal stops it.
+  test('the gate names every package whose bytes moved', async () => {
+    const moved = (name: string): typeof poolGuard => async (_root, _repository, arch, archive) => {
+      if (archive.includes(`/${name}_`))
+        throw new Error(`${name} ${version} built here is not the published archive of ${TAG} (sha256 x here, y published) although its inputs are unchanged; its bytes moved, so bump its version`)
+      return `${arch} reused`
+    }
+    await expect(gate(repo, moved('fixture-tool'))).rejects.toThrow('the bytes of fixture-tool moved without a version bump')
+    expect(readFileSync(join(out, 'bytes-moved'), 'utf8')).toBe('fixture-tool\n')
+    rmSync(join(out, 'bytes-moved'))
+    const refused: typeof poolGuard = async () => {
+      throw new Error('inputs of fixture-data changed without a version bump')
+    }
+    await expect(gate(repo, refused)).rejects.toThrow('inputs of fixture-data changed')
+    expect(existsSync(join(out, 'bytes-moved'))).toBe(false)
   })
 
   test('the pools hold exactly the declared packages of this repository', () => {

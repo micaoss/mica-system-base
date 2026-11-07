@@ -229,6 +229,14 @@ export function lockRows(prefix: string, byArch: Map<Arch, Row[]>): string[][] {
   })
 }
 
+// The rows resolved, each keeping the URL of the row it had when it resolves to the
+// same version and sha256: a snapshot.debian.org URL stays valid, so a later
+// snapshot moves only the rows whose content moved.
+export function keepUrls(rows: string[][], previous: string[][]): string[][] {
+  const urls = new Map(previous.map(row => [row.slice(0, 5).join('\t'), row[5]]))
+  return rows.map(row => [...row.slice(0, 5), urls.get(row.slice(0, 5).join('\t')) ?? row[5]!])
+}
+
 export function formatRows(rows: Row[]): string {
   return rows.map(row => [row.name, row.version, row.architecture, row.sha256, row.url, row.consumers.join(',')].join('\t')).join('\n')
 }

@@ -9,7 +9,7 @@ import { nonDirectories } from './bootstrap.ts'
 import { buildDebs, declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { attached, capture } from './exec.ts'
-import { ARCHES, hostArch, IMAGE_ARCHES, imageArch, lockRows, parseRows, SELECTIONS, selectRuntime, selectSource, sourceRows, UPSTREAM_LOCK, UPSTREAM_PKGS } from './lock.ts'
+import { ARCHES, hostArch, IMAGE_ARCHES, imageArch, keepUrls, lockRows, parseRows, SELECTIONS, selectRuntime, selectSource, sourceRows, UPSTREAM_LOCK, UPSTREAM_PKGS } from './lock.ts'
 import { addedNames, inputRoots, runtimeRoots, tagUpstream } from './pin-inputs.ts'
 import { assertEnvironmentImage, environment, REPO, sources } from './pins.ts'
 import { buildTime, releaseOf } from './release.ts'
@@ -297,7 +297,8 @@ const byBytes = (a: string, b: string): number => Buffer.compare(Buffer.from(a),
 // root at the snapshot of locks/sources.json,
 // and the rows of the closure of locks/upstream.pkgs beyond the root, with their
 // locks/packages.tsv lines, each tagged upstream-<root> for the roots that need it; the
-// source rows stay. --check only compares.
+// source rows stay. A row that resolves to the version and sha256 it had keeps its
+// URL. --check only compares.
 async function pinInputs(check: boolean): Promise<void> {
   const resolved: string[][] = []
   // An `all` package takes its inputs on each environment image's architecture, which
@@ -358,7 +359,8 @@ async function pinInputs(check: boolean): Promise<void> {
   const selected = tagUpstream(new Map(readFileSync(selectionFile, 'utf8').split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t') as [string, string])), roots)
   const upstreamOnly = (name: string): boolean => selected.get(name)?.split(',').every(consumer => consumer.startsWith('upstream-')) ?? false
   const regenerated = (name: string): boolean => name.startsWith('input.') || name.startsWith('build.') || upstreamOnly(name) || root.has(name)
-  const rows = [...sourceRows(REPO).filter(([name = '']) => !regenerated(name)).map(row => ['source', ...row]), ...resolved]
+  const previous = readFileSync(lockFile, 'utf8').split('\n').filter(line => line.startsWith('source\t')).map(line => line.split('\t'))
+  const rows = [...sourceRows(REPO).filter(([name = '']) => !regenerated(name)).map(row => ['source', ...row]), ...keepUrls(resolved, previous)]
     .sort((a, b) => byBytes(a[1]!, b[1]!) || byBytes(a[2]!, b[2]!))
   const lock = `${[...header(lockFile), ...rows.map(row => row.join('\t'))].join('\n')}\n`
   const lines = [...[...selected].filter(([name]) => !upstreamOnly(name)), ...[...roots].filter(([name]) => !root.has(name))].sort(([a], [b]) => byBytes(a, b))

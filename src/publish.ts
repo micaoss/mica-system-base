@@ -441,7 +441,9 @@ export function dryRunLock(repo: string, tag: string): string {
 // mica-build-tools -- pool gate over the archives, and pool guard for each one
 // against the latest release, which refuses a package whose inputs or bytes
 // changed without a version bump. Reads only.
-export async function gate(repo: string): Promise<string[]> {
+const BYTES_MOVED = 'bytes-moved'
+
+export async function gate(repo: string, guard: typeof poolGuard = poolGuard): Promise<string[]> {
   const release = releaseOf(repo)
   const out = join(repo, '_out')
   const pools = assertPools(repo, out, release)
@@ -450,9 +452,24 @@ export async function gate(repo: string): Promise<string[]> {
   if (problems.length)
     fail(`pool gate: ${problems.join('; ')}`)
   lines.push(`pool gate: ${archives} archives pass`)
+  // A package whose bytes moved at an unchanged version is named in _out/bytes-moved,
+  // for the upstream update to bump it; every archive is guarded first.
+  const moved = new Set<string>()
   for (const [arch, files] of pools) {
-    for (const file of files)
-      lines.push(`pool guard: ${await poolGuard(repo, release.repository, arch, join(out, 'debs', arch, 'pool', file))}`)
+    for (const file of files) {
+      try {
+        lines.push(`pool guard: ${await guard(repo, release.repository, arch, join(out, 'debs', arch, 'pool', file))}`)
+      }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('its bytes moved, so bump its version'))
+          throw error
+        moved.add(file.split('_')[0]!)
+      }
+    }
+  }
+  if (moved.size) {
+    writeFileSync(join(out, BYTES_MOVED), `${[...moved].sort().join(',')}\n`)
+    fail(`pool guard: the bytes of ${[...moved].sort().join(', ')} moved without a version bump; bump them (${join('_out', BYTES_MOVED)})`)
   }
   return lines
 }

@@ -188,3 +188,9 @@ jobs:
         run: bun src/publish.ts gate
         env:
           GH_TOKEN: ${{ github.token }}
+      # The packages whose bytes moved, for the upstream update to bump.
+      - uses: actions/upload-artifact@v7
+        if: failure() && hashFiles('_out/bytes-moved') != ''
+        with:
+          name: bytes-moved
+          path: _out/bytes-moved

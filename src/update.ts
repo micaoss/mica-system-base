@@ -1,15 +1,24 @@
-// The update of the 1st and the 15th (update.yml): every pin moved to its upstream's latest, and
-// every package whose inputs or build moved bumped, so the result builds, gates
-// and releases like any change. Three steps, each its own process, since the
-// first changes the mica-build-tools checkout the others import:
+// The update of the 1st and the 15th (update.yml): every pin moved to its upstream's
+// latest, and a package bumped only when what it is made of moved -- its upstream
+// version, its inputs hash, or its bytes as pool guard proves them -- so the result
+// builds, gates and releases like any change. Three steps, each its own process,
+// since the first changes the mica-build-tools checkout the others import:
 //
 //   bun src/update.ts tools      mica-build-tools to the head of its main
 //   bun src/update.ts pins       mica-build-env to its latest release, the Debian snapshot
 //                                to today, the upstream sources to their latest, pin-inputs
-//   bun src/update.ts versions   the trust anchors and tzdata re-recorded, the package
-//                                versions bumped; the summary in _out/update-summary.md
+//   bun src/update.ts versions [--bump <package>,...]
+//                                the trust anchors and tzdata re-recorded, the package
+//                                versions bumped (and the named ones, whose bytes pool
+//                                guard found moved); the summary in _out/update-summary.md,
+//                                and in _out/update-release `yes` when a row of
+//                                locks/upstream.lock moved in version or sha256 or a
+//                                package was bumped, else `no`
 //
-// A step that finds nothing new changes nothing.
+// A step that finds nothing new changes nothing. A move of mica-build-env, of
+// mica-build-tools or of the snapshot alone bumps nothing: a row that resolves to the
+// same version and sha256 keeps its URL, and a package's build-sources.json keeps
+// its snapshot while its build rows resolve the same.
 import type { Row } from '@mica/build-tools'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -27,6 +36,7 @@ const ENV_PIN = 'locks/pins/mica-build-env.pin'
 const SOURCES_JSON = 'locks/sources.json'
 const RECORD = 'debs/mica-ca-trust/recorded.env'
 const SUMMARY = '_out/update-summary.md'
+const RELEASE = '_out/update-release'
 // What each step changed, one line each, for the summary; the first step starts it.
 const CHANGES = '_out/update-changes'
 
@@ -148,6 +158,28 @@ export function withValue(text: string, key: string, value: string): string {
   return text.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${value}`)
 }
 
+// Whether a package is bumped: its upstream version moved, it carries a version of
+// its own, or -- at the version the latest release published -- its inputs hash
+// moved or pool guard found its bytes moved (`named`). A move of the build
+// environment or the tools alone is none of these.
+export function bumped(entry: { version: string, upstream: string, published: string | undefined, inputsMoved: boolean, named: boolean }): boolean {
+  if (entry.upstream !== upstreamOf(entry.version) || !/-mica\d+$/.test(entry.version))
+    return true
+  return entry.published === entry.version && (entry.inputsMoved || entry.named)
+}
+
+// The rows of locks/upstream.lock by what they pin: kind, name, architecture,
+// version and sha256, not the URL.
+function pinned(lock: string): string[] {
+  return lock.split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t').slice(0, 5).join('\t')).sort()
+}
+
+// Whether an update is a release: a row moved in version or sha256, or a package
+// was bumped. The snapshot, the environment and the tools moving alone are not.
+export function substantive(before: string, after: string, bumps: number): boolean {
+  return bumps > 0 || pinned(before).join('\n') !== pinned(after).join('\n')
+}
+
 // A control template with a new Version and Source-Date-Epoch.
 export function withVersion(control: string, version: string, epoch: number): string {
   return control.replace(/^Version: .*$/m, `Version: ${version}`).replace(/^Source-Date-Epoch: .*$/m, `Source-Date-Epoch: ${epoch}`)
@@ -261,6 +293,16 @@ async function pins(): Promise<void> {
     if (attached(['bun', join(REPO, 'src/container.ts'), ...command]) !== 0)
       fail(`bun src/container.ts ${command.join(' ')} failed`)
   }
+  // A package whose build rows resolved the same keeps the snapshot it records,
+  // which is one of its inputs.
+  const before = git('show', `HEAD:${UPSTREAM_LOCK}`)
+  const after = readFileSync(join(REPO, UPSTREAM_LOCK), 'utf8')
+  const buildRows = (lock: string, name: string): string => lock.split('\n').filter(line => line.startsWith(`source\tbuild.${name}.`)).join('\n')
+  for (const entry of declared(REPO)) {
+    const file = `debs/${entry.name}/build-sources.json`
+    if (existsSync(join(REPO, file)) && buildRows(before, entry.name) === buildRows(after, entry.name))
+      git('checkout', 'HEAD', '--', file)
+  }
 }
 
 // The inputs hash each package and architecture was published with in the latest
@@ -293,7 +335,10 @@ async function published(): Promise<{ tag: string, inputs: Map<string, string>, 
   }
 }
 
-async function versions(): Promise<void> {
+async function versions(named: string[]): Promise<void> {
+  const unknown = named.filter(name => !declared(REPO).some(entry => entry.name === name))
+  if (unknown.length)
+    fail(`--bump names no package of debs/: ${unknown.join(', ')}`)
   const lock = readFileSync(join(REPO, UPSTREAM_LOCK), 'utf8')
   // The trust anchors of the pinned ca-certificates, re-recorded.
   const ca = lock.split('\n').find(line => line.startsWith('source\tinput.ca-certificates\t'))?.split('\t') ?? fail('no input.ca-certificates row')
@@ -320,21 +365,21 @@ async function versions(): Promise<void> {
   const tzdata = lock.split('\n').find(line => line.startsWith('source\tinput.tzdata\t'))?.split('\t')[3] ?? fail('no input.tzdata row')
   const tzControl = join(REPO, 'debs/mica-tzdata/control')
   writeFileSync(tzControl, readFileSync(tzControl, 'utf8').replace(/^Provides: tzdata \(= .*\)$/m, `Provides: tzdata (= ${tzdata})`))
-  // Every package whose inputs moved, or whose build did (the environment or the
-  // packer), is bumped; one whose upstream moved takes the upstream's version.
+  // Every package whose upstream, inputs or bytes moved is bumped; one whose
+  // upstream moved takes the upstream's version.
   const before = await published()
-  const buildMoved = git('status', '--porcelain', '--', 'locks/mica-build-env.lock', TOOLS_PIN) !== ''
   const epoch = Math.floor(Date.now() / 1000)
+  let bumps = 0
   for (const entry of declared(REPO)) {
     const row = UPSTREAM[entry.name] ?? fail(`src/update.ts names no upstream for ${entry.name}`)
     const upstream = upstreamOf(upstreamVersion(REPO, row))
     const published = before?.versions.get(entry.name)
-    const moved = published === entry.version
-      && (buildMoved || buildPlan([entry]).some(({ arch, pools }) => pools.some(pool => before!.inputs.get(`${entry.name}/${pool}`) !== inputsHash(REPO, producerOf(REPO, entry.name), arch))))
-    const own = !/-mica\d+$/.test(entry.version)
-    const next = upstream !== upstreamOf(entry.version) || own || moved ? nextVersion(entry.version, upstream) : entry.version
-    if (next === entry.version)
+    const inputsMoved = published === entry.version
+      && buildPlan([entry]).some(({ arch, pools }) => pools.some(pool => before!.inputs.get(`${entry.name}/${pool}`) !== inputsHash(REPO, producerOf(REPO, entry.name), arch)))
+    if (!bumped({ version: entry.version, upstream, published, inputsMoved, named: named.includes(entry.name) }))
       continue
+    const next = nextVersion(entry.version, upstream)
+    bumps++
     const control = join(REPO, 'debs', entry.name, 'control')
     writeFileSync(control, withVersion(readFileSync(control, 'utf8'), next, epoch))
     note(`${entry.name} ${entry.version} -> ${next}`)
@@ -343,6 +388,7 @@ async function versions(): Promise<void> {
   const changes = existsSync(join(REPO, CHANGES)) ? readFileSync(join(REPO, CHANGES), 'utf8').split('\n').filter(Boolean) : []
   const day = new Date().toISOString().slice(0, 10)
   writeFileSync(join(REPO, SUMMARY), `Update to the upstreams of ${day}\n\n${changes.map(line => `- ${line}`).join('\n')}\n`)
+  writeFileSync(join(REPO, RELEASE), `${substantive(git('show', `HEAD:${UPSTREAM_LOCK}`), readFileSync(join(REPO, UPSTREAM_LOCK), 'utf8'), bumps) ? 'yes' : 'no'}\n`)
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -351,9 +397,11 @@ async function main(argv: string[]): Promise<void> {
     return tools()
   if (argv.length === 1 && step === 'pins')
     return pins()
-  if (argv.length === 1 && step === 'versions')
-    return versions()
-  fail('usage: bun src/update.ts tools | pins | versions')
+  if (step === 'versions' && argv.length === 1)
+    return versions([])
+  if (step === 'versions' && argv.length === 3 && argv[1] === '--bump')
+    return versions(argv[2]!.split(',').filter(Boolean))
+  fail('usage: bun src/update.ts tools | pins | versions [--bump <package>,...]')
 }
 
 if (import.meta.main) {

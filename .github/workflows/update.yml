@@ -2,11 +2,16 @@ name: update
 # On the 1st and the 15th of each month, and on demand: every pin moved to its
 # upstream's latest (src/update.ts) -- mica-build-tools, mica-build-env, the Debian
 # snapshot, the upstream sources, the trust anchors of ca-certificates -- and every
-# package whose inputs or build moved bumped. The commit goes to update/<date> and is built and gated like any change
-# (build.yml). When it passes, main moves to it, a fast-forward (a main that moved
-# meanwhile fails the run), and the release is cut and published (release.yml,
-# started by workflow_dispatch: a release this token creates starts nothing). Nothing
-# new upstream, no commit. A manual run with publish off stops after the build and
+# package whose upstream version or inputs moved bumped. The commit goes to
+# update/<date> and is built and gated like any change (build.yml); the build
+# rebuilds every package on every architecture, and pool guard proves each one it
+# reuses byte-identical to the published archive. When it passes, main moves to it,
+# a fast-forward (a main that moved meanwhile fails the run), and when a row moved
+# in version or sha256 or a package was bumped the release is cut and published
+# (release.yml, started by workflow_dispatch: a release this token creates starts
+# nothing); pin moves alone go to main unreleased. Nothing new upstream, no commit.
+# A gate that found packages whose bytes moved starts the update once more, with
+# those packages bumped. A manual run with publish off stops after the build and
 # leaves update/<date> for a look.
 on:
   schedule:
@@ -17,6 +22,10 @@ on:
         description: move main to the update and release it
         type: boolean
         default: true
+      bump:
+        description: packages to bump although only their bytes moved (comma-separated)
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -30,6 +39,7 @@ jobs:
     outputs:
       commit: ${{ steps.commit.outputs.commit }}
       branch: ${{ steps.commit.outputs.branch }}
+      release: ${{ steps.commit.outputs.release }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -49,7 +59,9 @@ jobs:
       - name: The build environment, the Debian snapshot and the upstream sources
         run: bun src/update.ts pins
       - name: The trust anchors, tzdata and the package versions
-        run: bun src/update.ts versions
+        run: bun src/update.ts versions ${BUMP:+--bump "$BUMP"}
+        env:
+          BUMP: ${{ inputs.bump }}
       - name: Commit to update/<date>
         id: commit
         run: |
@@ -66,12 +78,32 @@ jobs:
           git push --force origin "HEAD:refs/heads/$branch"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "release=$(cat _out/update-release)" >> "$GITHUB_OUTPUT"
   build:
     needs: update
     if: needs.update.outputs.commit != ''
     uses: ./.github/workflows/build.yml
     with:
       ref: ${{ needs.update.outputs.commit }}
+  # Once per update: a run started with packages to bump does not start another.
+  retry:
+    needs: [update, build]
+    if: failure() && needs.build.result == 'failure' && inputs.bump == ''
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: bytes-moved
+          path: ${{ runner.temp }}/bytes-moved
+      - name: The update once more, with the packages whose bytes moved bumped
+        run: |
+          bump=$(cat "$RUNNER_TEMP/bytes-moved/bytes-moved")
+          gh workflow run update.yml --repo "$GITHUB_REPOSITORY" --ref main -f publish=${{ github.event_name == 'schedule' || inputs.publish }} -f bump="$bump"
+          echo "update: started again with $bump bumped"
   release:
     needs: [update, build]
     if: github.event_name == 'schedule' || inputs.publish
@@ -93,6 +125,7 @@ jobs:
           git push origin "$COMMIT:refs/heads/main"
           git push origin --delete "$BRANCH"
       - name: Cut the release and publish it
+        if: needs.update.outputs.release == 'yes'
         run: |
           tag=$(date -u +%Y%m%d-%H%M)
           git log -1 --format=%B "$COMMIT" >"$RUNNER_TEMP/notes"

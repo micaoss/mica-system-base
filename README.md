@@ -63,10 +63,16 @@ On the GitHub release, never replaced (format: mica-build-tools `docs/spec/relea
 `src/update.ts` moves mica-build-tools to the head of its main, mica-build-env to its latest
 release, the Debian snapshot to the day, busybox, hostapd, wpa_supplicant, systemd and the
 test kernel to their latest, re-resolves the lock (`pin-inputs`), re-records the
-ca-certificates anchors and tzdata, and bumps every package whose inputs or build moved (a new upstream restarts at
-`-mica1`). The commit is built and gated on `update/<date>`; when it passes, main moves to it
-and the release is cut and published. A run with nothing new makes no commit. A manual run
-with `publish` off stops after the build.
+ca-certificates anchors and tzdata, and bumps a package only when its upstream version or its
+inputs hash moved (a new upstream restarts at `-mica1`). A row that resolves to the version and
+sha256 it had keeps its URL, so a snapshot, mica-build-env or mica-build-tools move alone
+bumps nothing; Source-Date-Epoch changes only with a version, so an unbumped package builds
+the same bytes. The commit is built and gated on `update/<date>`: every package is rebuilt on
+every architecture, and pool guard proves each unbumped one byte-identical to the published
+archive. When the bytes of some moved, the gate names them and the update runs once more with
+`--bump` for those packages alone. When the gate passes, main moves to the commit; the release
+is cut and published only when a row moved in version or sha256 or a package was bumped. A run
+with nothing new makes no commit. A manual run with `publish` off stops after the build.
 
 ## Consuming a release
 

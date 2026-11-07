@@ -3,7 +3,8 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'bun:test'
-import { anchorsDigest, debianBinary, debianSource, latestListed, nextVersion, stanza, upstreamOf, withSource, withValue, withVersion } from '../src/update.ts'
+import { keepUrls } from '../src/lock.ts'
+import { anchorsDigest, bumped, debianBinary, debianSource, latestListed, nextVersion, stanza, substantive, upstreamOf, withSource, withValue, withVersion } from '../src/update.ts'
 import { run, workdir } from './fixture.ts'
 
 const work = workdir('update')
@@ -23,6 +24,46 @@ test('a version is its upstream\'s with a mica revision', () => {
   expect(upstreamOf('13.8+deb13u7')).toBe('13.8+deb13u7')
   // A package's version carries no epoch: the upstream's is dropped.
   expect(upstreamOf('1:10.0p1-7+deb13u4')).toBe('10.0p1')
+})
+
+// An update of the environment, the tools or the snapshot alone: every row keeps its
+// version, sha256 and URL, no package is bumped, and there is nothing to release.
+const ROW = (name: string, version: string, sha: string, day: string): string[] =>
+  ['source', name, 'amd64', version, sha.repeat(64), `https://snapshot.debian.org/archive/debian/${day}T000000Z/pool/main/${name[0]}/${name}/${name}_${version}_amd64.deb`]
+const lockOf = (rows: string[][]): string => `# mica-lock v1\n${rows.map(row => row.join('\t')).join('\n')}\n`
+
+test('an environment, tools or snapshot move alone bumps nothing and releases nothing', () => {
+  const before = [ROW('input.tzdata', '2026c-0+deb13u1', 'a', '20261101'), ROW('libc6', '2.41-12', 'b', '20261101')]
+  const after = keepUrls([ROW('input.tzdata', '2026c-0+deb13u1', 'a', '20261107'), ROW('libc6', '2.41-12', 'b', '20261107')], before)
+  expect(after).toEqual(before)
+  const unchanged = { version: '2026c-mica3', upstream: '2026c', published: '2026c-mica3', inputsMoved: false, named: false }
+  expect(bumped(unchanged)).toBe(false)
+  expect(substantive(lockOf(before), lockOf(after), 0)).toBe(false)
+  // A URL alone moving is no substance either.
+  expect(substantive(lockOf(before), lockOf([before[0]!, ROW('libc6', '2.41-12', 'b', '20261107')]), 0)).toBe(false)
+})
+
+test('a package whose bytes moved is bumped when named, and only it', () => {
+  const at = (version: string, named: boolean) => ({ version, upstream: upstreamOf(version), published: version, inputsMoved: false, named })
+  expect(bumped(at('1.38.0-mica3', true))).toBe(true)
+  expect(bumped(at('257.13-mica3', false))).toBe(false)
+  // A version the latest release does not carry yet is new already.
+  expect(bumped({ ...at('1.38.0-mica4', true), published: '1.38.0-mica3' })).toBe(false)
+  expect(substantive(lockOf([]), lockOf([]), 1)).toBe(true)
+})
+
+test('an upstream row move bumps the package that takes it, and only it', () => {
+  const before = [ROW('input.tzdata', '2026c-0+deb13u1', 'a', '20261101'), ROW('input.ca-certificates', '20250419', 'c', '20261101')]
+  const after = keepUrls([ROW('input.tzdata', '2026d-0+deb13u1', 'd', '20261107'), ROW('input.ca-certificates', '20250419', 'c', '20261107')], before)
+  // The moved row takes the new snapshot's URL; the other keeps its own.
+  expect(after[0]![5]).toContain('20261107T000000Z')
+  expect(after[1]).toEqual(before[1]!)
+  expect(substantive(lockOf(before), lockOf(after), 0)).toBe(true)
+  // tzdata's upstream moved; ca-trust's inputs hash, which takes the unchanged row, did not.
+  expect(bumped({ version: '2026c-mica3', upstream: '2026d', published: '2026c-mica3', inputsMoved: true, named: false })).toBe(true)
+  expect(bumped({ version: '20250419-mica3', upstream: '20250419', published: '20250419-mica3', inputsMoved: false, named: false })).toBe(false)
+  // A package that carries a version of its own takes the upstream's.
+  expect(bumped({ version: '1.0.0-3', upstream: '257.13', published: '1.0.0-3', inputsMoved: false, named: false })).toBe(true)
 })
 
 test('the latest release in a download listing is the highest version, not the last listed', () => {
