@@ -1,8 +1,8 @@
 name: update
-# Monthly, and on demand: every pin moved to its upstream's latest (src/update.ts) --
-# mica-build-tools, mica-build-env, the Debian snapshot, the upstream sources, the
-# trust anchors of ca-certificates -- and every package whose inputs or build moved
-# bumped. The commit goes to update/<date> and is built and gated like any change
+# On the 1st and the 15th of each month, and on demand: every pin moved to its
+# upstream's latest (src/update.ts) -- mica-build-tools, mica-build-env, the Debian
+# snapshot, the upstream sources, the trust anchors of ca-certificates -- and every
+# package whose inputs or build moved bumped. The commit goes to update/<date> and is built and gated like any change
 # (build.yml). When it passes, main moves to it, a fast-forward (a main that moved
 # meanwhile fails the run), and the release is cut and published (release.yml,
 # started by workflow_dispatch: a release this token creates starts nothing). Nothing
@@ -10,7 +10,7 @@ name: update
 # leaves update/<date> for a look.
 on:
   schedule:
-    - cron: '0 3 1 * *'
+    - cron: '0 3 1,15 * *'
   workflow_dispatch:
     inputs:
       publish:

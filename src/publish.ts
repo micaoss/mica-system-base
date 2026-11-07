@@ -6,7 +6,8 @@
 //   bun src/publish.ts layer --arch <arch>   one architecture's root layer, on its runner
 //   bun src/publish.ts gate                  the pools as one build, then pool gate and pool guard
 //   bun src/publish.ts rootfs <tag>          ghcr.io/micaoss/<repository>:rootfs.<tag>
-//   bun src/publish.ts lock <tag>            <repository>.lock and its data assets, attached
+//   bun src/publish.ts lock <tag>            <repository>.lock and its data assets, attached;
+//                                            notes too long for GitHub written bounded first
 //   bun src/publish.ts lock --dry-run --tag <tag>
 //
 // rootfs: one OCI image index over a linux/amd64, a linux/arm64 and a
@@ -25,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bearer, checkLock, digestOf, OCI_INDEX, OCI_MANIFEST, ociBlob, ociManifest, poolArchives, poolGate, poolGuard, poolManifest, Pusher, releaseAttach, releaseCheck } from '@mica/build-tools'
+import { assetBase, bearer, checkLock, digestOf, latestRelease, OCI_INDEX, OCI_MANIFEST, ociBlob, ociManifest, poolArchives, poolGate, poolGuard, poolManifest, Pusher, releaseAttach, releaseCheck, rowComparison } from '@mica/build-tools'
 import { declared } from './debs/docker.ts'
 import { fail, report } from './errors.ts'
 import { capture, output } from './exec.ts'
@@ -415,6 +416,61 @@ export async function writeLock(repo: string, out: string, tag: string): Promise
   return { lock: join(into, `${release.repository}.lock`), data: data.map(asset => join(into, asset.file)) }
 }
 
+// GitHub refuses a release body over 125000 characters, and release attach appends
+// its paragraph -- this marker, then rowComparison -- to a body that lacks the marker.
+const NOTES_LIMIT = 125000
+const NOTES_MARKER = '<!-- mica-tools release attach -->'
+
+// The body of a release with release attach's paragraph when the whole would be over
+// NOTES_LIMIT: the comparison's per-kind lines, then for the rows that differ how
+// many of each kind were removed and added, in place of the rows. Undefined when the
+// paragraph fits, and release attach writes it as it is.
+export function boundedNotes(body: string, comparison: string): string | undefined {
+  const head = body.replace(/\s+$/, '')
+  const whole = (paragraph: string): string => head ? `${head}\n\n${paragraph}\n` : `${paragraph}\n`
+  if (whole(`${NOTES_MARKER}\n${comparison}`).length <= NOTES_LIMIT)
+    return undefined
+  const [lines, diff = ''] = comparison.split('\n\n```diff\n')
+  const counts = new Map<string, { removed: number, added: number }>()
+  for (const row of diff.replace(/\n```$/, '').split('\n')) {
+    const kind = row.slice(2).split(' ')[0]!
+    const count = counts.get(kind) ?? { removed: 0, added: 0 }
+    if (row.startsWith('- '))
+      count.removed++
+    else if (row.startsWith('+ '))
+      count.added++
+    counts.set(kind, count)
+  }
+  const summary = [...counts].map(([kind, count]) => `- ${kind}: ${count.removed} removed, ${count.added} added`)
+  return whole([NOTES_MARKER, lines!, '', 'The rows that differ, by kind (the two releases\' locks hold them in full):', ...summary].join('\n'))
+}
+
+// Writes release attach's paragraph into the notes of `tag` first, bounded, when the
+// one attach would write is over GitHub's limit; attach then finds its marker.
+async function boundNotes(repository: string, tag: string, lockPath: string): Promise<void> {
+  const api = process.env.MICA_GITHUB_API ?? 'https://api.github.com'
+  const headers = { Authorization: `Bearer ${process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ''}`, Accept: 'application/vnd.github+json' }
+  const got = await fetch(`${api}/repos/micaoss/${repository}/releases/tags/${tag}`, { headers })
+  if (got.status !== 200)
+    fail(`reading the release ${tag} answered HTTP ${got.status}`)
+  const release = await got.json() as { id: number, body: string | null }
+  if ((release.body ?? '').includes(NOTES_MARKER))
+    return
+  const name = `${repository}.lock`
+  const previous = await latestRelease(repository, { before: tag, asset: name, scope: '' })
+  if (previous === undefined)
+    return
+  const before = await fetch(`${assetBase(repository, previous)}${name}`)
+  if (!before.ok)
+    fail(`${assetBase(repository, previous)}${name}: HTTP ${before.status}`)
+  const body = boundedNotes(release.body ?? '', rowComparison(previous, await before.text(), readFileSync(lockPath, 'utf8'), name))
+  if (body === undefined)
+    return
+  const patched = await fetch(`${api}/repos/micaoss/${repository}/releases/${release.id}`, { method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) })
+  if (patched.status !== 200)
+    fail(`updating the notes of ${tag} answered HTTP ${patched.status}`)
+}
+
 // The lock a release at `tag` would carry, from this checkout's pools
 // (_out/debs, as `release pool` would publish them) and root layers, computed
 // without a registry.
@@ -471,6 +527,7 @@ async function main(argv: string[]): Promise<void> {
   }
   if (kind === 'lock' && option && !value) {
     const { lock, data } = await writeLock(REPO, out, option)
+    await boundNotes(releaseOf(REPO).repository, option, lock)
     for (const line of await releaseAttach(REPO, releaseOf(REPO).repository, option, lock, '', data))
       console.log(`publish: release ${option}: ${line}`)
     return

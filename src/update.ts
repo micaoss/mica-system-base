@@ -1,4 +1,4 @@
-// The monthly update (update.yml): every pin moved to its upstream's latest, and
+// The update of the 1st and the 15th (update.yml): every pin moved to its upstream's latest, and
 // every package whose inputs or build moved bumped, so the result builds, gates
 // and releases like any change. Three steps, each its own process, since the
 // first changes the mica-build-tools checkout the others import:
@@ -341,8 +341,8 @@ async function versions(): Promise<void> {
   }
   mkdirSync(join(REPO, '_out'), { recursive: true })
   const changes = existsSync(join(REPO, CHANGES)) ? readFileSync(join(REPO, CHANGES), 'utf8').split('\n').filter(Boolean) : []
-  const month = new Date().toISOString().slice(0, 7)
-  writeFileSync(join(REPO, SUMMARY), `Update to the upstreams of ${month}\n\n${changes.map(line => `- ${line}`).join('\n')}\n`)
+  const day = new Date().toISOString().slice(0, 10)
+  writeFileSync(join(REPO, SUMMARY), `Update to the upstreams of ${day}\n\n${changes.map(line => `- ${line}`).join('\n')}\n`)
 }
 
 async function main(argv: string[]): Promise<void> {

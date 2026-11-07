@@ -57,15 +57,15 @@ On the GitHub release, never replaced (format: mica-build-tools `docs/spec/relea
 | `mica-system-base-unowned.<arch>.tsv` | every path of the root no package owns, with what wrote it |
 | `SHA256SUMS` | the sha256 of `mica-system-base.lock` |
 
-### Monthly update
+### Upstream update
 
-`update.yml` runs at 03:00 UTC on the first of each month (and on demand). `src/update.ts`
-moves mica-build-tools to the head of its main, mica-build-env to its latest release, the
-Debian snapshot to the day, busybox, hostapd, wpa_supplicant, systemd and the test kernel to
-their latest, re-resolves the lock (`pin-inputs`), re-records the ca-certificates anchors and
-tzdata, and bumps every package whose inputs or build moved (a new upstream restarts at
+`update.yml` runs at 03:00 UTC on the 1st and the 15th of each month (and on demand).
+`src/update.ts` moves mica-build-tools to the head of its main, mica-build-env to its latest
+release, the Debian snapshot to the day, busybox, hostapd, wpa_supplicant, systemd and the
+test kernel to their latest, re-resolves the lock (`pin-inputs`), re-records the
+ca-certificates anchors and tzdata, and bumps every package whose inputs or build moved (a new upstream restarts at
 `-mica1`). The commit is built and gated on `update/<date>`; when it passes, main moves to it
-and the release is cut and published. A month with nothing new makes no commit. A manual run
+and the release is cut and published. A run with nothing new makes no commit. A manual run
 with `publish` off stops after the build.
 
 ## Consuming a release

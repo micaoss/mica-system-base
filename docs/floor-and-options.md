@@ -301,8 +301,8 @@ here.
   pins it itself, so every consumer of a release runs the same archives.
 - **A package the lock does not pin** is resolved by the consumer from the release's `apt`
   row alone and recorded in its own lock, or asked of Base, which adds it under options in
-  `locks/upstream.pkgs`. From then on the monthly update keeps it current with the rest.
-- **Rows move with releases.** The monthly update moves versions and snapshot URLs; a
+  `locks/upstream.pkgs`. From then on the upstream update keeps it current with the rest.
+- **Rows move with releases.** The upstream update moves versions and snapshot URLs; a
   consumer's rows are the ones of the release it pins.
 
 ## Composing a product

@@ -1,4 +1,4 @@
-// The monthly update's parts that read upstreams and rewrite pins, against
+// The upstream update's parts that read upstreams and rewrite pins, against
 // recorded shapes of each upstream's answer.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
