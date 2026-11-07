@@ -1,5 +1,5 @@
 // mica-mdev's service: after mdev -s, the module of every present device's alias is
-// loaded once, against a fixture /sys/devices, a fake busybox that runs the host's
+// loaded once; mdev.conf loads the module of a hotplugged one. Both run against a fixture /sys/devices, a fake busybox that runs the host's
 // tools for its applets but mdev and modprobe, and a fake kmod modprobe.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -71,4 +71,18 @@ test('a root without kmod loads them with busybox\'s modprobe', () => {
     'busybox modprobe -q -b pci:v00008086d0000A348sv00008086sd00007270bc04sc03i00',
     'busybox modprobe -q -b usb:v0BDAp8179d0000dc00dsc00dp00icFFiscFFipFFin00',
   ])
+})
+
+// mdev runs a rule's command with sh -c, the uevent's variables in its environment.
+const CONF = resolve(import.meta.dir, '../../debs/mica-mdev/payload/etc/mdev.conf')
+const hotplug = readFileSync(CONF, 'utf8').split('\n').find(line => line.startsWith('$MODALIAS='))!.replace(/^\S+\s+\S+\s+\S+\s+@/, '').replaceAll('/usr/bin/busybox', join(bin, 'busybox'))
+const uevent = (path: string): string[] => {
+  writeFileSync(calls, '')
+  exec(['/bin/sh', '-c', hotplug], { PATH: path, CALLS: calls, MODALIAS: 'usb:v0BDAp8179d0000dc00dsc00dp00icFFiscFFipFFin00' })
+  return readFileSync(calls, 'utf8').trim().split('\n')
+}
+
+test('a hotplugged alias goes to kmod\'s modprobe, or busybox\'s on a root without kmod', () => {
+  expect(uevent(kmod)).toEqual(['modprobe -q -b usb:v0BDAp8179d0000dc00dsc00dp00icFFiscFFipFFin00'])
+  expect(uevent(join(box.dir, 'empty'))).toEqual(['busybox modprobe -q -b usb:v0BDAp8179d0000dc00dsc00dp00icFFiscFFipFFin00'])
 })
