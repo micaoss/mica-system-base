@@ -1,6 +1,6 @@
 Package: mica-openssh
-Version: 10.0p1-mica4
-Source-Date-Epoch: 1793527809
+Version: 10.0p1-mica5
+Source-Date-Epoch: 1794033281
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: net

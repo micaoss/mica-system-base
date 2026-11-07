@@ -1,6 +1,6 @@
 Package: mica-storage-ubi
-Version: 13.8+deb13u7-mica2
-Source-Date-Epoch: 1793527809
+Version: 13.8+deb13u7-mica3
+Source-Date-Epoch: 1794033281
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
