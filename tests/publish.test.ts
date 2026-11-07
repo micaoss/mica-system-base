@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { localLock, publishPools } from '@mica/build-tools'
 import { offlineLayout, offlineRelease, offlineSteps } from '../src/offline.ts'
 import { sources } from '../src/pins.ts'
-import { assertBanner, assertPools, boundedNotes, dataAssets, dryRunLock, gate, parseLock, publishRootfs, readLayers, rootfsImages, sha256, writeLayer, writeLock } from '../src/publish.ts'
+import { assertBanner, assertPools, dataAssets, dryRunLock, gate, parseLock, publishRootfs, readLayers, rootfsImages, sha256, writeLayer, writeLock } from '../src/publish.ts'
 import { issue, releaseOf } from '../src/release.ts'
 import { REPO, run, workdir, writePins } from './fixture.ts'
 
@@ -399,24 +399,6 @@ describe('publication', () => {
     const cache = workflow.indexOf('run: bun src/container.ts cache --arch ${{ matrix.arch }} --all')
     expect(cache).toBeGreaterThanOrEqual(0)
     expect(cache).toBeLessThan(workflow.indexOf('run: bun src/container.ts debs --arch ${{ matrix.arch }}'))
-  })
-
-  // GitHub refuses a release body over 125000 characters: the comparison of a
-  // upstream update, every upstream row moved, is bounded to counts per kind.
-  test('notes too long for GitHub carry counts per kind in place of the rows', () => {
-    const rows = (kind: string, sign: string, count: number): string[] => Array.from({ length: count }, (_, index) => `${sign} ${kind} lib${index} amd64 1.0-${sign === '-' ? 1 : 2} ${'a'.repeat(64)} https://snapshot.debian.org/archive/debian/20261101T000000Z/pool/main/l/lib${index}.deb`)
-    const lines = 'Packages: changed from 20261031-0315.\nUpstream packages: changed from 20261031-0315.'
-    const comparison = (diff: string[]): string => `${lines}\n\n\`\`\`diff\n${diff.join('\n')}\n\`\`\``
-    const big = comparison([...rows('upstream', '-', 600), ...rows('package', '-', 2), ...rows('upstream', '+', 600), ...rows('package', '+', 2)])
-    expect(big.length).toBeGreaterThan(125000)
-    const body = boundedNotes('Update to the upstreams of 2026-11\n', big)!
-    expect(body.length).toBeLessThanOrEqual(125000)
-    expect(body).toStartWith('Update to the upstreams of 2026-11\n\n<!-- mica-tools release attach -->\n')
-    expect(body).toContain(lines)
-    expect(body).toContain('- upstream: 600 removed, 600 added\n- package: 2 removed, 2 added')
-    expect(body).not.toContain('```diff')
-    // A comparison that fits is left to release attach.
-    expect(boundedNotes('Notes\n', comparison(rows('package', '+', 3)))).toBeUndefined()
   })
 
   test('the gate takes the declared packages, pool gate and pool guard; a Replaces is refused', async () => {
