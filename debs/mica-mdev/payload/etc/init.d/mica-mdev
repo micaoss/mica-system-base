@@ -24,5 +24,19 @@ start_pre() {
 start_post() {
     ebegin "Populating /dev from /sys"
     /usr/bin/busybox mdev -s
-    eend $?
+    populated=$?
+    eend $populated
+    # mdev -s replays no uevent, so a device present at boot whose driver is a
+    # module gets none from it: load the module of every device's alias once,
+    # quietly and without failing the boot on an alias no module has. One alias
+    # per modprobe, as mdev.conf runs it for a uevent: busybox's small modprobe
+    # takes one module, kmod's as many. kmod's is on a service's PATH when a root
+    # has it, busybox's applet only in a login shell's.
+    ebegin "Loading the modules of the present devices"
+    modprobe=$(command -v modprobe) || modprobe="/usr/bin/busybox modprobe"
+    /usr/bin/busybox find /sys/devices -name modalias -type f -exec /usr/bin/busybox cat {} + 2>/dev/null \
+        | /usr/bin/busybox sort -u | /usr/bin/busybox tr '\n' '\0' \
+        | /usr/bin/busybox xargs -0 -r -n 1 $modprobe -q -b 2>/dev/null
+    eend 0
+    return $populated
 }
