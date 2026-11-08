@@ -1,3 +1,4 @@
-# mica-sudo: the admins of mica-accounts (add-login --admin, set-login-admin) act
-# as root without a password; root and mica are no members.
-%mica-admins ALL=(ALL) NOPASSWD: ALL
+# mica-sudo: what the admins of mica-accounts (add-login --admin), members of
+# mica-admins, may do is the rule micad renders under /run/mica/sudoers.d while its
+# switch is on; this file grants nothing itself.
+@includedir /run/mica/sudoers.d

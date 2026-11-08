@@ -742,11 +742,22 @@ qemu=$!
 for i in $(seq 400); do grep -q 'boot-test: mica-sshd started' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
 ssh="ssh -p 2222 -i client -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
 for user in root mica gcpuser gcpplain; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id) home $HOME $(stat -c "%U %a" "$HOME")"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
-# The admin is root through sudo, without a password; the other login account is not.
-for user in gcpuser gcpplain; do $ssh $user@127.0.0.1 'echo "ssh-sudo: $(id -un) $(sudo -n id -u 2>&1 | tail -n 1)"' >>ssh.log 2>&1 || echo "ssh-sudo: $user failed" >>ssh.log; done
-# micad's switch takes it back: the admin's next session is refused too.
-$ssh root@127.0.0.1 /usr/lib/mica/mica-accounts set-login-admin gcpuser off >>ssh.log 2>&1 || echo "ssh-sudo: set-login-admin failed" >>ssh.log
-$ssh gcpuser@127.0.0.1 'echo "ssh-sudo-off: $(id -un) $(sudo -n id -u 2>&1 | tail -n 1)"' >>ssh.log 2>&1 || echo "ssh-sudo-off: gcpuser failed" >>ssh.log
+# sudo for the login admins: root only while micad's switch renders its rule in
+# /run/mica/sudoers.d, and only for a member of mica-admins. Each step a new session.
+sudo_as() { # <step> <user>
+  $ssh $2@127.0.0.1 'echo "$(id -un) $(sudo -n id -u 2>&1 | tr "\\n" " ")"' 2>/dev/null | sed "s/^/ssh-sudo-$1: /" >>ssh.log || echo "ssh-sudo-$1: $2 failed" >>ssh.log
+}
+as_root() { $ssh root@127.0.0.1 "$1" >/dev/null 2>&1 || echo "ssh-sudo: '$1' failed" >>ssh.log; }
+sudo_as norule gcpuser
+as_root 'mkdir -p -m 0755 /run/mica/sudoers.d && echo "%mica-admins ALL=(ALL:ALL) NOPASSWD: ALL" >/run/mica/sudoers.d/50-mica-admins && chmod 0440 /run/mica/sudoers.d/50-mica-admins'
+sudo_as rule gcpuser
+sudo_as rule gcpplain
+as_root '/usr/lib/mica/mica-accounts add-login gcpuser'
+sudo_as demoted gcpuser
+as_root '/usr/lib/mica/mica-accounts add-login gcpuser --admin'
+sudo_as promoted gcpuser
+as_root 'rm /run/mica/sudoers.d/50-mica-admins'
+sudo_as removed gcpuser
 # The agent's key for root and mica opens neither.
 for user in root mica; do
   ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
@@ -884,16 +895,22 @@ async function bootTest(argv: string[]): Promise<number> {
     // A key login to root and to mica through OpenSSH: their shadow fields are `*`.
     // And to the login account, by the key in /run/mica/authorized-keys, into its own
     // home; the agent's key for root and mica opens neither.
-    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)', 'ssh-login: uid=20000(gcpuser) gid=20000(gcpuser) groups=982(mica-admins),20000(gcpuser) home /home/gcpuser gcpuser 700', 'ssh-sudo: gcpuser 0', 'ssh-agent-key: root refused', 'ssh-agent-key: mica refused']) {
+    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)', 'ssh-login: uid=20000(gcpuser) gid=20000(gcpuser) groups=982(mica-admins),20000(gcpuser) home /home/gcpuser gcpuser 700', 'ssh-agent-key: root refused', 'ssh-agent-key: mica refused']) {
       if (!ssh.includes(login))
         fail(`no ${login} through mica-sshd (_out/boot-test-ssh.log)`)
     }
-    // A login account that is no admin logs in and is refused by sudo.
-    if (!/^ssh-login: uid=20001\(gcpplain\) gid=20001\(gcpplain\) groups=20001\(gcpplain\) /m.test(ssh) || !/^ssh-sudo: gcpplain sudo: /m.test(ssh))
-      fail('the login account gcpplain did not log in, or sudo did not refuse it (_out/boot-test-ssh.log)')
-    // And once set-login-admin takes it back, sudo refuses the former admin.
-    if (!/^ssh-sudo-off: gcpuser sudo: /m.test(ssh))
-      fail('sudo did not refuse gcpuser after set-login-admin gcpuser off (_out/boot-test-ssh.log)')
+    // A login account that is no admin logs in. sudo makes the admin root only with
+    // micad's rule in place, and refuses the rest: no rule, no admin, no longer one.
+    if (!/^ssh-login: uid=20001\(gcpplain\) gid=20001\(gcpplain\) groups=20001\(gcpplain\) /m.test(ssh))
+      fail('the login account gcpplain did not log in (_out/boot-test-ssh.log)')
+    const refused = 'sudo: a password is required '
+    const steps: [string, string, string][] = [['norule', 'gcpuser', refused], ['rule', 'gcpuser', '0 '], ['rule', 'gcpplain', refused], ['demoted', 'gcpuser', refused], ['promoted', 'gcpuser', '0 '], ['removed', 'gcpuser', refused]]
+    for (const [step, user, answer] of steps) {
+      if (!ssh.split('\n').includes(`ssh-sudo-${step}: ${user} ${answer}`))
+        fail(`sudo -n id -u of ${user} (${step}) did not answer ${answer.trim()} (_out/boot-test-ssh.log)`)
+    }
+    if (ssh.includes('ssh-sudo: '))
+      fail('a step of the sudo checks failed (_out/boot-test-ssh.log)')
     if (!/^ssh-wtmpdb: -rw\S* .* \/var\/lib\/wtmpdb\/wtmp\.db$/m.test(ssh) || /sshd log: .*wtmp/i.test(log))
       fail('sshd did not record the terminal login in /var/lib/wtmpdb/wtmp.db, or logged a wtmpdb error (_out/boot-test-ssh.log, _out/boot-test.log)')
     // No daemon keeps CAP_SYS_RESOURCE (capability 24), the DATA quota limit.

@@ -157,7 +157,7 @@ describe('mica-accounts add, remove and list', () => {
 })
 
 // A login account's home is made with its owner, which takes root.
-describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, set-login-admin, remove-login and list-login', () => {
+describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login and list-login', () => {
   const LOGIN = (name: string, uid: number): string => `${name}:x:${uid}:${uid}:mica login ${name}:/home/${name}:/bin/sh\n`
   const owner = (path: string): string => {
     const { uid, gid, mode } = statSync(path)
@@ -225,9 +225,9 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, set-login-ad
     expect(read(join(c.state, 'passwd'))).toBe(APP + LOGIN('alice', 20000))
   })
 
-  // The image's mica-admins group takes the admins as members; a privilege option
-  // (mica-sudo) lets that group act as root.
-  test('an admin is a member of mica-admins: --admin when made, then set-login-admin alone', () => {
+  // The image's mica-admins group takes the admins as members; the privilege option
+  // (mica-sudo) and micad's switch decide what that group may do.
+  test('add-login makes or keeps an account, an admin with --admin and none without', () => {
     const c = newCase('login-admin')
     writeFileSync(join(c.etc, 'group'), `${IMAGE_GROUP}mica-admins:x:982:\n`)
     const admins = (): string => read(join(c.run, 'group')).split('\n').find(line => line.startsWith('mica-admins:'))!
@@ -236,26 +236,24 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, set-login-ad
     expect(admins()).toBe('mica-admins:x:982:alice')
     expect(read(join(c.state, 'admins'))).toBe('alice\n')
     expect(accounts(c, 'list-login').out).toBe('alice\t20000\tyes\nbob\t20001\tno\n')
-    // An existing account keeps what it is: micad's switch decides from then on.
-    expect(accounts(c, 'add-login', 'bob', '--admin').code).toBe(0)
-    expect(admins()).toBe('mica-admins:x:982:alice')
-    expect(accounts(c, 'set-login-admin', 'bob', 'on')).toEqual({ code: 0, out: '' })
+    // Both directions on a kept account, each idempotent, the uid unchanged.
+    expect(accounts(c, 'add-login', 'bob', '--admin')).toEqual({ code: 0, out: '20001\n' })
+    expect(accounts(c, 'add-login', 'bob', '--admin')).toEqual({ code: 0, out: '20001\n' })
     expect(admins()).toBe('mica-admins:x:982:alice,bob')
-    expect(accounts(c, 'set-login-admin', 'alice', 'off')).toEqual({ code: 0, out: '' })
+    expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
+    expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
     expect(admins()).toBe('mica-admins:x:982:bob')
-    expect(accounts(c, 'set-login-admin', 'alice', 'off').code).toBe(0)
-    // Gone with the account, and never an app account's or the image's.
-    accounts(c, 'add', 'app-web', '30000')
-    expect(accounts(c, 'set-login-admin', 'app-web', 'on')).toEqual({ code: 1, out: 'mica-accounts: app-web is not a login account\n' })
-    expect(accounts(c, 'set-login-admin', 'mica', 'on')).toEqual({ code: 1, out: 'mica-accounts: mica is not a login account\n' })
+    expect(read(join(c.state, 'admins'))).toBe('bob\n')
+    // Gone with the account.
     expect(accounts(c, 'remove-login', 'bob').code).toBe(0)
     expect(admins()).toBe('mica-admins:x:982:')
     expect(read(join(c.state, 'admins'))).toBe('')
     // A name in admins that is no login account makes no member.
+    accounts(c, 'add', 'app-web', '30000')
     writeFileSync(join(c.state, 'admins'), 'app-web\nmica\nghost\n')
     accounts(c, 'build')
     expect(admins()).toBe('mica-admins:x:982:')
-    for (const args of [['add-login', 'carol', '--root'], ['set-login-admin', 'alice'], ['set-login-admin', 'alice', 'yes']])
+    for (const args of [['add-login', 'carol', '--root'], ['add-login', 'carol', '--admin', 'x'], ['set-login-admin', 'alice']])
       expect(accounts(c, ...args).code).toBe(2)
   })
 

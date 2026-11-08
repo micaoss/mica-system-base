@@ -6,10 +6,11 @@ Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
 Priority: optional
 Depends: sudo, mica-system
-Description: Mica OS privilege for login admins: sudo for mica-admins
+Description: Mica OS privilege for login admins: sudo, ruled by micad
  A product's privilege option: Debian's sudo, and /etc/sudoers.d/mica-admins,
- which lets every member of the group mica-admins run anything as root without
- a password. The members are the login accounts mica-accounts makes admins
- (add-login --admin, set-login-admin), the people a provisioning agent such as
- mica-gce-agent lets in with SSH keys; micad's switch turns each off. root and
- mica are no members, and no other account is.
+ which grants nothing itself but includes /run/mica/sudoers.d. micad renders
+ the rule there while its switch is on (cloudAdmins: every member of the group
+ mica-admins runs anything as root without a password) and removes it when
+ off. The members are the login accounts mica-accounts makes admins
+ (add-login --admin), the people a provisioning agent such as mica-gce-agent
+ lets in with SSH keys. root and mica are no members.
