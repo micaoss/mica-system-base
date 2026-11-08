@@ -749,6 +749,7 @@ sudo_as() { # <step> <user>
 }
 as_root() { $ssh root@127.0.0.1 "$1" >/dev/null 2>&1 || echo "ssh-sudo: '$1' failed" >>ssh.log; }
 sudo_as norule gcpuser
+sudo_as norule gcpplain
 as_root 'mkdir -p -m 0755 /run/mica/sudoers.d && echo "%mica-admins ALL=(ALL:ALL) NOPASSWD: ALL" >/run/mica/sudoers.d/50-mica-admins && chmod 0440 /run/mica/sudoers.d/50-mica-admins'
 sudo_as rule gcpuser
 sudo_as rule gcpplain
@@ -758,6 +759,7 @@ as_root '/usr/lib/mica/mica-accounts add-login gcpuser --admin'
 sudo_as promoted gcpuser
 as_root 'rm /run/mica/sudoers.d/50-mica-admins'
 sudo_as removed gcpuser
+sudo_as removed gcpplain
 # The agent's key for root and mica opens neither.
 for user in root mica; do
   ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
@@ -904,7 +906,7 @@ async function bootTest(argv: string[]): Promise<number> {
     if (!/^ssh-login: uid=20001\(gcpplain\) gid=20001\(gcpplain\) groups=20001\(gcpplain\) /m.test(ssh))
       fail('the login account gcpplain did not log in (_out/boot-test-ssh.log)')
     const refused = 'sudo: a password is required '
-    const steps: [string, string, string][] = [['norule', 'gcpuser', refused], ['rule', 'gcpuser', '0 '], ['rule', 'gcpplain', refused], ['demoted', 'gcpuser', refused], ['promoted', 'gcpuser', '0 '], ['removed', 'gcpuser', refused]]
+    const steps: [string, string, string][] = [['norule', 'gcpuser', refused], ['rule', 'gcpuser', '0 '], ['rule', 'gcpplain', refused], ['demoted', 'gcpuser', refused], ['promoted', 'gcpuser', '0 '], ['removed', 'gcpuser', refused], ['norule', 'gcpplain', refused], ['removed', 'gcpplain', refused]]
     for (const [step, user, answer] of steps) {
       if (!ssh.split('\n').includes(`ssh-sudo-${step}: ${user} ${answer}`))
         fail(`sudo -n id -u of ${user} (${step}) did not answer ${answer.trim()} (_out/boot-test-ssh.log)`)
