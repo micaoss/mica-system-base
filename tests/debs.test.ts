@@ -367,6 +367,14 @@ describe('the mica-systemd payload', () => {
     expect(power).toMatch(/^HandlePowerKey=poweroff$/m)
   })
 
+  // A cloud network gives its MTU in the lease (GCE: 1460); a lease without one
+  // leaves the link as it is.
+  test('the default DHCP network takes the lease\'s MTU', () => {
+    const network = readFileSync(join(payload, 'etc/systemd/network/80-dhcp.network'), 'utf8')
+    expect(network).toMatch(/^DHCP=yes$/m)
+    expect(network.slice(network.indexOf('[DHCPv4]'))).toMatch(/^UseMTU=yes$/m)
+  })
+
   // systemd starts a unit attached to the console only once it holds the console's
   // lock, which a getty resetting a tty nothing reads never gives back: the gate and
   // the rollback write to the journal, and their scripts echo the verdict to the

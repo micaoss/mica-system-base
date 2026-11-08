@@ -4,7 +4,8 @@
 # (/var/lib/mica/network/interfaces), where micad writes it; until micad has, a
 # default one is written here: loopback, and DHCP on every wired interface (eth*),
 # as mica-systemd's 80-dhcp.network gives it. DHCP is busybox udhcpc, whose script
-# (/usr/lib/mica/mica-udhcpc) configures the lease and writes DNS under /run.
+# (/usr/lib/mica/mica-udhcpc) configures the lease and writes DNS under /run; it asks
+# for the MTU (option 26) too.
 
 description="The network of /etc/network/interfaces"
 
@@ -21,7 +22,7 @@ default_interfaces() {
     for path in /sys/class/net/eth*; do
         [ -e "$path" ] || continue
         interface=${path##*/}
-        printf '\nauto %s\niface %s inet dhcp\n    script /usr/lib/mica/mica-udhcpc\n    udhcpc_opts -b -S\n' \
+        printf '\nauto %s\niface %s inet dhcp\n    script /usr/lib/mica/mica-udhcpc\n    udhcpc_opts -b -S -O mtu\n' \
             "$interface" "$interface"
     done
 }

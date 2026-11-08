@@ -3,3 +3,7 @@ Name=eth*
 
 [Network]
 DHCP=yes
+
+[DHCPv4]
+# The lease's MTU (option 26), as a cloud network gives one (GCE: 1460).
+UseMTU=yes

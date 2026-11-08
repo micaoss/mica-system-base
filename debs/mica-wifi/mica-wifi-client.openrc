@@ -33,7 +33,7 @@ start() {
     ebegin "Starting the Wi-Fi station on $interface"
     start-stop-daemon --start --pidfile "$WPA_PID" --exec /usr/sbin/wpa_supplicant -- \
         -B -P "$WPA_PID" -i "$interface" -c "$config" &&
-        IF_METRIC="${metric:-}" busybox udhcpc -b -S -R -i "$interface" -p "$DHCP_PID" -s /usr/lib/mica/mica-udhcpc
+        IF_METRIC="${metric:-}" busybox udhcpc -b -S -R -O mtu -i "$interface" -p "$DHCP_PID" -s /usr/lib/mica/mica-udhcpc
     eend $?
 }
 

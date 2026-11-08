@@ -140,6 +140,11 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   interface, which claims and defends a `169.254.0.0/16` address with its subnet route and no
   default route; `bound` stops it, and the address flush removes the address. Under systemd micad renders the metric, the
   gateway and the routes into the networkd units.
+- DHCP MTU: a lease's MTU (option 26; a cloud network such as GCE gives 1460) is set on the
+  link. networkd's `80-dhcp.network` has `[DHCPv4] UseMTU=yes`; under OpenRC the default
+  stanza's `udhcpc_opts` and `mica-wifi-client` pass `-O mtu`, and mica-udhcpc runs
+  `ip link set dev <interface> mtu <mtu>` on `bound` and `renew` before the address (a value
+  the link refuses is logged). A lease without an MTU leaves the link as it is.
 
 **Accounts.** micad runs each of the user's apps under an account of its own. The image's
 `/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)

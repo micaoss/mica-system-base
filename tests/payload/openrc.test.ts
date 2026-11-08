@@ -93,7 +93,7 @@ describe('mica-udhcpc', () => {
   const run = join(box.dir, 'run')
   // mica-udhcpc calls busybox's ip, logger and zcip applets; a route to 198.51.100.0/24
   // fails, and zcip stays up until it is stopped.
-  fake(bin, 'busybox', 'case "$1" in zcip) echo "MICA_ZCIP=$MICA_ZCIP $*" >> "$CALLS.zcip"; exec sleep 30 ;; esac\necho "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"*) exit 2 ;; esac')
+  fake(bin, 'busybox', 'case "$1" in zcip) echo "MICA_ZCIP=$MICA_ZCIP $*" >> "$CALLS.zcip"; exec sleep 30 ;; esac\necho "$*" >> "$CALLS"\ncase "$*" in "ip -4 route replace 198.51.100.0/24"* | "ip link set dev "*" mtu 99") exit 2 ;; esac')
   // The scripts write under /run/mica; the sandbox's run directory stands in for it.
   const resolv = join(box.dir, 'mica-resolv')
   const dns = join(box.dir, 'dns')
@@ -202,6 +202,28 @@ describe('mica-udhcpc', () => {
     expect(event('deconfig', { interface: 'eth8' })).toBe(0)
   })
 
+  test('the default network asks udhcpc for the MTU', () => {
+    const network = readFileSync(resolve(import.meta.dir, '../../debs/mica-openrc/payload/etc/init.d/mica-network'), 'utf8')
+    expect(network).toContain('udhcpc_opts -b -S -O mtu\\n')
+  })
+
+  // Option 26: the link takes the lease's MTU before its address; no MTU, no change.
+  test('the lease\'s mtu is set on the link; none leaves it; a refused one is logged', () => {
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5', mtu: '1460' })).toBe(0)
+    let lines = readFileSync(calls, 'utf8').split('\n')
+    expect(lines.indexOf('ip link set dev eth8 mtu 1460')).toBeGreaterThanOrEqual(0)
+    expect(lines.indexOf('ip link set dev eth8 mtu 1460')).toBeLessThan(lines.indexOf('ip -4 addr add 10.8.0.5/24 dev eth8'))
+    writeFileSync(calls, '')
+    expect(event('renew', { interface: 'eth8', ip: '10.8.0.5' })).toBe(0)
+    expect(readFileSync(calls, 'utf8')).not.toContain('mtu')
+    writeFileSync(calls, '')
+    expect(event('bound', { interface: 'eth8', ip: '10.8.0.5', mtu: '99' })).toBe(0)
+    lines = readFileSync(calls, 'utf8').split('\n')
+    expect(lines).toEqual(expect.arrayContaining(['logger -t mica-udhcpc mtu 99 on eth8 failed', 'ip -4 addr add 10.8.0.5/24 dev eth8']))
+    expect(event('deconfig', { interface: 'eth8' })).toBe(0)
+  })
+
   // No DHCP server: a link-local address from BusyBox zcip until a lease comes.
   test('leasefail starts zcip once on the interface; bound stops it', () => {
     const zcipCalls = `${calls}.zcip`
@@ -292,9 +314,9 @@ describe('mica-wifi-client', () => {
 
   test('udhcpc runs with IF_METRIC from the file\'s metric, empty without one', () => {
     writeFileSync(env, 'interface=wlan0\nconfig=/tmp/wpa.conf\nmetric=600\n')
-    expect(start()).toBe('IF_METRIC=600 udhcpc -b -S -R -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
+    expect(start()).toBe('IF_METRIC=600 udhcpc -b -S -R -O mtu -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
     writeFileSync(env, 'interface=wlan0\nconfig=/tmp/wpa.conf\n')
-    expect(start()).toBe('IF_METRIC= udhcpc -b -S -R -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
+    expect(start()).toBe('IF_METRIC= udhcpc -b -S -R -O mtu -i wlan0 -p /run/mica-wifi-client.dhcp.pid -s /usr/lib/mica/mica-udhcpc\n')
   })
 })
 

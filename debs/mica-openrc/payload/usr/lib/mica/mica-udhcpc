@@ -1,6 +1,7 @@
 #!/bin/sh
 # udhcpc's script for mica-network: the lease's address, router and DNS on the
-# interface, its servers in /run/mica/resolv.d/<interface>, and /run/mica/resolv.conf
+# interface, its MTU on the link when the lease gives one (udhcpc -O mtu asks for it),
+# its servers in /run/mica/resolv.d/<interface>, and /run/mica/resolv.conf
 # rebuilt (mica-resolv). udhcpc passes the event in $1 and the lease in the environment,
 # with the default route's metric in IF_METRIC when micad gives one, and IF_INTERNET=0
 # for an interface micad keeps off the default route; the interface's static routes come
@@ -68,6 +69,10 @@ deconfig)
     ;;
 bound | renew)
     zcip_stop
+    # The lease's MTU (option 26); a value the link refuses is logged and the lease
+    # still applies.
+    [ -z "${mtu:-}" ] || ip link set dev "$interface" mtu "$mtu" ||
+        { busybox logger -t mica-udhcpc "mtu $mtu on $interface failed" || :; }
     ip -4 addr flush dev "$interface"
     ip -4 addr add "$ip/${mask:-24}" ${broadcast:+broadcast "$broadcast"} dev "$interface"
     # micad's metric for the interface (IF_METRIC: the stanza's `metric`, or
