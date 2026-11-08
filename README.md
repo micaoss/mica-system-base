@@ -27,6 +27,7 @@ Building and publishing run on [mica-build-tools](https://github.com/micaoss/mic
 | `mica-systemd-boot` | amd64, arm64 | the systemd-boot EFI loader, with persisted boot attempts |
 | `mica-ssh` | all | SSH: dropbear, started by micad |
 | `mica-openssh` | amd64, arm64, armhf | SSH: OpenSSH's sshd, started by micad, in place of `mica-ssh` |
+| `mica-sudo` | all | privilege: Debian's sudo for the login admins of `mica-admins` |
 | `mica-storage-ubi` | armhf | stands in for e2fsprogs and fdisk where DATA is UBIFS |
 | `mica-wifi` | amd64, arm64 | a minimal `wpa_supplicant` |
 | `mica-wifi-ap` | amd64, arm64 | a minimal `hostapd` |
@@ -105,7 +106,9 @@ the fleet; `mica-shadow-reconcile` rebuilds the shadow file in RAM at every boot
 anything that is not locked. The only password that can exist is a transient root password
 set through micad, gone at the next boot. Both log in with `/bin/sh`. There is no
 unprivileged-user story: podman access implies root, and root implies SSH; the operator
-account exists for a person, not as a privilege boundary.
+account exists for a person, not as a privilege boundary. The login accounts of a provisioning agent
+(`mica-accounts add-login`) are the exception: each logs in with its keys alone, and only an
+admin among them, a member of `mica-admins`, reaches root, through the option mica-sudo.
 
 - `/home/mica` is not in the root: `mica-seed-home` creates it on DATA (1000:1000, 0700)
   and the init binds it onto `/home`. The fixed uid and gid are what let a home outlive

@@ -51,6 +51,7 @@ export const UPSTREAM: Record<string, string> = {
   'mica-openssh': 'input.openssh-server',
   'mica-ssh': 'input.dropbear-bin',
   'mica-storage-ubi': 'base-files',
+  'mica-sudo': 'sudo',
   'mica-system': 'base-files',
   'mica-systemd': 'systemd',
   'mica-systemd-boot': 'source.systemd',

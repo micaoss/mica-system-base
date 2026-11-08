@@ -10,9 +10,12 @@
 #   mica-accounts add <name> <uid> [<gid>]  an app account; gid defaults to uid
 #   mica-accounts remove <name>             drop it; an unknown name is no error
 #   mica-accounts list                      the app accounts: <name> TAB <uid> TAB <gid>
-#   mica-accounts add-login <name>          a login account; prints its uid
+#   mica-accounts add-login <name> [--admin]
+#                                           a login account, an admin with --admin; prints its uid
+#   mica-accounts set-login-admin <name> on|off
+#                                           make it an admin, or no longer one
 #   mica-accounts remove-login <name>       drop it, keeping its home; an unknown name is no error
-#   mica-accounts list-login                the login accounts: <name> TAB <uid>
+#   mica-accounts list-login                the login accounts: <name> TAB <uid> TAB yes|no (admin)
 #
 # A name is [a-z_][a-z0-9_-]{0,31}. An app account's uid and gid are in
 # 30000..39999 and taken by no other account. A login account's uid is in
@@ -20,7 +23,11 @@
 # free, else the lowest free one; its group is its own, with the same id; its
 # shell is /bin/sh, its home /home/<name> (on DATA), made 0700 when missing; it has
 # no password ('*' in the shadow), so only its keys log it in. A login name is
-# none of the image's accounts or groups, nor root, mica, sshd or mica-app-*.
+# none of the image's accounts or groups, nor root, mica, sshd or mica-app-*. An
+# admin is a member of the image's group mica-admins, which a product's privilege
+# option (mica-sudo) lets act as root; --admin counts when the account is made, and
+# after that only set-login-admin changes it, which is micad's switch. The admins
+# are kept on STATE too (admins, one name a line).
 # Exit 0 on success, 1 with one `mica-accounts: ...` line on stderr when refused or
 # failed, 2 with the usage line for bad arguments.
 set -eu
@@ -35,6 +42,7 @@ FIRST=30000
 LAST=39999
 LOGIN_FIRST=20000
 LOGIN_LAST=29999
+ADMINS_GROUP=mica-admins
 
 die() {
     echo "mica-accounts: $*" >&2
@@ -42,7 +50,7 @@ die() {
 }
 
 usage() {
-    echo "usage: mica-accounts build | add <name> <uid> [<gid>] | remove <name> | list | add-login <name> | remove-login <name> | list-login" >&2
+    echo "usage: mica-accounts build | add <name> <uid> [<gid>] | remove <name> | list | add-login <name> [--admin] | set-login-admin <name> on|off | remove-login <name> | list-login" >&2
     exit 2
 }
 
@@ -119,12 +127,24 @@ valid_group() { # <image group> <state group>
         }' "$1" "$2"
 }
 
-# The image's lines, ending in a newline, then the valid STATE lines.
+# The login accounts on STATE that are admins, comma-separated.
+admin_members() {
+    [ -f "$STATE/admins" ] || return 0
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null |
+        awk -F: -v lfirst="$LOGIN_FIRST" -v llast="$LOGIN_LAST" '
+            FNR == NR { admin[$0] = 1; next }
+            $3 + 0 >= lfirst && $3 + 0 <= llast && ($1 in admin) { printf "%s%s", sep, $1; sep = "," }' "$STATE/admins" -
+}
+
+# The image's lines, ending in a newline, then the valid STATE lines; the image's
+# mica-admins group takes the admins as its members.
 compose() { # passwd | group
     from=$RUN/image.$1
+    members=
+    [ "$1" != group ] || members=$(admin_members)
     {
-        cat "$from"
-        [ -z "$(tail -c 1 "$from")" ] || echo
+        # awk ends the image's last line with a newline, if it had none.
+        awk -F: -v OFS=: -v group="$ADMINS_GROUP" -v members="$members" '$1 == group && NF == 4 { $4 = members } { print }' "$from"
         "valid_$1" "$from" "$STATE/$1"
     } >"$RUN/$1.$$" || die "writing $RUN/$1 failed"
     chmod 0644 "$RUN/$1.$$"
@@ -241,7 +261,17 @@ free_id() {
         ! taken "$STATE/passwd" 3 "$1" '' && ! taken "$STATE/group" 3 "$1" ''
 }
 
-add_login() { # <name>
+# <name> in or out of STATE's admins.
+set_admin() { # <name> on|off
+    {
+        [ ! -f "$STATE/admins" ] || awk -v name="$1" '$0 != name' "$STATE/admins"
+        [ "$2" = off ] || echo "$1"
+    } >"$STATE/admins.$$" || die "writing $STATE/admins failed"
+    chmod 0644 "$STATE/admins.$$"
+    mv "$STATE/admins.$$" "$STATE/admins"
+}
+
+add_login() { # <name> [--admin]
     valid_name "$1" || die "$1 is not an account name"
     case "$1" in
     root | mica | sshd | mica-app-*) die "$1 is not a login name" ;;
@@ -269,6 +299,7 @@ add_login() { # <name>
         fi
         printf '%s:x:%s:%s:mica login %s:/home/%s:/bin/sh\n' "$1" "$uid" "$uid" "$1" "$1" | rewrite "$STATE/passwd" "$1"
         printf '%s:x:%s:\n' "$1" "$uid" | rewrite "$STATE/group" "$1"
+        if [ "${2:-}" = --admin ]; then set_admin "$1" on; else set_admin "$1" off; fi
         sync
     fi
     build
@@ -278,10 +309,20 @@ add_login() { # <name>
     echo "$uid"
 }
 
+set_login_admin() { # <name> on|off
+    valid_name "$1" || die "$1 is not an account name"
+    save_image
+    is_login "$1" || die "$1 is not a login account"
+    set_admin "$1" "$2"
+    sync
+    build
+}
+
 remove_login() { # <name>
     valid_name "$1" || die "$1 is not an account name"
     save_image
     [ -z "$(field "$STATE/passwd" "$1" 1)" ] || is_login "$1" || die "$1 is an app account"
+    [ ! -f "$STATE/admins" ] || set_admin "$1" off
     drop "$1"
 }
 
@@ -310,9 +351,15 @@ list)
     valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' -v first="$FIRST" '$3 + 0 >= first { print $1, $3, $4 }'
     ;;
 add-login)
-    [ "$#" = 1 ] || usage
+    [ "$#" = 1 ] || { [ "$#" = 2 ] && [ "$2" = --admin ]; } || usage
     lock
-    add_login "$1"
+    add_login "$@"
+    ;;
+set-login-admin)
+    [ "$#" = 2 ] || usage
+    case "$2" in on | off) ;; *) usage ;; esac
+    lock
+    set_login_admin "$1" "$2"
     ;;
 remove-login)
     [ "$#" = 1 ] || usage
@@ -323,7 +370,9 @@ list-login)
     [ "$#" = 0 ] || usage
     lock
     save_image
-    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' -v first="$FIRST" '$3 + 0 < first { print $1, $3 }'
+    members=",$(admin_members),"
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null |
+        awk -F: -v OFS='\t' -v first="$FIRST" -v members="$members" '$3 + 0 < first { print $1, $3, (index(members, "," $1 ",") ? "yes" : "no") }'
     ;;
 *)
     usage

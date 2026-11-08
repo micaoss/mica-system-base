@@ -53,7 +53,7 @@ test('an input is pinned for the architectures that build the packages taking it
 describe('the package definitions', () => {
   test('every debs/<package> declares its architectures and has a control template named after it', () => {
     const packages = declared(REPO)
-    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-openssh', 'mica-ssh', 'mica-storage-ubi', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
+    expect(packages.map(entry => entry.name)).toEqual(['mica-bluetooth', 'mica-busybox', 'mica-ca-trust', 'mica-mdev', 'mica-openrc', 'mica-openssh', 'mica-ssh', 'mica-storage-ubi', 'mica-sudo', 'mica-system', 'mica-systemd', 'mica-systemd-boot', 'mica-tzdata', 'mica-wifi', 'mica-wifi-ap'])
     for (const entry of packages)
       expect(readFileSync(join(REPO, 'debs', entry.name, 'control'), 'utf8')).toStartWith(`Package: ${entry.name}\n`)
     expect(packages.find(entry => entry.name === 'mica-busybox')).toMatchObject({ arches: ['amd64', 'arm64', 'armhf'], inputs: [], build: [], sources: ['busybox'] })

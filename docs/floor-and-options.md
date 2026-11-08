@@ -56,6 +56,7 @@ is 3.6 MB.
 | `mica-systemd-boot` | amd64, arm64 | boot: the systemd-boot EFI loader of the pinned systemd, with persisted boot attempts | |
 | `mica-ssh` | all | option: SSH (dropbear), started at boot from micad's saved settings | dropbear-bin, mica-system |
 | `mica-openssh` | amd64, arm64, armhf | option: SSH (OpenSSH's sshd of the pinned openssh-server), started at boot from micad's saved settings; conflicts with mica-ssh | mica-system, the libraries of sshd |
+| `mica-sudo` | all | option: privilege for login admins, Debian's sudo and `/etc/sudoers.d/mica-admins` (`%mica-admins ALL=(ALL) NOPASSWD: ALL`) | sudo, mica-system |
 | `mica-storage-ubi` | armhf | floor on armhf: stands in for e2fsprogs and fdisk where DATA is UBIFS | |
 | `mica-wifi` | amd64, arm64 | option: a minimal `wpa_supplicant` from upstream hostap | libnl, libssl3t64, iw, rfkill |
 | `mica-wifi-ap` | amd64, arm64 | option: a minimal `hostapd` from upstream hostap, with ACS | libnl, libssl3t64, iw, rfkill |
@@ -166,17 +167,24 @@ micad calls it, and never edits the files:
 A provisioning agent (mica-gce-agent) keeps the login accounts of the people who log in with
 SSH keys, on the same STATE files:
 
-- `mica-accounts add-login <name>` adds one and prints its uid, which it chooses in
+- `mica-accounts add-login <name> [--admin]` adds one and prints its uid, which it chooses in
   `20000..29999`: the owner of an existing `/home/<name>` when that uid is free, else the
   lowest uid that is free and owns no kept home; a kept home whose owner is taken is refused.
   The group is its own, with the same id; STATE holds
   `<name>:x:<uid>:<uid>:mica login <name>:/home/<name>:/bin/sh`. `/home/<name>` (DATA) is made
   0700 when missing, and the shadow entry is `*`: no password, so only its keys log it in. root,
   mica, sshd, `mica-app-*`, the image's account and group names and the app accounts' names are
-  refused. The same account again prints the same uid.
-- `mica-accounts remove-login <name>` drops it from STATE and the shadow and keeps its home; an
-  unknown name succeeds.
-- `mica-accounts list-login` prints them, one a line: `<name>` TAB `<uid>`.
+  refused. The same account again prints the same uid and changes nothing, `--admin` included.
+- With `--admin` the new account is an admin: a member of the image's group `mica-admins`
+  (gid 982, `config/ids.json`), which the privilege option mica-sudo lets act as root. The
+  admins are kept on STATE (`DATA/state/accounts/admins`, one name a line) and composed into
+  that group's line at every build.
+- `mica-accounts set-login-admin <name> on|off` makes a login account an admin or no longer
+  one: micad's switch, the one way to change it after `add-login`.
+- `mica-accounts remove-login <name>` drops it from STATE, the admins and the shadow and keeps
+  its home; an unknown name succeeds.
+- `mica-accounts list-login` prints them, one a line: `<name>` TAB `<uid>` TAB `yes` or `no`
+  (admin).
 
 `add` and `remove` refuse a login account, and `add-login` and `remove-login` an app account.
 

@@ -659,9 +659,10 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '  chown -R mica:mica /home/mica/.ssh',
     '# A login account, added as a provisioning agent (mica-gce-agent) adds one, before sshd',
     '# starts; its key, and another for root and mica, where the agent writes them.',
-    '  echo "boot-test: add-login gcpuser: $(/usr/lib/mica/mica-accounts add-login gcpuser 2>&1)" >/dev/console',
+    '  echo "boot-test: add-login gcpuser: $(/usr/lib/mica/mica-accounts add-login gcpuser --admin 2>&1)" >/dev/console',
+    '  echo "boot-test: add-login gcpplain: $(/usr/lib/mica/mica-accounts add-login gcpplain 2>&1)" >/dev/console',
     '  rc-service mica-sshd-boot restart >/dev/null 2>&1 && rc-service mica-sshd status >/dev/null 2>&1 && echo \'boot-test: mica-sshd started\' >/dev/console',
-    '  install -m 0644 /usr/local/share/boot-test/client.pub /run/mica/authorized-keys/gcpuser',
+    '  for user in gcpuser gcpplain; do install -m 0644 /usr/local/share/boot-test/client.pub /run/mica/authorized-keys/$user; done',
     '  for user in root mica; do install -m 0644 /usr/local/share/boot-test/agent.pub /run/mica/authorized-keys/$user; done',
     '# Then the host\'s power button ends the run: mica-acpid powers off.',
     '  (i=0; while [ ! -e /run/boot-test-ssh-done ] && [ $i -lt 180 ]; do sleep 1; i=$((i + 1)); done',
@@ -705,8 +706,8 @@ install -m 0755 init initrd/init
 (cd initrd && find . | /rootfs/usr/bin/busybox cpio -o -H newc 2>/dev/null) | gzip -9 >initrd.img
 cp -a /rootfs root
 cp -a overlay/. root/
-# The SSH option the boot logs in through: mica-openssh and the libraries it adds to the
-# root, with a key the host logs in with.
+# The options the boot logs in through: mica-openssh, mica-sudo and what they add to
+# the root, with a key the host logs in with.
 dpkg --root=root --install ssh/*.deb >/dev/null
 mkdir -p root/usr/local/share/boot-test
 ssh-keygen -q -t ed25519 -N '' -f client
@@ -714,9 +715,11 @@ cp client.pub root/usr/local/share/boot-test/client.pub
 # The key an agent puts for root and mica, which must open neither.
 ssh-keygen -q -t ed25519 -N '' -f agent
 cp agent.pub root/usr/local/share/boot-test/agent.pub
-# What mica-build's pack stage does: the factory copy mica-shadow-reconcile builds from.
+# What mica-build's pack stage does: the factory copy mica-shadow-reconcile builds from,
+# and /etc/shadow its RAM file, which mica-accounts adds to.
 mkdir -p root/usr/share/factory/etc
 cp -a root/etc/shadow root/usr/share/factory/etc/shadow
+ln -sfn /run/mica/shadow root/etc/shadow
 chmod 0755 root/usr/local/bin/mica-deploy root/usr/bin/login
 mke2fs -q -t ext4 -L root -d root root.img 768M
 # DATA as a device that already has an app account on STATE, for the boot to bind.
@@ -738,7 +741,12 @@ qemu=$!
 # that lets it shut down.
 for i in $(seq 400); do grep -q 'boot-test: mica-sshd started' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
 ssh="ssh -p 2222 -i client -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
-for user in root mica gcpuser; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id) home $HOME $(stat -c "%U %a" "$HOME")"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
+for user in root mica gcpuser gcpplain; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id) home $HOME $(stat -c "%U %a" "$HOME")"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
+# The admin is root through sudo, without a password; the other login account is not.
+for user in gcpuser gcpplain; do $ssh $user@127.0.0.1 'echo "ssh-sudo: $(id -un) $(sudo -n id -u 2>&1 | tail -n 1)"' >>ssh.log 2>&1 || echo "ssh-sudo: $user failed" >>ssh.log; done
+# micad's switch takes it back: the admin's next session is refused too.
+$ssh root@127.0.0.1 /usr/lib/mica/mica-accounts set-login-admin gcpuser off >>ssh.log 2>&1 || echo "ssh-sudo: set-login-admin failed" >>ssh.log
+$ssh gcpuser@127.0.0.1 'echo "ssh-sudo-off: $(id -un) $(sudo -n id -u 2>&1 | tail -n 1)"' >>ssh.log 2>&1 || echo "ssh-sudo-off: gcpuser failed" >>ssh.log
 # The agent's key for root and mica opens neither.
 for user in root mica; do
   ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
@@ -772,15 +780,21 @@ const BOOT_TEST_EXPECT = [
   'boot-test: mica-sshd started',
   // A login account of mica-accounts add-login, the first uid of its range.
   'boot-test: add-login gcpuser: 20000',
+  'boot-test: add-login gcpplain: 20001',
   // The power button: mica-acpid, then the shutdown it starts.
   'boot-test: waiting for the power button',
 ]
 
-// The pinned rows mica-openssh's Depends add to `root`: the closure of each library
-// root locks/upstream.pkgs pins for later stages, less what the root has installed.
-function sshLibraries(root: string): Row[] {
-  const control = readFileSync(join(REPO, 'debs/mica-openssh/control'), 'utf8')
-  const depends = (/^Depends: (.*)$/m.exec(control)?.[1] ?? '').split(', ').map(name => `upstream-${name}`)
+// The options the boot test installs, as built: SSH and the privilege of login admins.
+const BOOT_TEST_OPTIONS = ['mica-openssh', 'mica-sudo']
+
+// The pinned rows the options' Depends add to `root`: the closure of each root
+// locks/upstream.pkgs pins for later stages, less what the root has installed.
+function optionRows(root: string): Row[] {
+  const depends = BOOT_TEST_OPTIONS.flatMap((name) => {
+    const control = readFileSync(join(REPO, 'debs', name, 'control'), 'utf8')
+    return (/^Depends: (.*)$/m.exec(control)?.[1] ?? '').split(', ').map(dependency => `upstream-${dependency}`)
+  })
   const installed = new Set(installedPackages(root))
   return selectRuntime(REPO, 'amd64', { kind: 'all' }).filter(row => !installed.has(row.name) && row.consumers.some(consumer => depends.includes(consumer)))
 }
@@ -826,14 +840,16 @@ async function bootTest(argv: string[]): Promise<number> {
     catch {
       await reposGet(join(work, 'repos'), kernel.sha256, kernel.url, join(work, 'kernel.deb'))
     }
-    // mica-openssh as built, and the pinned libraries it depends on that the root lacks.
-    const openssh = declared(REPO).find(entry => entry.name === 'mica-openssh')!
-    const archive = join(REPO, '_out/debs/amd64/pool', `mica-openssh_${openssh.version}_amd64.deb`)
-    if (!existsSync(archive))
-      fail(`${archive} is missing; build it with: bun src/container.ts debs --arch amd64`)
+    // The options as built, and the pinned rows they depend on that the root lacks.
     mkdirSync(join(work, 'ssh'))
-    copyFileSync(archive, join(work, 'ssh', basename(archive)))
-    for (const row of sshLibraries(root)) {
+    for (const name of BOOT_TEST_OPTIONS) {
+      const entry = declared(REPO).find(candidate => candidate.name === name)!
+      const archive = join(REPO, '_out/debs/amd64/pool', `${name}_${entry.version}_${entry.arches.includes('all') ? 'all' : 'amd64'}.deb`)
+      if (!existsSync(archive))
+        fail(`${archive} is missing; build it with: bun src/container.ts debs --arch amd64`)
+      copyFileSync(archive, join(work, 'ssh', basename(archive)))
+    }
+    for (const row of optionRows(root)) {
       try {
         copyFileSync(reposLookup(join(REPO, 'repos'), row.sha256), join(work, 'ssh', `${row.name}.deb`))
       }
@@ -868,10 +884,16 @@ async function bootTest(argv: string[]): Promise<number> {
     // A key login to root and to mica through OpenSSH: their shadow fields are `*`.
     // And to the login account, by the key in /run/mica/authorized-keys, into its own
     // home; the agent's key for root and mica opens neither.
-    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)', 'ssh-login: uid=20000(gcpuser) gid=20000(gcpuser) groups=20000(gcpuser) home /home/gcpuser gcpuser 700', 'ssh-agent-key: root refused', 'ssh-agent-key: mica refused']) {
+    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)', 'ssh-login: uid=20000(gcpuser) gid=20000(gcpuser) groups=982(mica-admins),20000(gcpuser) home /home/gcpuser gcpuser 700', 'ssh-sudo: gcpuser 0', 'ssh-agent-key: root refused', 'ssh-agent-key: mica refused']) {
       if (!ssh.includes(login))
         fail(`no ${login} through mica-sshd (_out/boot-test-ssh.log)`)
     }
+    // A login account that is no admin logs in and is refused by sudo.
+    if (!/^ssh-login: uid=20001\(gcpplain\) gid=20001\(gcpplain\) groups=20001\(gcpplain\) /m.test(ssh) || !/^ssh-sudo: gcpplain sudo: /m.test(ssh))
+      fail('the login account gcpplain did not log in, or sudo did not refuse it (_out/boot-test-ssh.log)')
+    // And once set-login-admin takes it back, sudo refuses the former admin.
+    if (!/^ssh-sudo-off: gcpuser sudo: /m.test(ssh))
+      fail('sudo did not refuse gcpuser after set-login-admin gcpuser off (_out/boot-test-ssh.log)')
     if (!/^ssh-wtmpdb: -rw\S* .* \/var\/lib\/wtmpdb\/wtmp\.db$/m.test(ssh) || /sshd log: .*wtmp/i.test(log))
       fail('sshd did not record the terminal login in /var/lib/wtmpdb/wtmp.db, or logged a wtmpdb error (_out/boot-test-ssh.log, _out/boot-test.log)')
     // No daemon keeps CAP_SYS_RESOURCE (capability 24), the DATA quota limit.

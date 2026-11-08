@@ -51,6 +51,7 @@ procps
 readline-common
 rfkill
 sed
+sudo
 
 # tools: system tools an image may install, none of which the floor needs.
 bind9-dnsutils

@@ -24,6 +24,7 @@
     { "name": "tcpdump", "gid": 986 },
     { "name": "iperf3", "gid": 985 },
     { "name": "gpio", "gid": 984 },
-    { "name": "spi", "gid": 983 }
+    { "name": "spi", "gid": 983 },
+    { "name": "mica-admins", "gid": 982 }
   ]
 }

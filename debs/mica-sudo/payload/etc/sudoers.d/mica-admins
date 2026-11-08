@@ -1,0 +1,3 @@
+# mica-sudo: the admins of mica-accounts (add-login --admin, set-login-admin) act
+# as root without a password; root and mica are no members.
+%mica-admins ALL=(ALL) NOPASSWD: ALL

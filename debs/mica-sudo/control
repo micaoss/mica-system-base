@@ -1,0 +1,15 @@
+Package: mica-sudo
+Version: 1.9.16p2-mica1
+Source-Date-Epoch: 1794176058
+Architecture: @ARCH@
+Maintainer: Mica OS <hi@micaos.dev>
+Section: admin
+Priority: optional
+Depends: sudo, mica-system
+Description: Mica OS privilege for login admins: sudo for mica-admins
+ A product's privilege option: Debian's sudo, and /etc/sudoers.d/mica-admins,
+ which lets every member of the group mica-admins run anything as root without
+ a password. The members are the login accounts mica-accounts makes admins
+ (add-login --admin, set-login-admin), the people a provisioning agent such as
+ mica-gce-agent lets in with SSH keys; micad's switch turns each off. root and
+ mica are no members, and no other account is.

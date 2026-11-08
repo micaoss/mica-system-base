@@ -59,7 +59,7 @@ export const STRIPPED = ['bash', 'coreutils', 'dash', 'diffutils', 'findutils', 
 export const ORPHANED = ['libgmp10', 'libssl3t64', 'openssl-provider-legacy']
 
 // Debian packages a product may add to the floor, none of which the floor carries.
-const OPTIONS = ['dmsetup', 'dropbear-bin', 'kmod', 'login', 'nftables', 'procps', 'tzdata']
+const OPTIONS = ['dmsetup', 'dropbear-bin', 'kmod', 'login', 'nftables', 'procps', 'sudo', 'tzdata']
 
 // What the lifecycle helpers under /usr/lib/mica call: busybox applets, and the
 // few a floor package provides (util-linux).
