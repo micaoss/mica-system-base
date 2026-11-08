@@ -4,7 +4,8 @@
 # root password set through micad; it lives in this file and is gone at the
 # next boot. If this script does not run there is no shadow file, and password
 # logins fail closed. An account in /etc/passwd with no factory entry gets a
-# locked entry.
+# locked entry, but a login account (uid 20000..29999, mica-accounts add-login)
+# one without a password ('*'), so that its keys log it in.
 set -eu
 
 SHADOW="${1:-/run/mica/shadow}"
@@ -31,14 +32,19 @@ while IFS= read -r line; do
     lock_entry "$line" >>"$tmp"
 done <"$FACTORY"
 
-# Accounts in /etc/passwd without an entry get one, locked.
+# Accounts in /etc/passwd without an entry get one: locked, or a login account's
+# without a password.
 added=0
-while IFS=: read -r user _rest; do
+while IFS=: read -r user _password uid _rest; do
     [ -n "$user" ] || continue
     if ! awk -F: -v u="$user" '$1 == u { found = 1 } END { exit !found }' "$tmp"; then
-        printf '%s:!:20000:0:99999:7:::\n' "$user" >>"$tmp"
+        case "$uid" in
+        2[0-9][0-9][0-9][0-9]) field='*' state='without a password' ;;
+        *) field='!' state=locked ;;
+        esac
+        printf '%s:%s:20000:0:99999:7:::\n' "$user" "$field" >>"$tmp"
         added=$((added + 1))
-        echo "shadow: added locked entry for '$user'"
+        echo "shadow: added $state entry for '$user'"
     fi
 done <"$PASSWD"
 
@@ -47,4 +53,4 @@ chmod 0640 "$tmp"
 mv -f "$tmp" "$SHADOW"
 trap - EXIT INT TERM
 
-echo "shadow: built ${SHADOW} in RAM from ${FACTORY} (${added} account(s) appended locked)"
+echo "shadow: built ${SHADOW} in RAM from ${FACTORY} (${added} account(s) appended)"

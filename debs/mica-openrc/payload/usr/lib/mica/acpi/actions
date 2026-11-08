@@ -1,0 +1,3 @@
+# busybox acpid: an event that names the key runs the file of that name in
+# /usr/lib/mica/acpi.
+PWRF power

@@ -68,7 +68,7 @@ function systemdRoot(name: string): string {
 // their runlevels, the resolver and capability policy, nothing of systemd.
 const RUNLEVELS: Record<string, string[]> = {
   sysinit: ['cgroups', 'mica-kernfs', 'mica-mdev'],
-  boot: ['mica-data-layout', 'mica-klogd', 'mica-mounts', 'mica-syslogd', 'mica-watchdog'],
+  boot: ['mica-acpid', 'mica-data-layout', 'mica-klogd', 'mica-mounts', 'mica-syslogd', 'mica-watchdog'],
   default: ['mica-dbus', 'mica-getty', 'mica-health', 'mica-local', 'mica-network', 'mica-ntpd', 'mica-provisioning-import', 'mica-shadow-reconcile', 'mica-units', 'mica-update'],
 }
 function openrcRoot(name: string): string {

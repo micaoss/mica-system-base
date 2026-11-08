@@ -359,6 +359,14 @@ describe('the mica-systemd payload', () => {
     expect(logind).toMatch(/^ReserveVT=2$/m)
   })
 
+  // A cloud stops a machine by its power button: logind powers off, whatever
+  // upstream's default becomes.
+  test('logind powers off on the power key', () => {
+    const power = readFileSync(join(payload, 'etc/systemd/logind.conf.d/50-mica-power.conf'), 'utf8')
+    expect(power).toMatch(/^\[Login\]$/m)
+    expect(power).toMatch(/^HandlePowerKey=poweroff$/m)
+  })
+
   // systemd starts a unit attached to the console only once it holds the console's
   // lock, which a getty resetting a tty nothing reads never gives back: the gate and
   // the rollback write to the journal, and their scripts echo the verdict to the

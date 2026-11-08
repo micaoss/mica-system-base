@@ -1,18 +1,28 @@
 #!/bin/sh
-# The accounts of the user's apps, which micad runs each under its own uid. The
-# root is read-only, so /etc/passwd and /etc/group get built copies bound over
-# them: the image's accounts, then the app accounts micad keeps on STATE
+# The accounts of the user's apps, which micad runs each under its own uid, and the
+# login accounts a provisioning agent (mica-gce-agent) keeps for the people who log
+# in with SSH keys. The root is read-only, so /etc/passwd and /etc/group get built
+# copies bound over them: the image's accounts, then the accounts kept on STATE
 # (DATA/state/accounts). Fail-safe: without a build the image's files stay in
-# place, every system account and login works, and only the app names are unknown.
+# place, every system account and login works, and only the kept names are unknown.
 #
 #   mica-accounts build                     rebuild and rebind (at boot, once STATE is bound)
 #   mica-accounts add <name> <uid> [<gid>]  an app account; gid defaults to uid
 #   mica-accounts remove <name>             drop it; an unknown name is no error
 #   mica-accounts list                      the app accounts: <name> TAB <uid> TAB <gid>
+#   mica-accounts add-login <name>          a login account; prints its uid
+#   mica-accounts remove-login <name>       drop it, keeping its home; an unknown name is no error
+#   mica-accounts list-login                the login accounts: <name> TAB <uid>
 #
-# A name is [a-z_][a-z0-9_-]{0,31}; uid and gid are in 30000..39999 and taken by
-# no other account. Exit 0 on success, 1 with one `mica-accounts: ...` line on
-# stderr when refused or failed, 2 with the usage line for bad arguments.
+# A name is [a-z_][a-z0-9_-]{0,31}. An app account's uid and gid are in
+# 30000..39999 and taken by no other account. A login account's uid is in
+# 20000..29999, chosen here: the owner of an existing /home/<name> when that uid is
+# free, else the lowest free one; its group is its own, with the same id; its
+# shell is /bin/sh, its home /home/<name> (on DATA), made 0700 when missing; it has
+# no password ('*' in the shadow), so only its keys log it in. A login name is
+# none of the image's accounts or groups, nor root, mica, sshd or mica-app-*.
+# Exit 0 on success, 1 with one `mica-accounts: ...` line on stderr when refused or
+# failed, 2 with the usage line for bad arguments.
 set -eu
 
 ETC=${MICA_ACCOUNTS_ETC:-/etc}
@@ -20,8 +30,11 @@ RUN=${MICA_ACCOUNTS_RUN:-/run/mica/accounts}
 STATE=${MICA_ACCOUNTS_STATE:-/mnt/data/state/accounts}
 SHADOW=${MICA_ACCOUNTS_SHADOW:-/run/mica/shadow}
 MOUNTINFO=${MICA_ACCOUNTS_MOUNTINFO:-/proc/self/mountinfo}
+HOMES=${MICA_ACCOUNTS_HOMES:-/home}
 FIRST=30000
 LAST=39999
+LOGIN_FIRST=20000
+LOGIN_LAST=29999
 
 die() {
     echo "mica-accounts: $*" >&2
@@ -29,7 +42,7 @@ die() {
 }
 
 usage() {
-    echo "usage: mica-accounts build | add <name> <uid> [<gid>] | remove <name> | list" >&2
+    echo "usage: mica-accounts build | add <name> <uid> [<gid>] | remove <name> | list | add-login <name> | remove-login <name> | list-login" >&2
     exit 2
 }
 
@@ -76,14 +89,19 @@ save_image() {
 }
 
 # The STATE lines that are well formed, in range and clash with nothing before
-# them; each other line is reported and skipped.
+# them; each other line is reported and skipped. An app account's ids are in
+# FIRST..LAST; a login account's in LOGIN_FIRST..LOGIN_LAST, its group its own, its
+# home /home/<name> and its shell /bin/sh.
 valid_passwd() { # <image passwd> <state passwd>
     [ -f "$2" ] || return 0
-    awk -F: -v first="$FIRST" -v last="$LAST" '
+    awk -F: -v first="$FIRST" -v last="$LAST" -v lfirst="$LOGIN_FIRST" -v llast="$LOGIN_LAST" '
         FNR == NR { names[$1] = 1; ids[$3] = 1; next }
         {
+            app = $3 + 0 >= first && $3 + 0 <= last && $4 + 0 >= first && $4 + 0 <= last
+            login = $3 + 0 >= lfirst && $3 + 0 <= llast && $4 == $3 && $6 == "/home/" $1 && $7 == "/bin/sh" &&
+                $1 !~ /^(root|mica|sshd|mica-app-.*)$/
             ok = NF == 7 && $1 ~ /^[a-z_][a-z0-9_-]*$/ && length($1) <= 32 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ &&
-                $3 + 0 >= first && $3 + 0 <= last && $4 + 0 >= first && $4 + 0 <= last && !($1 in names) && !($3 in ids)
+                (app || login) && !($1 in names) && !($3 in ids)
             if (!ok) { print "mica-accounts: skipping passwd line " FNR " of STATE: " $0 > "/dev/stderr"; next }
             names[$1] = 1; ids[$3] = 1; print
         }' "$1" "$2"
@@ -91,11 +109,11 @@ valid_passwd() { # <image passwd> <state passwd>
 
 valid_group() { # <image group> <state group>
     [ -f "$2" ] || return 0
-    awk -F: -v first="$FIRST" -v last="$LAST" '
+    awk -F: -v first="$FIRST" -v last="$LAST" -v lfirst="$LOGIN_FIRST" -v llast="$LOGIN_LAST" '
         FNR == NR { names[$1] = 1; ids[$3] = 1; next }
         {
             ok = NF == 4 && $1 ~ /^[a-z_][a-z0-9_-]*$/ && length($1) <= 32 && $3 ~ /^[0-9]+$/ &&
-                $3 + 0 >= first && $3 + 0 <= last && !($1 in names) && !($3 in ids)
+                (($3 + 0 >= first && $3 + 0 <= last) || ($3 + 0 >= lfirst && $3 + 0 <= llast)) && !($1 in names) && !($3 in ids)
             if (!ok) { print "mica-accounts: skipping group line " FNR " of STATE: " $0 > "/dev/stderr"; next }
             names[$1] = 1; ids[$3] = 1; print
         }' "$1" "$2"
@@ -113,14 +131,27 @@ compose() { # passwd | group
     mv "$RUN/$1.$$" "$RUN/$1"
 }
 
-# A locked entry in the RAM shadow for every app account that has none.
+# Whether a uid is a login account's.
+login_uid() {
+    [ "$1" -ge "$LOGIN_FIRST" ] && [ "$1" -le "$LOGIN_LAST" ]
+}
+
+# An entry in the RAM shadow for every kept account that has none: an app
+# account's locked ('!'), a login account's without a password ('*'), which a
+# locked one of a login account becomes.
 shadow_entries() {
     [ -f "$SHADOW" ] || return 0
-    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | cut -d: -f1 | while IFS= read -r name; do
-        grep -q "^$name:" "$SHADOW" || printf '%s:!:20000:0:99999:7:::\n' "$name"
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | cut -d: -f1,3 | while IFS=: read -r name uid; do
+        field=!
+        if login_uid "$uid"; then field='*'; fi
+        grep -q "^$name:" "$SHADOW" || printf '%s:%s:20000:0:99999:7:::\n' "$name" "$field"
     done >"$RUN/shadow.add"
-    if [ -s "$RUN/shadow.add" ]; then
-        cp -p "$SHADOW" "$SHADOW.$$" && cat "$RUN/shadow.add" >>"$SHADOW.$$" && mv "$SHADOW.$$" "$SHADOW" ||
+    logins=$(valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null |
+        awk -F: -v lfirst="$LOGIN_FIRST" -v llast="$LOGIN_LAST" '$3 + 0 >= lfirst && $3 + 0 <= llast { printf "%s ", $1 }')
+    if [ -s "$RUN/shadow.add" ] || awk -F: -v logins=" $logins" 'index(logins, " " $1 " ") && $2 == "!" { found = 1 } END { exit !found }' "$SHADOW"; then
+        cp -p "$SHADOW" "$SHADOW.$$" &&
+            awk -F: -v OFS=: -v logins=" $logins" 'index(logins, " " $1 " ") && $2 == "!" { $2 = "*" } { print }' "$SHADOW" >"$SHADOW.$$" &&
+            cat "$RUN/shadow.add" >>"$SHADOW.$$" && mv "$SHADOW.$$" "$SHADOW" ||
             die "adding to $SHADOW failed"
     fi
     rm -f "$RUN/shadow.add"
@@ -169,6 +200,7 @@ add() { # <name> <uid> <gid>
         return
     fi
     ! taken "$RUN/image.passwd" 1 "$1" '' && ! taken "$RUN/image.group" 1 "$1" '' || die "$1 is an account of the image"
+    ! is_login "$1" || die "$1 is a login account"
     [ -z "$(field "$STATE/passwd" "$1" 1)" ] || die "$1 is an app account with other ids"
     ! taken "$RUN/image.passwd" 3 "$2" '' && ! taken "$STATE/passwd" 3 "$2" "$1" || die "uid $2 is taken"
     ! taken "$RUN/image.group" 3 "$3" '' && ! taken "$STATE/group" 3 "$3" "$1" || die "gid $3 is taken"
@@ -181,6 +213,12 @@ add() { # <name> <uid> <gid>
 remove() { # <name>
     valid_name "$1" || die "$1 is not an account name"
     save_image
+    ! is_login "$1" || die "$1 is a login account"
+    drop "$1"
+}
+
+# <name> out of STATE and, unless the image has it, the shadow; then a build.
+drop() { # <name>
     rewrite "$STATE/passwd" "$1" </dev/null
     rewrite "$STATE/group" "$1" </dev/null
     sync
@@ -189,6 +227,62 @@ remove() { # <name>
             die "removing $1 from $SHADOW failed"
     fi
     build
+}
+
+# Whether <name> is a login account on STATE.
+is_login() {
+    uid=$(field "$STATE/passwd" "$1" 3)
+    [ -n "$uid" ] && login_uid "$uid"
+}
+
+# Whether <id> is free as a uid and as a gid: the image and STATE hold neither.
+free_id() {
+    ! taken "$RUN/image.passwd" 3 "$1" '' && ! taken "$RUN/image.group" 3 "$1" '' &&
+        ! taken "$STATE/passwd" 3 "$1" '' && ! taken "$STATE/group" 3 "$1" ''
+}
+
+add_login() { # <name>
+    valid_name "$1" || die "$1 is not an account name"
+    case "$1" in
+    root | mica | sshd | mica-app-*) die "$1 is not a login name" ;;
+    esac
+    save_image
+    ! taken "$RUN/image.passwd" 1 "$1" '' && ! taken "$RUN/image.group" 1 "$1" '' || die "$1 is an account of the image"
+    home=$HOMES/$1
+    if is_login "$1"; then
+        uid=$(field "$STATE/passwd" "$1" 3)
+    else
+        [ -z "$(field "$STATE/passwd" "$1" 1)" ] && [ -z "$(field "$STATE/group" "$1" 1)" ] || die "$1 is an app account"
+        [ ! -L "$home" ] || die "$home is a symbolic link"
+        # A home kept from before is its owner's again, and a uid that owns a kept
+        # home is no one else's.
+        owners=" $(stat -c %u "$HOMES"/* 2>/dev/null | tr '\n' ' ')"
+        if [ -e "$home" ]; then
+            uid=$(stat -c %u "$home")
+            login_uid "$uid" && free_id "$uid" || die "$home is owned by uid $uid, which is not free for $1"
+        else
+            uid=$LOGIN_FIRST
+            until free_id "$uid" && case "$owners" in *" $uid "*) false ;; esac; do
+                uid=$((uid + 1))
+                [ "$uid" -le "$LOGIN_LAST" ] || die "no uid of $LOGIN_FIRST..$LOGIN_LAST is free"
+            done
+        fi
+        printf '%s:x:%s:%s:mica login %s:/home/%s:/bin/sh\n' "$1" "$uid" "$uid" "$1" "$1" | rewrite "$STATE/passwd" "$1"
+        printf '%s:x:%s:\n' "$1" "$uid" | rewrite "$STATE/group" "$1"
+        sync
+    fi
+    build
+    if [ ! -e "$home" ] && [ ! -L "$home" ]; then
+        mkdir -m 0700 "$home" && chown "$uid:$uid" "$home" || die "making $home failed"
+    fi
+    echo "$uid"
+}
+
+remove_login() { # <name>
+    valid_name "$1" || die "$1 is not an account name"
+    save_image
+    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || is_login "$1" || die "$1 is an app account"
+    drop "$1"
 }
 
 command=${1:-}
@@ -213,7 +307,23 @@ list)
     [ "$#" = 0 ] || usage
     lock
     save_image
-    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' '{ print $1, $3, $4 }'
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' -v first="$FIRST" '$3 + 0 >= first { print $1, $3, $4 }'
+    ;;
+add-login)
+    [ "$#" = 1 ] || usage
+    lock
+    add_login "$1"
+    ;;
+remove-login)
+    [ "$#" = 1 ] || usage
+    lock
+    remove_login "$1"
+    ;;
+list-login)
+    [ "$#" = 0 ] || usage
+    lock
+    save_image
+    valid_passwd "$RUN/image.passwd" "$STATE/passwd" 2>/dev/null | awk -F: -v OFS='\t' -v first="$FIRST" '$3 + 0 < first { print $1, $3 }'
     ;;
 *)
     usage

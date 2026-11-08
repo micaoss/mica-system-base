@@ -1,5 +1,5 @@
 // mica-openrc's helpers: mica-init against a fake OpenRC state directory and fake
-// rc-service, rc-status and openrc-shutdown; mica-udhcpc against a fake ip, and the metric
+// rc-service, rc-status and openrc-shutdown; the power button's acpid action; mica-udhcpc against a fake ip, and the metric
 // mica-wifi-client hands it; mica-ntpd's
 // servers.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -62,6 +62,28 @@ describe('mica-init for OpenRC', () => {
 
   test('an unknown request is a usage error', () => {
     expect(init(['restart']).code).toBe(2)
+  })
+})
+
+describe('the power button under OpenRC', () => {
+  const ACPI = join(OPENRC, 'acpi')
+  const SERVICE = resolve(import.meta.dir, '../../debs/mica-openrc/payload/etc/init.d/mica-acpid')
+
+  // busybox acpid runs <confdir>/<action> for an event that names the action's key;
+  // the power key's event is PWRF.
+  test('acpid maps the power key to /usr/lib/mica/acpi/power, a clean poweroff by mica-init', () => {
+    const service = readFileSync(SERVICE, 'utf8')
+    expect(service).toMatch(/^command_args="acpid -d -c \/usr\/lib\/mica\/acpi -a \/usr\/lib\/mica\/acpi\/actions"$/m)
+    expect(service).toMatch(/^\s+after mica-mdev$/m)
+    expect(readFileSync(join(ACPI, 'actions'), 'utf8').split('\n').filter(line => line && !line.startsWith('#'))).toEqual(['PWRF power'])
+    const calls = join(box.dir, 'power-calls')
+    const init = join(box.dir, 'power-init')
+    writeFileSync(init, '#!/bin/sh\necho "mica-init $*" >> "$CALLS"\n', { mode: 0o755 })
+    const power = join(box.dir, 'power')
+    writeFileSync(power, readFileSync(join(ACPI, 'power'), 'utf8').replaceAll('/usr/lib/mica/mica-init', init))
+    writeFileSync(calls, '')
+    expect(exec(['sh', power], { PATH: SYSTEM_PATH, CALLS: calls }).code).toBe(0)
+    expect(readFileSync(calls, 'utf8')).toBe('mica-init poweroff\n')
   })
 })
 

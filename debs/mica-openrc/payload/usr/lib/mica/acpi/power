@@ -1,0 +1,3 @@
+#!/bin/sh
+# The power button (mica-acpid): a clean poweroff, as micad asks for one.
+exec /usr/lib/mica/mica-init poweroff

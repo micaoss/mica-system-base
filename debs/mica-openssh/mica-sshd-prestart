@@ -11,15 +11,18 @@
 # Refuses anything else. Makes the ed25519 host key on DATA/state at the first
 # start -- written to a temporary name and renamed, so an interrupted start leaves
 # no truncated key; an existing key is kept. Symbolic links, foreign owners, a
-# group/world-writable directory and group/world-readable keys are refused. Then
-# renders /run/mica/sshd_config, which sshd -t checks before it replaces the last
-# one.
+# group/world-writable directory and group/world-readable keys are refused. Makes
+# /run/mica/authorized-keys, where a provisioning agent (mica-gce-agent) puts the
+# keys of a login account as <user>, root-owned 0644 or the user's own 0600; root
+# and mica never take keys from there, only from their own ~/.ssh. Then renders
+# /run/mica/sshd_config, which sshd -t checks before it replaces the last one.
 set -eu
 
 state=${MICA_SSH_STATE:-/mnt/data/state/ssh}
 owner=${MICA_SSH_OWNER:-0}
 config=${MICA_SSHD_CONFIG:-/run/mica/sshd_config}
 key=$state/ssh_host_ed25519_key
+keys=${MICA_SSH_AUTHORIZED_KEYS:-/run/mica/authorized-keys}
 
 refuse() { echo "mica-sshd-prestart: $*" >&2; exit 1; }
 
@@ -73,6 +76,10 @@ else
     sync -f "$state"
 fi
 
+[ ! -L "$keys" ] || refuse "$keys is a symbolic link"
+mkdir -p "$keys"
+chmod 0755 "$keys"
+
 # No PAM: sshd checks a password with crypt(3) against /etc/shadow, as dropbear
 # does. An account whose shadow field is `!` is locked for every login, keys
 # included; `*` is one with no password.
@@ -86,7 +93,7 @@ fi
     echo "PermitRootLogin $SSH_ROOT_LOGIN"
     echo "KbdInteractiveAuthentication no"
     echo "PubkeyAuthentication yes"
-    echo "AuthorizedKeysFile .ssh/authorized_keys"
+    echo "AuthorizedKeysFile .ssh/authorized_keys $keys/%u"
     echo "StrictModes yes"
     echo "UsePAM no"
     echo "UseDNS no"
@@ -97,6 +104,9 @@ fi
     # The root carries no /etc/ssh/moduli for the group-exchange methods.
     echo "KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256"
     echo "Subsystem sftp /usr/lib/sftp-server"
+    # Last, as a Match block runs to the end of the file.
+    echo "Match User root,mica"
+    echo "    AuthorizedKeysFile .ssh/authorized_keys"
 } >"$config.new"
 sshd -t -f "$config.new" || { rm -f "$config.new"; refuse "sshd refuses the rendered $config"; }
 mv "$config.new" "$config"

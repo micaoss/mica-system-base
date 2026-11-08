@@ -1,7 +1,8 @@
-// mica-accounts: the app accounts micad keeps on STATE, bound with the image's over
-// /etc/passwd and /etc/group; against a fixture /etc, STATE, RAM shadow and mount
-// table, with mount and umount faked to edit that table. Its place in each init's boot.
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+// mica-accounts: the app accounts micad keeps on STATE and the login accounts of a
+// provisioning agent, bound with the image's over /etc/passwd and /etc/group;
+// against a fixture /etc, STATE, /home, RAM shadow and mount table, with mount and
+// umount faked to edit that table. Its place in each init's boot.
+import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { exec, fake, MICA, sandbox, SYSTEM_PATH, SYSTEMD_PAYLOAD } from './harness.ts'
@@ -13,13 +14,14 @@ const IMAGE_PASSWD = 'root:x:0:0:root:/root:/bin/sh\nmessagebus:x:996:996::/none
 const IMAGE_GROUP = 'root:x:0:\nmessagebus:x:996:\nmica:x:1000:\n'
 const SHADOW = 'root:$6$transient:20000:0:99999:7:::\nmessagebus:!:20000:0:99999:7:::\nmica:!:20000:0:99999:7:::\n'
 
-interface Case { etc: string, run: string, state: string, shadow: string, mountinfo: string, calls: string, env: Record<string, string> }
+interface Case { etc: string, run: string, state: string, homes: string, shadow: string, mountinfo: string, calls: string, env: Record<string, string> }
 
 function newCase(name: string): Case {
   const dir = join(box.dir, name)
   rmSync(dir, { recursive: true, force: true })
-  const c = { etc: join(dir, 'etc'), run: join(dir, 'run'), state: join(dir, 'state'), shadow: join(dir, 'shadow'), mountinfo: join(dir, 'mountinfo'), calls: join(dir, 'calls') }
+  const c = { etc: join(dir, 'etc'), run: join(dir, 'run'), state: join(dir, 'state'), homes: join(dir, 'home'), shadow: join(dir, 'shadow'), mountinfo: join(dir, 'mountinfo'), calls: join(dir, 'calls') }
   mkdirSync(c.etc, { recursive: true })
+  mkdirSync(join(c.homes, 'mica'), { recursive: true })
   writeFileSync(join(c.etc, 'passwd'), IMAGE_PASSWD)
   writeFileSync(join(c.etc, 'group'), IMAGE_GROUP)
   writeFileSync(c.shadow, SHADOW)
@@ -29,7 +31,7 @@ function newCase(name: string): Case {
   // mount --bind <from> <to> and umount <to>, as entries of the fixture mount table.
   fake(bin, 'mount', 'echo "mount $*" >> "$CALLS"\necho "9 1 0:9 / $3 rw - tmpfs tmpfs rw" >> "$MOUNTINFO"')
   fake(bin, 'umount', 'echo "umount $*" >> "$CALLS"\ngrep -v " $1 rw " "$MOUNTINFO" > "$MOUNTINFO.new"; mv "$MOUNTINFO.new" "$MOUNTINFO"')
-  return { ...c, env: { PATH: `${bin}:${SYSTEM_PATH}`, CALLS: c.calls, MOUNTINFO: c.mountinfo, MICA_ACCOUNTS_ETC: c.etc, MICA_ACCOUNTS_RUN: c.run, MICA_ACCOUNTS_STATE: c.state, MICA_ACCOUNTS_SHADOW: c.shadow, MICA_ACCOUNTS_MOUNTINFO: c.mountinfo } }
+  return { ...c, env: { PATH: `${bin}:${SYSTEM_PATH}`, CALLS: c.calls, MOUNTINFO: c.mountinfo, MICA_ACCOUNTS_ETC: c.etc, MICA_ACCOUNTS_RUN: c.run, MICA_ACCOUNTS_STATE: c.state, MICA_ACCOUNTS_SHADOW: c.shadow, MICA_ACCOUNTS_MOUNTINFO: c.mountinfo, MICA_ACCOUNTS_HOMES: c.homes } }
 }
 
 const accounts = (c: Case, ...args: string[]): { code: number, out: string } => exec(['sh', join(MICA, 'mica-accounts'), ...args], c.env)
@@ -151,6 +153,94 @@ describe('mica-accounts add, remove and list', () => {
     for (const args of [[], ['add', 'app'], ['add', 'app', '30000', '30000', 'x'], ['remove'], ['list', 'x'], ['build', 'x'], ['create', 'app', '30000']])
       expect(accounts(c, ...args).code).toBe(2)
     expect(existsSync(c.state)).toBe(false)
+  })
+})
+
+// A login account's home is made with its owner, which takes root.
+describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login and list-login', () => {
+  const LOGIN = (name: string, uid: number): string => `${name}:x:${uid}:${uid}:mica login ${name}:/home/${name}:/bin/sh\n`
+  const owner = (path: string): string => {
+    const { uid, gid, mode } = statSync(path)
+    return `${uid}:${gid} ${(mode & 0o777).toString(8)}`
+  }
+
+  test('add-login chooses the lowest free uid, binds the account and its group, makes its home and lets its keys in', () => {
+    const c = newCase('login')
+    accounts(c, 'add', 'app-web', '30000')
+    expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
+    expect(accounts(c, 'add-login', 'bob')).toEqual({ code: 0, out: '20001\n' })
+    expect(read(join(c.state, 'passwd'))).toBe(APP + LOGIN('alice', 20000) + LOGIN('bob', 20001))
+    expect(read(join(c.state, 'group'))).toBe('app-web:x:30000:\nalice:x:20000:\nbob:x:20001:\n')
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + APP + LOGIN('alice', 20000) + LOGIN('bob', 20001))
+    expect(owner(join(c.homes, 'alice'))).toBe('20000:20000 700')
+    // No password: '*' lets a key log in, '!' would lock even that.
+    expect(read(c.shadow)).toBe(`${SHADOW}app-web:!:20000:0:99999:7:::\nalice:*:20000:0:99999:7:::\nbob:*:20000:0:99999:7:::\n`)
+    // Again is no error and the same uid; the classes list apart.
+    expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
+    expect(accounts(c, 'list-login')).toEqual({ code: 0, out: 'alice\t20000\nbob\t20001\n' })
+    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'app-web\t30000\t30000\n' })
+  })
+
+  test('a locked entry of a login account loses its lock at the next build', () => {
+    const c = newCase('login-unlock')
+    accounts(c, 'add-login', 'alice')
+    writeFileSync(c.shadow, `${SHADOW}alice:!:20000:0:99999:7:::\n`)
+    expect(accounts(c, 'build').code).toBe(0)
+    expect(read(c.shadow)).toBe(`${SHADOW}alice:*:20000:0:99999:7:::\n`)
+  })
+
+  test('remove-login keeps the home, which makes its uid no one else\'s and its owner\'s again', () => {
+    const c = newCase('login-home')
+    accounts(c, 'add-login', 'alice')
+    writeFileSync(join(c.homes, 'alice', 'notes'), 'mine\n')
+    expect(accounts(c, 'remove-login', 'alice')).toEqual({ code: 0, out: '' })
+    expect(read(join(c.state, 'passwd'))).toBe('')
+    expect(read(c.shadow)).toBe(SHADOW)
+    expect(read(join(c.homes, 'alice', 'notes'))).toBe('mine\n')
+    expect(accounts(c, 'add-login', 'carol').out).toBe('20001\n')
+    expect(accounts(c, 'add-login', 'alice').out).toBe('20000\n')
+    expect(accounts(c, 'remove-login', 'nobody')).toEqual({ code: 0, out: '' })
+    // A kept home whose owner another account holds is refused, not handed over.
+    mkdirSync(join(c.homes, 'dave'))
+    chownSync(join(c.homes, 'dave'), 20001, 20001)
+    expect(accounts(c, 'add-login', 'dave')).toEqual({ code: 1, out: `mica-accounts: ${c.homes}/dave is owned by uid 20001, which is not free for dave\n` })
+  })
+
+  test('refuses root, mica, sshd, mica-app-*, the image\'s names and the app accounts; the classes stay apart', () => {
+    const c = newCase('login-refused')
+    accounts(c, 'add', 'app-web', '30000')
+    accounts(c, 'add-login', 'alice')
+    const refused = (args: string[], message: string): void => {
+      expect(accounts(c, ...args)).toEqual({ code: 1, out: `mica-accounts: ${message}\n` })
+    }
+    for (const name of ['root', 'mica', 'sshd', 'mica-app-web'])
+      refused(['add-login', name], `${name} is not a login name`)
+    refused(['add-login', 'messagebus'], 'messagebus is an account of the image')
+    refused(['add-login', 'app-web'], 'app-web is an app account')
+    refused(['add-login', 'Alice'], 'Alice is not an account name')
+    refused(['add', 'alice', '30001'], 'alice is a login account')
+    refused(['add', 'app-two', '20001'], 'uid 20001 is outside 30000..39999')
+    refused(['remove', 'alice'], 'alice is a login account')
+    refused(['remove-login', 'app-web'], 'app-web is an app account')
+    expect(read(join(c.state, 'passwd'))).toBe(APP + LOGIN('alice', 20000))
+  })
+
+  test('a build skips a login line of another shape, and every bad argument is a usage error', () => {
+    const c = newCase('login-corrupt')
+    mkdirSync(c.state)
+    writeFileSync(join(c.state, 'passwd'), [
+      LOGIN('alice', 20000).trim(),
+      'bob:x:20001:20002:mica login bob:/home/bob:/bin/sh',
+      'carl:x:20003:20003:mica login carl:/root:/bin/sh',
+      'dora:x:20004:20004:mica login dora:/home/dora:/bin/bash',
+      'mica-app-x:x:20005:20005:mica login mica-app-x:/home/mica-app-x:/bin/sh',
+      '',
+    ].join('\n'))
+    const ran = accounts(c, 'build')
+    expect(ran.out.split('\n').filter(line => line.startsWith('mica-accounts: skipping passwd line'))).toHaveLength(4)
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + LOGIN('alice', 20000))
+    for (const args of [['add-login'], ['add-login', 'a', 'b'], ['remove-login'], ['list-login', 'x']])
+      expect(accounts(c, ...args).code).toBe(2)
   })
 })
 

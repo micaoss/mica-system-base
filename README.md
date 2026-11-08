@@ -124,6 +124,12 @@ login, keys included, to an account whose shadow field is `!`; `*` is one with n
 and it is the marker mica-system gives `mica`. Its privilege separation account `sshd`
 (uid 22, group `nogroup`, no shell) is added by mica-openssh's postinst.
 
+mica-openssh's sshd also takes a login account's keys from `/run/mica/authorized-keys/<user>`,
+which a provisioning agent (mica-gce-agent) writes, root-owned 0644 or the user's own 0600, for
+the accounts of `mica-accounts add-login`. A `Match User root,mica` block keeps root and mica
+to their own `~/.ssh/authorized_keys`, so that directory never opens either. Dropbear has no
+second keys file: a product with such an agent takes mica-openssh.
+
 ### The container graphroot's mount options are a default, not a boundary
 
 `/mica/containers` is bound `nosuid,nodev` without `noexec`, and mica-podman's

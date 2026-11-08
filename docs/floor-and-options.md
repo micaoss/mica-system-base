@@ -163,6 +163,23 @@ micad calls it, and never edits the files:
 - `mica-accounts list` prints the app accounts, one a line: `<name>` TAB `<uid>` TAB `<gid>`.
 - `mica-accounts build` rebinds from STATE as it is, after micad's reset has cleared it.
 
+A provisioning agent (mica-gce-agent) keeps the login accounts of the people who log in with
+SSH keys, on the same STATE files:
+
+- `mica-accounts add-login <name>` adds one and prints its uid, which it chooses in
+  `20000..29999`: the owner of an existing `/home/<name>` when that uid is free, else the
+  lowest uid that is free and owns no kept home; a kept home whose owner is taken is refused.
+  The group is its own, with the same id; STATE holds
+  `<name>:x:<uid>:<uid>:mica login <name>:/home/<name>:/bin/sh`. `/home/<name>` (DATA) is made
+  0700 when missing, and the shadow entry is `*`: no password, so only its keys log it in. root,
+  mica, sshd, `mica-app-*`, the image's account and group names and the app accounts' names are
+  refused. The same account again prints the same uid.
+- `mica-accounts remove-login <name>` drops it from STATE and the shadow and keeps its home; an
+  unknown name succeeds.
+- `mica-accounts list-login` prints them, one a line: `<name>` TAB `<uid>`.
+
+`add` and `remove` refuse a login account, and `add-login` and `remove-login` an app account.
+
 Each exits 0 on success; a refusal or a failure exits 1 with one `mica-accounts: ...` line on
 stderr, and bad arguments exit 2 with the usage line. A malformed, out-of-range or clashing
 STATE line is skipped with a `mica-accounts: skipping ...` line, never fatal. A rebind
@@ -195,6 +212,7 @@ update-rc.d (bluez) can still add an unowned link; the composer removes those at
 | Service | Package | systemd | OpenRC | Started by |
 | --- | --- | --- | --- | --- |
 | SSH | mica-ssh or mica-openssh | `mica-sshd.service`, enabled, skipped while SSH is off | `mica-sshd`, in no runlevel; `mica-sshd-boot`, in `default`, starts it while SSH is on | boot, from the settings micad saves in `/var/lib/mica/ssh/sshd.env` on DATA (`SSH_ENABLED`, `SSH_LISTEN`, `SSH_PASSWORD`, `SSH_ROOT_LOGIN`), with or without micad, and until micad has saved them from the image's `/usr/lib/mica/ssh/sshd.env`, which mica-build writes on or off as the product's `SSH=` says; password logins only while a transient root password is set. Without micad, `mica-add-keys` adds the keys of a provisioning medium's `mica-authorized-keys` to root's and mica's `authorized_keys`. micad restarts it for new settings and stops it; both packages provide `mica-ssh-server` |
+| Power button | mica-systemd or mica-openrc | systemd-logind, `HandlePowerKey=poweroff` (`logind.conf.d/50-mica-power.conf`) | `mica-acpid`, in `boot`: busybox acpid runs `/usr/lib/mica/acpi/power`, `mica-init poweroff` | the power key, a cloud's stop request (GCE); a clean poweroff |
 | SSH, dropbear's own | mica-ssh | `dropbear.service`, disabled by preset | `mica-dropbear`, in no runlevel | micad, after writing `/run/mica/dropbear.env` |
 | Wi-Fi station | mica-wifi | `wpa_supplicant@<if>.service`, the STATE bind of `/etc/wpa_supplicant`, the regulatory database reload | `mica-wifi-client`, in no runlevel | micad, after writing `/var/lib/mica/wifi/client.env`; at boot, `mica-units` while it is listed |
 | Wi-Fi access point | mica-wifi-ap | `hostapd@<if>.service`, the STATE bind of `/etc/hostapd` | `mica-wifi-ap`, in no runlevel | micad, after writing `/var/lib/mica/wifi/ap.env`; at boot, `mica-units` while it is listed |

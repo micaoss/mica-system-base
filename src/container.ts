@@ -619,15 +619,18 @@ async function debs(argv: string[]): Promise<number> {
 // this test (source.test-kernel): a read-only root disk made from
 // _out/rootfs/amd64-openrc, a fresh DATA disk with project quotas and an app
 // account on STATE, and an initramfs that loads the modules this kernel keeps out
-// of its image -- virtio_blk, and the
-// quota format DATA's project quotas need -- and hands over to openrc-init. A stand-in mica-deploy
-// reports a deployment and, when the health gate confirms it, powers the machine
-// off, so the run covers the boot, the gate and the shutdown. The root carries
+// of its image -- virtio_blk, the quota format DATA's project quotas need, the ACPI
+// power button and evdev -- and hands over to openrc-init. A stand-in mica-deploy
+// reports a deployment, and the health gate's confirmation starts the checks
+// below, so the run covers the boot, the gate and the shutdown. The root carries
 // mica-openssh, as built, and its libraries: before the shutdown the stand-in saves
 // SSH settings as micad would and has mica-sshd-boot start mica-sshd from them, as a
 // boot does, and the host logs in through QEMU's forwarded port with
-// a key, as root and as mica. The serial log is kept in _out/boot-test.log, the
-// host's side of the logins in _out/boot-test-ssh.log.
+// a key, as root and as mica, and as a login account the stand-in adds as a
+// provisioning agent would, whose key in /run/mica/authorized-keys opens neither root
+// nor mica. The run ends with QEMU's power button, which mica-acpid turns into a
+// clean poweroff. The serial log is kept in _out/boot-test.log, the host's side of
+// the logins in _out/boot-test-ssh.log.
 const BOOT_TEST_OVERLAY: Record<string, string> = {
   'etc/fstab': '/dev/vdb /mnt/data ext4 noatime,prjquota 0 2\n',
   'etc/mica/health.conf': 'require=boot-settled\nsettle-sec=120\nprobe-timeout-sec=10\nvar-threshold-pct=85\n',
@@ -654,10 +657,17 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '  mkdir -p /var/lib/mica/ssh && printf \'SSH_ENABLED=yes\\nSSH_LISTEN="22"\\nSSH_PASSWORD=no\\nSSH_ROOT_LOGIN=yes\\n\' >/var/lib/mica/ssh/sshd.env',
     '  for home in /root /home/mica; do mkdir -p -m 0700 $home/.ssh && cp /usr/local/share/boot-test/client.pub $home/.ssh/authorized_keys && chmod 0600 $home/.ssh/authorized_keys; done',
     '  chown -R mica:mica /home/mica/.ssh',
+    '# A login account, added as a provisioning agent (mica-gce-agent) adds one, before sshd',
+    '# starts; its key, and another for root and mica, where the agent writes them.',
+    '  echo "boot-test: add-login gcpuser: $(/usr/lib/mica/mica-accounts add-login gcpuser 2>&1)" >/dev/console',
     '  rc-service mica-sshd-boot restart >/dev/null 2>&1 && rc-service mica-sshd status >/dev/null 2>&1 && echo \'boot-test: mica-sshd started\' >/dev/console',
+    '  install -m 0644 /usr/local/share/boot-test/client.pub /run/mica/authorized-keys/gcpuser',
+    '  for user in root mica; do install -m 0644 /usr/local/share/boot-test/agent.pub /run/mica/authorized-keys/$user; done',
+    '# Then the host\'s power button ends the run: mica-acpid powers off.',
     '  (i=0; while [ ! -e /run/boot-test-ssh-done ] && [ $i -lt 180 ]; do sleep 1; i=$((i + 1)); done',
     '   logread | grep mica-sshd | sed \'s/^/boot-test: sshd log: /\' >/dev/console',
-    '   rc-service mica-getty restart; sleep 5; openrc-shutdown --poweroff now) >/dev/null 2>&1 & ;;',
+    '   rc-service mica-getty restart; sleep 5',
+    '   rc-service mica-acpid status >/dev/null 2>&1 && echo \'boot-test: waiting for the power button\' >/dev/console) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
     '',
@@ -673,7 +683,7 @@ const BOOT_TEST_INIT = [
   '$B mount -t proc proc /proc',
   '$B mount -t sysfs sysfs /sys',
   '$B mount -t devtmpfs devtmpfs /dev',
-  'for module in virtio_blk quota_tree quota_v2 failover net_failover virtio_net; do $B insmod /$module.ko; done',
+  'for module in virtio_blk quota_tree quota_v2 failover net_failover virtio_net button evdev; do $B insmod /$module.ko; done',
   'for i in $($B seq 50); do [ -b /dev/vda ] && break; $B sleep 0.1; done',
   '$B mount -o ro /dev/vda /newroot',
   '$B umount /proc /sys /dev',
@@ -688,7 +698,7 @@ version=$(ls kernel/usr/lib/modules)
 mkdir -p initrd/bin
 cp /rootfs/usr/bin/busybox initrd/bin/busybox
 xz -dc "kernel/usr/lib/modules/$version/kernel/drivers/block/virtio_blk.ko.xz" >initrd/virtio_blk.ko
-for module in fs/quota/quota_tree fs/quota/quota_v2 net/core/failover drivers/net/net_failover drivers/net/virtio_net; do
+for module in fs/quota/quota_tree fs/quota/quota_v2 net/core/failover drivers/net/net_failover drivers/net/virtio_net drivers/acpi/button drivers/input/evdev; do
   xz -dc "kernel/usr/lib/modules/$version/kernel/$module.ko.xz" >"initrd/\${module##*/}.ko"
 done
 install -m 0755 init initrd/init
@@ -701,6 +711,9 @@ dpkg --root=root --install ssh/*.deb >/dev/null
 mkdir -p root/usr/local/share/boot-test
 ssh-keygen -q -t ed25519 -N '' -f client
 cp client.pub root/usr/local/share/boot-test/client.pub
+# The key an agent puts for root and mica, which must open neither.
+ssh-keygen -q -t ed25519 -N '' -f agent
+cp agent.pub root/usr/local/share/boot-test/agent.pub
 # What mica-build's pack stage does: the factory copy mica-shadow-reconcile builds from.
 mkdir -p root/usr/share/factory/etc
 cp -a root/etc/shadow root/usr/share/factory/etc/shadow
@@ -712,8 +725,12 @@ printf 'bootseed:x:30001:30001:mica app bootseed:/nonexistent:/usr/sbin/nologin\
 printf 'bootseed:x:30001:\\n' >data/state/accounts/group
 mke2fs -q -t ext4 -L data -O quota,project -E quotatype=prjquota -d data data.img 512M
 accel=tcg; [ -c /dev/kvm ] && accel=kvm
+# The monitor, for the power button: commands into monitor.in, its answers drained.
+mkfifo monitor.in monitor.out
+cat monitor.out >monitor.log &
 timeout 600 qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m 1024 -smp 2 \\
   -display none -no-reboot -serial file:serial.log -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:2222-:22 \\
+  -monitor pipe:monitor \\
   -kernel "kernel/boot/vmlinuz-$version" -initrd initrd.img -append 'console=ttyS0 panic=-1' \\
   -drive file=root.img,if=virtio,format=raw,readonly=on -drive file=data.img,if=virtio,format=raw &
 qemu=$!
@@ -721,10 +738,18 @@ qemu=$!
 # that lets it shut down.
 for i in $(seq 400); do grep -q 'boot-test: mica-sshd started' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
 ssh="ssh -p 2222 -i client -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20"
-for user in root mica; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id)"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
+for user in root mica gcpuser; do $ssh $user@127.0.0.1 'echo "ssh-login: $(id) home $HOME $(stat -c "%U %a" "$HOME")"' >>ssh.log 2>&1 || echo "ssh-login: $user failed" >>ssh.log; done
+# The agent's key for root and mica opens neither.
+for user in root mica; do
+  ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
+    echo "ssh-agent-key: $user opened" >>ssh.log || echo "ssh-agent-key: $user refused" >>ssh.log
+done
 # A login on a terminal is the one sshd records, in wtmpdb's /var/lib/wtmpdb/wtmp.db.
 $ssh -tt root@127.0.0.1 true >/dev/null 2>&1 || echo "ssh-login: root on a terminal failed" >>ssh.log
 $ssh root@127.0.0.1 'ls -lL /var/lib/wtmpdb/wtmp.db 2>&1 | sed "s/^/ssh-wtmpdb: /"; touch /run/boot-test-ssh-done' >>ssh.log 2>&1 || true
+# The power button, once mica-acpid runs; the guest powers itself off.
+for i in $(seq 120); do grep -q 'boot-test: waiting for the power button' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
+echo system_powerdown >monitor.in
 wait $qemu
 `
 
@@ -745,6 +770,10 @@ const BOOT_TEST_EXPECT = [
   'boot-test: uid=30000(boottest) gid=30000(boottest)',
   // mica-openssh: mica-sshd started from micad's settings.
   'boot-test: mica-sshd started',
+  // A login account of mica-accounts add-login, the first uid of its range.
+  'boot-test: add-login gcpuser: 20000',
+  // The power button: mica-acpid, then the shutdown it starts.
+  'boot-test: waiting for the power button',
 ]
 
 // The pinned rows mica-openssh's Depends add to `root`: the closure of each library
@@ -837,7 +866,9 @@ async function bootTest(argv: string[]): Promise<number> {
     if (prompts.length < 2 || !prompts[0]!.startsWith('Mica OS Base ') || prompts[0]!.includes('Device code:') || !prompts.at(-1)!.includes('Device code: TEST-0000-ABC'))
       fail(`the login prompts do not show the device code only once it exists: ${JSON.stringify(prompts)} (_out/boot-test.log)`)
     // A key login to root and to mica through OpenSSH: their shadow fields are `*`.
-    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)']) {
+    // And to the login account, by the key in /run/mica/authorized-keys, into its own
+    // home; the agent's key for root and mica opens neither.
+    for (const login of ['ssh-login: uid=0(root) gid=0(root)', 'ssh-login: uid=1000(mica) gid=1000(mica)', 'ssh-login: uid=20000(gcpuser) gid=20000(gcpuser) groups=20000(gcpuser) home /home/gcpuser gcpuser 700', 'ssh-agent-key: root refused', 'ssh-agent-key: mica refused']) {
       if (!ssh.includes(login))
         fail(`no ${login} through mica-sshd (_out/boot-test-ssh.log)`)
     }

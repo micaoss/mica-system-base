@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# The power button: busybox acpid reads the input devices' key events and, for the
+# power key (ACPI's PWRF), runs /usr/lib/mica/acpi/power, a clean poweroff -- a
+# cloud's stop request (GCE) is that button. It opens the input devices when it
+# starts, so it comes after mdev has loaded their drivers and made their nodes.
+
+description="The power button, by acpid"
+command=/usr/bin/busybox
+command_args="acpid -d -c /usr/lib/mica/acpi -a /usr/lib/mica/acpi/actions"
+supervisor=supervise-daemon
+error_logger="busybox logger -t mica-acpid"
+
+depend() {
+    need dev
+    after mica-mdev
+}

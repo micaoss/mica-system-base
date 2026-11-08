@@ -79,6 +79,17 @@ describe('mica-shadow-reconcile', () => {
     expect(wellFormed(c)).toBe(true)
   })
 
+  // A login account of mica-accounts add-login logs in with its keys alone; an app
+  // account, in the range above, stays locked.
+  test('a login account (uid 20000..29999) is appended without a password, every other one locked', () => {
+    const c = newCase('appends-login-account', '', `${PASSWD_BOTH}alice:x:20000:20000:mica login alice:/home/alice:/bin/sh\napp-web:x:30000:30000:mica app app-web:/nonexistent:/usr/sbin/nologin\nold:x:2000:2000::/nonexistent:/usr/sbin/nologin\n`)
+    expect(reconcile(c)).toBe(0)
+    expect(hashOf(c, 'alice')).toBe('*')
+    expect(hashOf(c, 'app-web')).toBe('!')
+    expect(hashOf(c, 'old')).toBe('!')
+    expect(wellFormed(c)).toBe(true)
+  })
+
   // The factory copy is the image's statement about its own accounts.
   test('an account only the factory names is kept', () => {
     const c = newCase('keeps-factory-only-account', '', PASSWD_DAEMON_ONLY)
@@ -337,7 +348,7 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     return { state, key: join(state, 'ssh_host_ed25519_key'), config: join(state, '..', 'sshd_config') }
   }
   const prestart = (c: { state: string, config: string }, env: Record<string, string>): number =>
-    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'no-marker'), ...env }).code
+    exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, MICA_SSH_AUTHORIZED_KEYS: join(box.dir, 'authorized-keys'), MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'no-marker'), ...env }).code
   const rendered = (c: { key: string }, listen: string[], password: string, root: string): string => [
     '# Rendered by /usr/lib/mica/mica-sshd-prestart from /var/lib/mica/ssh/sshd.env.',
     ...listen.map(listener => `ListenAddress ${listener}`),
@@ -346,7 +357,7 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     `PermitRootLogin ${root}`,
     'KbdInteractiveAuthentication no',
     'PubkeyAuthentication yes',
-    'AuthorizedKeysFile .ssh/authorized_keys',
+    `AuthorizedKeysFile .ssh/authorized_keys ${join(box.dir, 'authorized-keys')}/%u`,
     'StrictModes yes',
     'UsePAM no',
     'UseDNS no',
@@ -356,6 +367,8 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     'PidFile none',
     'KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256',
     'Subsystem sftp /usr/lib/sftp-server',
+    'Match User root,mica',
+    '    AuthorizedKeysFile .ssh/authorized_keys',
     '',
   ].join('\n')
 
@@ -364,6 +377,8 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
     expect(readFileSync(trace, 'utf8')).toContain(`sshd -t -f ${c.config}.new\n`)
+    // The login accounts' keys directory, made for the agent.
+    expect(mode(join(box.dir, 'authorized-keys'))).toBe('755')
     expect(prestart(c, { SSH_LISTEN: '192.0.2.5:22 [2001:db8::5]:2222', SSH_PASSWORD: 'yes', SSH_ROOT_LOGIN: 'no', MICA_SSH_TRANSIENT_MARKER: MARKER })).toBe(0)
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['192.0.2.5:22', '[2001:db8::5]:2222'], 'yes', 'no'))
   })
