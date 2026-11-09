@@ -724,6 +724,11 @@ chmod 0755 root/usr/local/bin/mica-deploy root/usr/bin/login
 mke2fs -q -t ext4 -L root -d root root.img 768M
 # DATA as a device that already has an app account on STATE, for the boot to bind.
 mkdir -p data/state/accounts
+# A device from before the RSA host key: STATE holds only the ed25519 one, which
+# mica-sshd keeps, adding the RSA key beside it.
+mkdir -p -m 0700 data/state/ssh
+ssh-keygen -q -t ed25519 -N '' -C '' -f seeded
+cp seeded data/state/ssh/ssh_host_ed25519_key
 printf 'bootseed:x:30001:30001:mica app bootseed:/nonexistent:/usr/sbin/nologin\\n' >data/state/accounts/passwd
 printf 'bootseed:x:30001:\\n' >data/state/accounts/group
 mke2fs -q -t ext4 -L data -O quota,project -E quotatype=prjquota -d data data.img 512M
@@ -760,6 +765,21 @@ sudo_as promoted gcpuser
 as_root 'rm /run/mica/sudoers.d/50-mica-admins'
 sudo_as removed gcpuser
 sudo_as removed gcpplain
+# Host keys: a default client takes the device's kept ed25519 key; a client offering
+# only rsa-sha2-256,ssh-rsa (GCE's SSH-in-browser) the RSA key, with an RSA key of its
+# own; and one offering only diffie-hellman-group14-sha256 still agrees a key exchange.
+ssh-keygen -q -t rsa -b 3072 -N '' -f clientrsa
+as_root "echo '$(cat clientrsa.pub)' >>/run/mica/authorized-keys/gcpuser"
+hostkey() { # <step> <ssh options...>
+  step=$1; shift
+  ssh -v -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 "$@" gcpuser@127.0.0.1 'echo "ssh-hostkey-'$step': $(id -un) in"' >hostkey.log 2>&1 || echo "ssh-hostkey-$step: failed" >>ssh.log
+  grep -E '^ssh-hostkey-|kex: (algorithm|host key algorithm):' hostkey.log | tr -d '\\r' | sed "s/^debug1: /ssh-hostkey-$step: /" >>ssh.log
+}
+hostkey default -i client
+hostkey browser -i clientrsa -o HostKeyAlgorithms=rsa-sha2-256,ssh-rsa -o PubkeyAcceptedAlgorithms=rsa-sha2-256,ssh-rsa
+hostkey group14 -i client -o KexAlgorithms=diffie-hellman-group14-sha256
+ssh-keyscan -t ed25519 -p 2222 127.0.0.1 2>&1 | tee -a ssh.log | awk '/ssh-ed25519/ {print $2, $3}' >served.pub
+[ -s served.pub ] && [ "$(cat served.pub)" = "$(cut -d' ' -f1,2 seeded.pub)" ] && echo "ssh-hostkey-kept: yes" >>ssh.log || echo "ssh-hostkey-kept: no" >>ssh.log
 # The agent's key for root and mica opens neither.
 for user in root mica; do
   ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
@@ -913,6 +933,12 @@ async function bootTest(argv: string[]): Promise<number> {
     }
     if (ssh.includes('ssh-sudo: '))
       fail('a step of the sudo checks failed (_out/boot-test-ssh.log)')
+    // Host keys: ed25519 by default, and the one kept on STATE; RSA (SHA-2) for a client
+    // offering nothing else; group14-sha256 for a client with no newer key exchange.
+    for (const line of ['ssh-hostkey-default: kex: host key algorithm: ssh-ed25519', 'ssh-hostkey-default: gcpuser in', 'ssh-hostkey-browser: kex: host key algorithm: rsa-sha2-256', 'ssh-hostkey-browser: gcpuser in', 'ssh-hostkey-group14: kex: algorithm: diffie-hellman-group14-sha256', 'ssh-hostkey-group14: gcpuser in', 'ssh-hostkey-kept: yes']) {
+      if (!ssh.split('\n').includes(line))
+        fail(`no ${line} through mica-sshd (_out/boot-test-ssh.log)`)
+    }
     if (!/^ssh-wtmpdb: -rw\S* .* \/var\/lib\/wtmpdb\/wtmp\.db$/m.test(ssh) || /sshd log: .*wtmp/i.test(log))
       fail('sshd did not record the terminal login in /var/lib/wtmpdb/wtmp.db, or logged a wtmpdb error (_out/boot-test-ssh.log, _out/boot-test.log)')
     // No daemon keeps CAP_SYS_RESOURCE (capability 24), the DATA quota limit.

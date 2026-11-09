@@ -338,21 +338,22 @@ describe('mica-sshd-prestart of mica-openssh', () => {
   const trace = join(box.dir, 'openssh-trace')
   // ssh-keygen writes the key and <file>.pub, and refuses an existing file; sshd -t
   // fails on demand.
-  fake(bin, 'ssh-keygen', 'printf \'ssh-keygen %s\\n\' "$*" >>"$MICA_TEST_TRACE"\nfor key; do :; done\n[ ! -e "$key" ] || exit 1\nprintf \'generated ed25519\\n\' >"$key"\nprintf \'public\\n\' >"$key.pub"')
+  fake(bin, 'ssh-keygen', 'printf \'ssh-keygen %s\\n\' "$*" >>"$MICA_TEST_TRACE"\nfor key; do :; done\n[ ! -e "$key" ] || exit 1\nprintf \'generated %s\\n\' "$3" >"$key"\nprintf \'public\\n\' >"$key.pub"')
   fake(bin, 'sshd', 'printf \'sshd %s\\n\' "$*" >>"$MICA_TEST_TRACE"\n[ -z "${MICA_TEST_SSHD_FAIL:-}" ]')
-  const newCase = (name: string): { state: string, key: string, config: string } => {
+  const newCase = (name: string): { state: string, key: string, rsa: string, config: string } => {
     const state = join(box.dir, 'openssh', name, 'ssh')
     mkdirSync(state, { recursive: true })
     chmodSync(state, 0o700)
     writeFileSync(trace, '')
-    return { state, key: join(state, 'ssh_host_ed25519_key'), config: join(state, '..', 'sshd_config') }
+    return { state, key: join(state, 'ssh_host_ed25519_key'), rsa: join(state, 'ssh_host_rsa_key'), config: join(state, '..', 'sshd_config') }
   }
   const prestart = (c: { state: string, config: string }, env: Record<string, string>): number =>
     exec(['sh', script], { PATH: `${bin}:${SYSTEM_PATH}`, MICA_TEST_TRACE: trace, MICA_SSH_OWNER: String(process.getuid?.() ?? 0), MICA_SSH_STATE: c.state, MICA_SSHD_CONFIG: c.config, MICA_SSH_AUTHORIZED_KEYS: join(box.dir, 'authorized-keys'), MICA_SSH_TRANSIENT_MARKER: join(box.dir, 'no-marker'), ...env }).code
-  const rendered = (c: { key: string }, listen: string[], password: string, root: string): string => [
+  const rendered = (c: { key: string, rsa: string }, listen: string[], password: string, root: string): string => [
     '# Rendered by /usr/lib/mica/mica-sshd-prestart from /var/lib/mica/ssh/sshd.env.',
     ...listen.map(listener => `ListenAddress ${listener}`),
     `HostKey ${c.key}`,
+    `HostKey ${c.rsa}`,
     `PasswordAuthentication ${password}`,
     `PermitRootLogin ${root}`,
     'KbdInteractiveAuthentication no',
@@ -365,7 +366,7 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     'PrintMotd no',
     'PrintLastLog no',
     'PidFile none',
-    'KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256',
+    'KexAlgorithms +diffie-hellman-group14-sha256',
     'Subsystem sftp /usr/lib/sftp-server',
     'Match User root,mica',
     '    AuthorizedKeysFile .ssh/authorized_keys',
@@ -389,17 +390,31 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
   })
 
-  test('the first start generates an owner-only ed25519 key on STATE, and later starts keep it', () => {
+  test('the first start generates owner-only ed25519 and RSA keys on STATE, and later starts keep them', () => {
     const c = newCase('key')
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.key, 'utf8')).toBe('generated ed25519\n')
+    expect(readFileSync(c.rsa, 'utf8')).toBe('generated rsa\n')
     expect(mode(c.key)).toBe('600')
-    expect(readdirSync(c.state)).toEqual(['ssh_host_ed25519_key'])
+    expect(mode(c.rsa)).toBe('600')
+    expect(readdirSync(c.state).sort()).toEqual(['ssh_host_ed25519_key', 'ssh_host_rsa_key'])
     expect(readFileSync(trace, 'utf8')).toContain(`ssh-keygen -q -t ed25519 -N  -C  -f ${c.key}.new\n`)
+    expect(readFileSync(trace, 'utf8')).toContain(`ssh-keygen -q -t rsa -b 3072 -N  -C  -f ${c.rsa}.new\n`)
     writeFileSync(trace, '')
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.key, 'utf8')).toBe('generated ed25519\n')
     expect(readFileSync(trace, 'utf8')).not.toContain('ssh-keygen')
+  })
+
+  // A device from before the RSA key keeps its ed25519 key and gains the RSA one.
+  test('a STATE with only the ed25519 key gets the RSA key added', () => {
+    const c = newCase('ed25519-only')
+    writeFileSync(c.key, 'existing ed25519\n', { mode: 0o600 })
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.key, 'utf8')).toBe('existing ed25519\n')
+    expect(readFileSync(c.rsa, 'utf8')).toBe('generated rsa\n')
+    expect(readFileSync(trace, 'utf8').split('\n').filter(line => line.startsWith('ssh-keygen'))).toEqual([`ssh-keygen -q -t rsa -b 3072 -N  -C  -f ${c.rsa}.new`])
+    expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
   })
 
   test('refuses STATE and keys another user could have planted or read', () => {
@@ -416,6 +431,11 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     symlinkSync(join(linked.state, '..', 'elsewhere'), linked.key)
     expect(prestart(linked, SSHD_ENV)).not.toBe(0)
     expect(existsSync(linked.config)).toBe(false)
+    const readableRsa = newCase('readable-rsa')
+    writeFileSync(readableRsa.rsa, 'mine\n', { mode: 0o644 })
+    chmodSync(readableRsa.rsa, 0o644)
+    expect(prestart(readableRsa, SSHD_ENV)).not.toBe(0)
+    expect(existsSync(readableRsa.config)).toBe(false)
   })
 
   test('a configuration sshd refuses leaves the last one in place', () => {

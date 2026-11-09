@@ -8,9 +8,12 @@
 #   SSH_PASSWORD    yes|no: password logins, and yes only while a transient root
 #                   password is set
 #   SSH_ROOT_LOGIN  yes|no: root logins
-# Refuses anything else. Makes the ed25519 host key on DATA/state at the first
-# start -- written to a temporary name and renamed, so an interrupted start leaves
-# no truncated key; an existing key is kept. Symbolic links, foreign owners, a
+# Refuses anything else. Makes the ed25519 and the RSA (3072 bits) host keys on
+# DATA/state, each at the first start that lacks it -- written to a temporary name
+# and renamed, so an interrupted start leaves no truncated key; an existing key is
+# kept. ed25519 is what clients take by default; RSA (rsa-sha2-256/512, never SHA-1
+# ssh-rsa) is for clients that offer nothing else, such as GCE's SSH-in-browser.
+# Symbolic links, foreign owners, a
 # group/world-writable directory and group/world-readable keys are refused. Makes
 # /run/mica/authorized-keys, where a provisioning agent (mica-gce-agent) puts the
 # keys of a login account as <user>, root-owned 0644 or the user's own 0600; root
@@ -21,7 +24,6 @@ set -eu
 state=${MICA_SSH_STATE:-/mnt/data/state/ssh}
 owner=${MICA_SSH_OWNER:-0}
 config=${MICA_SSHD_CONFIG:-/run/mica/sshd_config}
-key=$state/ssh_host_ed25519_key
 keys=${MICA_SSH_AUTHORIZED_KEYS:-/run/mica/authorized-keys}
 
 refuse() { echo "mica-sshd-prestart: $*" >&2; exit 1; }
@@ -61,12 +63,17 @@ private() {
 
 [ -d "$state" ] && [ ! -L "$state" ] || refuse "$state is not a directory; mica-seed-state creates it"
 private "$state" 022
-if [ -e "$key" ] || [ -L "$key" ]; then
-    private "$key" 077
-    [ -f "$key" ] || refuse "$key is not a regular file"
-else
+# $1: the key's type, $2...: ssh-keygen's options for it.
+host_key() {
+    key=$state/ssh_host_$1_key
+    if [ -e "$key" ] || [ -L "$key" ]; then
+        private "$key" 077
+        [ -f "$key" ] || refuse "$key is not a regular file"
+        return 0
+    fi
+    shift
     rm -f "$key.new" "$key.new.pub"
-    ssh-keygen -q -t ed25519 -N '' -C '' -f "$key.new" >/dev/null ||
+    ssh-keygen -q "$@" -N '' -C '' -f "$key.new" >/dev/null ||
         { rm -f "$key.new" "$key.new.pub"; exit 1; }
     rm -f "$key.new.pub"
     echo "mica-sshd-prestart: generated $key"
@@ -74,7 +81,9 @@ else
     sync "$key.new"
     mv "$key.new" "$key"
     sync -f "$state"
-fi
+}
+host_key ed25519 -t ed25519
+host_key rsa -t rsa -b 3072
 
 [ ! -L "$keys" ] || refuse "$keys is a symbolic link"
 mkdir -p "$keys"
@@ -88,7 +97,8 @@ chmod 0755 "$keys"
     for listener in $listen; do
         echo "ListenAddress $listener"
     done
-    echo "HostKey $key"
+    echo "HostKey $state/ssh_host_ed25519_key"
+    echo "HostKey $state/ssh_host_rsa_key"
     echo "PasswordAuthentication $SSH_PASSWORD"
     echo "PermitRootLogin $SSH_ROOT_LOGIN"
     echo "KbdInteractiveAuthentication no"
@@ -101,8 +111,10 @@ chmod 0755 "$keys"
     echo "PrintMotd no"
     echo "PrintLastLog no"
     echo "PidFile none"
-    # The root carries no /etc/ssh/moduli for the group-exchange methods.
-    echo "KexAlgorithms -diffie-hellman-group-exchange-sha1,diffie-hellman-group-exchange-sha256"
+    # OpenSSH 10's sshd offers no finite-field Diffie-Hellman by default; group14-sha256,
+    # a fixed group, is back for older clients. The group-exchange methods stay off: the
+    # root carries no /etc/ssh/moduli.
+    echo "KexAlgorithms +diffie-hellman-group14-sha256"
     echo "Subsystem sftp /usr/lib/sftp-server"
     # Last, as a Match block runs to the end of the file.
     echo "Match User root,mica"
