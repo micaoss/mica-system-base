@@ -28,8 +28,8 @@ const logEnv = (lines: string[] | undefined, data?: string): { code: number, out
     writeFileSync(settings, lines.join('\n'))
   return exec(['sh', join(MICA, 'mica-log-env')], env(data))
 }
-const assignments = (persistent: string, max: number, remote = '', protocol = 'udp'): string =>
-  `LOG_PERSISTENT=${persistent}\nLOG_MAX_KIB=${max}\nLOG_REMOTE=${remote}\nLOG_REMOTE_PROTOCOL=${protocol}\n`
+const assignments = (persistent: string, max: number, remote = '', protocol = 'udp', largest = 16384): string =>
+  `LOG_PERSISTENT=${persistent}\nLOG_MAX_KIB=${max}\nLOG_REMOTE=${remote}\nLOG_REMOTE_PROTOCOL=${protocol}\nLOG_MAX_KIB_LIMIT=${largest}\n`
 mkdirSync(dropins)
 
 describe('mica-log-env', () => {
@@ -39,7 +39,11 @@ describe('mica-log-env', () => {
     // A DATA of this host's /: an eighth of it clamped to 32-256 MiB, a quarter of that.
     const [blocks, size] = exec(['stat', '-f', '-c', '%b %S', '/'], { PATH: SYSTEM_PATH }).out.trim().split(' ').map(Number) as [number, number]
     const limit = Math.min(Math.max(Math.floor(blocks * Math.floor(size / 1024) / 8), 32768), 262144)
-    expect(logEnv(undefined, '/')).toEqual({ code: 0, out: assignments('yes', Math.min(Math.floor(limit / 4), 32768)) })
+    expect(logEnv(undefined, '/')).toEqual({ code: 0, out: assignments('yes', Math.min(Math.floor(limit / 4), 32768), '', 'udp', Math.floor(limit / 2)) })
+    // The largest cap, half the limit, is printed on a refusal too.
+    const refused = logEnv(['LOG_PERSISTENT=maybe'], '/')
+    expect(refused.code).toBe(1)
+    expect(refused.out.startsWith(assignments('no', Math.min(Math.floor(limit / 4), 32768), '', 'udp', Math.floor(limit / 2)))).toBe(true)
   })
 
   test('micad\'s file wins over a drop-in, which wins over the image; quotes are taken off', () => {
@@ -65,6 +69,7 @@ describe('mica-log-env', () => {
       ['LOG_MAX_KIB=512'],
       ['LOG_MAX_KIB=16385'],
       ['LOG_MAX_KIB=08192'],
+      ['LOG_MAX_KIB_LIMIT=262144'],
     ]) {
       const ran = logEnv(lines)
       expect(ran.code).toBe(1)
@@ -86,6 +91,15 @@ function copy(source: string, name: string, replacements: Record<string, string>
 }
 writeFileSync(join(box.dir, 'mica-log-env'), readFileSync(join(MICA, 'mica-log-env')))
 exec(['chmod', '0755', join(box.dir, 'mica-log-env')], { PATH: SYSTEM_PATH })
+
+// Both inits eval mica-log-env's whole output, LOG_MAX_KIB_LIMIT included, under
+// set -eu: the cases below run with it, and it changes nothing they do.
+test('the inits eval every line mica-log-env prints, the largest cap with them', () => {
+  rmSync(settings, { force: true })
+  expect(exec(['sh', join(box.dir, 'mica-log-env')], env()).out).toContain('\nLOG_MAX_KIB_LIMIT=16384\n')
+  for (const name of [join(OPENRC, 'usr/lib/mica/mica-syslogd-args'), join(SYSTEMD_PAYLOAD, 'usr/lib/mica/mica-log-settings')])
+    expect(readFileSync(name, 'utf8')).toContain('eval "$settings"')
+})
 
 describe('mica-syslogd-args', () => {
   const script = copy(join(OPENRC, 'usr/lib/mica/mica-syslogd-args'), 'mica-syslogd-args', {})

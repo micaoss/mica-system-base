@@ -5,6 +5,8 @@
 #   LOG_MAX_KIB=<n>              the cap of the log on DATA, in KiB
 #   LOG_REMOTE=<address>:<port>  a syslog collector, IPv4 or [IPv6]; empty: none
 #   LOG_REMOTE_PROTOCOL=udp|tcp  how to reach it
+#   LOG_MAX_KIB_LIMIT=<n>        the largest LOG_MAX_KIB this DATA takes, in KiB: for
+#                                micad to show, never read from a file
 # Read in order, a later file's keys winning: the image's /usr/lib/mica/log/log.env,
 # then /usr/lib/mica/log/log.d/*.env (a package's defaults, such as
 # mica-storage-ubi's), then micad's /var/lib/mica/log/log.env. Each line is a comment,
@@ -34,7 +36,8 @@ fi
 
 refuse() {
     echo "mica-log-env: $*; the log stays in RAM and nothing is forwarded" >&2
-    printf 'LOG_PERSISTENT=no\nLOG_MAX_KIB=%s\nLOG_REMOTE=\nLOG_REMOTE_PROTOCOL=udp\n' $((limit / 4 > 32768 ? 32768 : limit / 4))
+    printf 'LOG_PERSISTENT=no\nLOG_MAX_KIB=%s\nLOG_REMOTE=\nLOG_REMOTE_PROTOCOL=udp\nLOG_MAX_KIB_LIMIT=%s\n' \
+        $((limit / 4 > 32768 ? 32768 : limit / 4)) $((limit / 2))
     exit 1
 }
 
@@ -93,5 +96,5 @@ if [ -n "$LOG_REMOTE" ]; then
     esac
 fi
 
-printf 'LOG_PERSISTENT=%s\nLOG_MAX_KIB=%s\nLOG_REMOTE=%s\nLOG_REMOTE_PROTOCOL=%s\n' \
-    "$LOG_PERSISTENT" "$LOG_MAX_KIB" "$LOG_REMOTE" "$LOG_REMOTE_PROTOCOL"
+printf 'LOG_PERSISTENT=%s\nLOG_MAX_KIB=%s\nLOG_REMOTE=%s\nLOG_REMOTE_PROTOCOL=%s\nLOG_MAX_KIB_LIMIT=%s\n' \
+    "$LOG_PERSISTENT" "$LOG_MAX_KIB" "$LOG_REMOTE" "$LOG_REMOTE_PROTOCOL" $((limit / 2))
