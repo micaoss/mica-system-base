@@ -336,9 +336,9 @@ describe('mica-sshd-prestart of mica-openssh', () => {
   const script = join(REPO, 'debs/mica-openssh/mica-sshd-prestart')
   const bin = join(box.dir, 'openssh-bin')
   const trace = join(box.dir, 'openssh-trace')
-  // ssh-keygen writes the key and <file>.pub, and refuses an existing file; sshd -t
-  // fails on demand.
-  fake(bin, 'ssh-keygen', 'printf \'ssh-keygen %s\\n\' "$*" >>"$MICA_TEST_TRACE"\nfor key; do :; done\n[ ! -e "$key" ] || exit 1\nprintf \'generated %s\\n\' "$3" >"$key"\nprintf \'public\\n\' >"$key.pub"')
+  // ssh-keygen writes the key and <file>.pub, and refuses an existing file; -y prints
+  // the public half of a key (fails on demand); sshd -t fails on demand.
+  fake(bin, 'ssh-keygen', 'printf \'ssh-keygen %s\\n\' "$*" >>"$MICA_TEST_TRACE"\nfor key; do :; done\nif [ "$1" = -y ]; then [ -z "${MICA_TEST_KEYGEN_Y_FAIL:-}" ] || exit 1; printf \'public of %s\\n\' "$(cat "$key")"; exit; fi\n[ ! -e "$key" ] || exit 1\nprintf \'generated %s\\n\' "$3" >"$key"\nprintf \'public\\n\' >"$key.pub"')
   fake(bin, 'sshd', 'printf \'sshd %s\\n\' "$*" >>"$MICA_TEST_TRACE"\n[ -z "${MICA_TEST_SSHD_FAIL:-}" ]')
   const newCase = (name: string): { state: string, key: string, rsa: string, config: string } => {
     const state = join(box.dir, 'openssh', name, 'ssh')
@@ -397,13 +397,45 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     expect(readFileSync(c.rsa, 'utf8')).toBe('generated rsa\n')
     expect(mode(c.key)).toBe('600')
     expect(mode(c.rsa)).toBe('600')
-    expect(readdirSync(c.state).sort()).toEqual(['ssh_host_ed25519_key', 'ssh_host_rsa_key'])
+    expect(readdirSync(c.state).sort()).toEqual(['ssh_host_ed25519_key', 'ssh_host_ed25519_key.pub', 'ssh_host_rsa_key', 'ssh_host_rsa_key.pub'])
     expect(readFileSync(trace, 'utf8')).toContain(`ssh-keygen -q -t ed25519 -N  -C  -f ${c.key}.new\n`)
     expect(readFileSync(trace, 'utf8')).toContain(`ssh-keygen -q -t rsa -b 3072 -N  -C  -f ${c.rsa}.new\n`)
+    // Each public key from its key, 0644, for an agent that never reads the key.
+    expect(readFileSync(`${c.key}.pub`, 'utf8')).toBe('public of generated ed25519\n')
+    expect(readFileSync(`${c.rsa}.pub`, 'utf8')).toBe('public of generated rsa\n')
+    expect(mode(`${c.key}.pub`)).toBe('644')
+    expect(mode(`${c.rsa}.pub`)).toBe('644')
     writeFileSync(trace, '')
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.key, 'utf8')).toBe('generated ed25519\n')
+    expect(readFileSync(`${c.key}.pub`, 'utf8')).toBe('public of generated ed25519\n')
     expect(readFileSync(trace, 'utf8')).not.toContain('ssh-keygen')
+  })
+
+  // A device from before the public keys: each key gets its .pub back, the keys kept.
+  test('keys without their public keys get them back from ssh-keygen -y', () => {
+    const c = newCase('no-pub')
+    writeFileSync(c.key, 'existing ed25519\n', { mode: 0o600 })
+    writeFileSync(c.rsa, 'existing rsa\n', { mode: 0o600 })
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(c.key, 'utf8')).toBe('existing ed25519\n')
+    expect(readFileSync(c.rsa, 'utf8')).toBe('existing rsa\n')
+    expect(readFileSync(`${c.key}.pub`, 'utf8')).toBe('public of existing ed25519\n')
+    expect(readFileSync(`${c.rsa}.pub`, 'utf8')).toBe('public of existing rsa\n')
+    expect(mode(`${c.key}.pub`)).toBe('644')
+    expect(readFileSync(trace, 'utf8').split('\n').filter(line => line.startsWith('ssh-keygen'))).toEqual([`ssh-keygen -y -f ${c.key}`, `ssh-keygen -y -f ${c.rsa}`])
+    // An existing public key is kept as it is.
+    writeFileSync(`${c.rsa}.pub`, 'kept\n')
+    expect(prestart(c, SSHD_ENV)).toBe(0)
+    expect(readFileSync(`${c.rsa}.pub`, 'utf8')).toBe('kept\n')
+  })
+
+  test('a failed ssh-keygen -y leaves no public key and starts nothing', () => {
+    const c = newCase('pub-fails')
+    writeFileSync(c.key, 'existing ed25519\n', { mode: 0o600 })
+    expect(prestart(c, { ...SSHD_ENV, MICA_TEST_KEYGEN_Y_FAIL: '1' })).not.toBe(0)
+    expect(readdirSync(c.state)).toEqual(['ssh_host_ed25519_key'])
+    expect(existsSync(c.config)).toBe(false)
   })
 
   // A device from before the RSA key keeps its ed25519 key and gains the RSA one.
@@ -413,7 +445,7 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     expect(prestart(c, SSHD_ENV)).toBe(0)
     expect(readFileSync(c.key, 'utf8')).toBe('existing ed25519\n')
     expect(readFileSync(c.rsa, 'utf8')).toBe('generated rsa\n')
-    expect(readFileSync(trace, 'utf8').split('\n').filter(line => line.startsWith('ssh-keygen'))).toEqual([`ssh-keygen -q -t rsa -b 3072 -N  -C  -f ${c.rsa}.new`])
+    expect(readFileSync(trace, 'utf8').split('\n').filter(line => line.startsWith('ssh-keygen -q'))).toEqual([`ssh-keygen -q -t rsa -b 3072 -N  -C  -f ${c.rsa}.new`])
     expect(readFileSync(c.config, 'utf8')).toBe(rendered(c, ['0.0.0.0:22', '[::]:22'], 'no', 'yes'))
   })
 
@@ -431,6 +463,17 @@ describe('mica-sshd-prestart of mica-openssh', () => {
     symlinkSync(join(linked.state, '..', 'elsewhere'), linked.key)
     expect(prestart(linked, SSHD_ENV)).not.toBe(0)
     expect(existsSync(linked.config)).toBe(false)
+    const writablePub = newCase('writable-pub')
+    writeFileSync(writablePub.key, 'mine\n', { mode: 0o600 })
+    writeFileSync(`${writablePub.key}.pub`, 'mine\n', { mode: 0o666 })
+    chmodSync(`${writablePub.key}.pub`, 0o666)
+    expect(prestart(writablePub, SSHD_ENV)).not.toBe(0)
+    expect(existsSync(writablePub.config)).toBe(false)
+    const linkedPub = newCase('symlink-pub')
+    writeFileSync(linkedPub.key, 'mine\n', { mode: 0o600 })
+    symlinkSync(linkedPub.key, `${linkedPub.key}.pub`)
+    expect(prestart(linkedPub, SSHD_ENV)).not.toBe(0)
+    expect(existsSync(linkedPub.config)).toBe(false)
     const readableRsa = newCase('readable-rsa')
     writeFileSync(readableRsa.rsa, 'mine\n', { mode: 0o644 })
     chmodSync(readableRsa.rsa, 0o644)

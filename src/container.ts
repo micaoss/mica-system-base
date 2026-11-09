@@ -780,6 +780,13 @@ hostkey browser -i clientrsa -o HostKeyAlgorithms=rsa-sha2-256,ssh-rsa -o Pubkey
 hostkey group14 -i client -o KexAlgorithms=diffie-hellman-group14-sha256
 ssh-keyscan -t ed25519 -p 2222 127.0.0.1 2>&1 | tee -a ssh.log | awk '/ssh-ed25519/ {print $2, $3}' >served.pub
 [ -s served.pub ] && [ "$(cat served.pub)" = "$(cut -d' ' -f1,2 seeded.pub)" ] && echo "ssh-hostkey-kept: yes" >>ssh.log || echo "ssh-hostkey-kept: no" >>ssh.log
+# Each host key's public half beside it on STATE, root's and 0644, as served: the
+# seeded ed25519 key came without one, the RSA key was made at this boot.
+for type in ed25519 rsa; do
+  pub=$($ssh root@127.0.0.1 "stat -c '%a %U' /mnt/data/state/ssh/ssh_host_\${type}_key.pub && cut -d' ' -f1,2 /mnt/data/state/ssh/ssh_host_\${type}_key.pub" 2>/dev/null | tr '\\n' ' ')
+  served=$(ssh-keyscan -t $type -p 2222 127.0.0.1 2>/dev/null | awk '!/^#/ {print $2, $3}')
+  [ -n "$served" ] && [ "$pub" = "644 root $served " ] && echo "ssh-hostkey-pub-$type: yes" >>ssh.log || echo "ssh-hostkey-pub-$type: no ($pub)" >>ssh.log
+done
 # The agent's key for root and mica opens neither.
 for user in root mica; do
   ssh -p 2222 -i agent -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 $user@127.0.0.1 true >/dev/null 2>&1 &&
@@ -935,7 +942,7 @@ async function bootTest(argv: string[]): Promise<number> {
       fail('a step of the sudo checks failed (_out/boot-test-ssh.log)')
     // Host keys: ed25519 by default, and the one kept on STATE; RSA (SHA-2) for a client
     // offering nothing else; group14-sha256 for a client with no newer key exchange.
-    for (const line of ['ssh-hostkey-default: kex: host key algorithm: ssh-ed25519', 'ssh-hostkey-default: gcpuser in', 'ssh-hostkey-browser: kex: host key algorithm: rsa-sha2-256', 'ssh-hostkey-browser: gcpuser in', 'ssh-hostkey-group14: kex: algorithm: diffie-hellman-group14-sha256', 'ssh-hostkey-group14: gcpuser in', 'ssh-hostkey-kept: yes']) {
+    for (const line of ['ssh-hostkey-default: kex: host key algorithm: ssh-ed25519', 'ssh-hostkey-default: gcpuser in', 'ssh-hostkey-browser: kex: host key algorithm: rsa-sha2-256', 'ssh-hostkey-browser: gcpuser in', 'ssh-hostkey-group14: kex: algorithm: diffie-hellman-group14-sha256', 'ssh-hostkey-group14: gcpuser in', 'ssh-hostkey-kept: yes', 'ssh-hostkey-pub-ed25519: yes', 'ssh-hostkey-pub-rsa: yes']) {
       if (!ssh.split('\n').includes(line))
         fail(`no ${line} through mica-sshd (_out/boot-test-ssh.log)`)
     }

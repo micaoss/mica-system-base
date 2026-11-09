@@ -16,8 +16,9 @@ Description: Mica OS SSH: OpenSSH, started at boot as micad last configured it
  mica-sshd.service, its prestart /usr/lib/mica/mica-sshd-prestart and the preset
  that enables the unit. It starts at boot when the settings micad saves in
  /var/lib/mica/ssh/sshd.env on DATA turn SSH on, with or without micad, and is off
- until they do; micad restarts it for new settings and stops it. The prestart makes the ed25519 host key on the
- STATE partition at the first start and renders /run/mica/sshd_config. The unit
+ until they do; micad restarts it for new settings and stops it. The prestart makes the ed25519 and RSA host keys on the
+ STATE partition at the first start, keeps each public key beside its key as
+ <key>.pub for a provisioning agent to publish, and renders /run/mica/sshd_config. The unit
  requires mica-shadow-reconcile.service, so the shadow file is built in RAM
  before a login can read it. No ssh client; SFTP is the root's
  /usr/lib/sftp-server.

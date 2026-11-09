@@ -13,8 +13,11 @@
 # and renamed, so an interrupted start leaves no truncated key; an existing key is
 # kept. ed25519 is what clients take by default; RSA (rsa-sha2-256/512, never SHA-1
 # ssh-rsa) is for clients that offer nothing else, such as GCE's SSH-in-browser.
-# Symbolic links, foreign owners, a
-# group/world-writable directory and group/world-readable keys are refused. Makes
+# Each key's public half sits beside it as <key>.pub, 0644, for a provisioning agent
+# (mica-gce-agent) to publish without reading the private key; a key without one, as
+# on a device from before, gets it back from `ssh-keygen -y`, the same way.
+# Symbolic links, foreign owners, a group/world-writable directory or public key and
+# group/world-readable keys are refused. Makes
 # /run/mica/authorized-keys, where a provisioning agent (mica-gce-agent) puts the
 # keys of a login account as <user>, root-owned 0644 or the user's own 0600; root
 # and mica never take keys from there, only from their own ~/.ssh. Then renders
@@ -69,17 +72,28 @@ host_key() {
     if [ -e "$key" ] || [ -L "$key" ]; then
         private "$key" 077
         [ -f "$key" ] || refuse "$key is not a regular file"
+    else
+        shift
+        rm -f "$key.new" "$key.new.pub"
+        ssh-keygen -q "$@" -N '' -C '' -f "$key.new" >/dev/null ||
+            { rm -f "$key.new" "$key.new.pub"; exit 1; }
+        rm -f "$key.new.pub"
+        echo "mica-sshd-prestart: generated $key"
+        chmod 0600 "$key.new"
+        sync "$key.new"
+        mv "$key.new" "$key"
+        sync -f "$state"
+    fi
+    if [ -e "$key.pub" ] || [ -L "$key.pub" ]; then
+        private "$key.pub" 022
+        [ -f "$key.pub" ] || refuse "$key.pub is not a regular file"
         return 0
     fi
-    shift
-    rm -f "$key.new" "$key.new.pub"
-    ssh-keygen -q "$@" -N '' -C '' -f "$key.new" >/dev/null ||
-        { rm -f "$key.new" "$key.new.pub"; exit 1; }
-    rm -f "$key.new.pub"
-    echo "mica-sshd-prestart: generated $key"
-    chmod 0600 "$key.new"
-    sync "$key.new"
-    mv "$key.new" "$key"
+    rm -f "$key.pub.new"
+    ssh-keygen -y -f "$key" >"$key.pub.new" || { rm -f "$key.pub.new"; exit 1; }
+    chmod 0644 "$key.pub.new"
+    sync "$key.pub.new"
+    mv "$key.pub.new" "$key.pub"
     sync -f "$state"
 }
 host_key ed25519 -t ed25519
