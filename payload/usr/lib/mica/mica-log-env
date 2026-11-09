@@ -1,0 +1,97 @@
+#!/bin/sh
+# The log settings both inits apply (mica-systemd's mica-log-settings, mica-openrc's
+# mica-syslogd), printed as shell assignments for them to eval:
+#   LOG_PERSISTENT=yes|no        the log on DATA (/var/log), or in RAM only
+#   LOG_MAX_KIB=<n>              the cap of the log on DATA, in KiB
+#   LOG_REMOTE=<address>:<port>  a syslog collector, IPv4 or [IPv6]; empty: none
+#   LOG_REMOTE_PROTOCOL=udp|tcp  how to reach it
+# Read in order, a later file's keys winning: the image's /usr/lib/mica/log/log.env,
+# then /usr/lib/mica/log/log.d/*.env (a package's defaults, such as
+# mica-storage-ubi's), then micad's /var/lib/mica/log/log.env. Each line is a comment,
+# empty, or KEY=VALUE with VALUE optionally in double quotes; nothing is run.
+#
+# An empty LOG_MAX_KIB is a quarter of DATA project 101's byte limit (an eighth of
+# DATA's capacity, clamped to 32-256 MiB), at most 32 MiB: 8 MiB on the smallest
+# DATA. A set one is 1024 KiB at least and half that limit at most. Anything else --
+# an unknown key, a bad value, an unreadable file -- is refused: the reason goes to
+# stderr, the exit status is 1, and the assignments printed are the safe ones, the
+# log in RAM and nothing forwarded.
+set -u
+defaults=${MICA_LOG_DEFAULTS:-/usr/lib/mica/log/log.env}
+dropins=${MICA_LOG_DROPINS:-/usr/lib/mica/log/log.d}
+settings=${MICA_LOG_SETTINGS:-/var/lib/mica/log/log.env}
+data=${MICA_DATA_ROOT:-/mnt/data}
+
+LOG_PERSISTENT=no LOG_MAX_KIB= LOG_REMOTE= LOG_REMOTE_PROTOCOL=
+
+# Project 101's byte limit in KiB, from DATA's capacity; the smallest without DATA.
+limit=32768
+if blocks=$(stat -f -c '%b %S' "$data" 2>/dev/null); then
+    limit=$((${blocks% *} * (${blocks#* } / 1024) / 8))
+    [ "$limit" -ge 32768 ] || limit=32768
+    [ "$limit" -le 262144 ] || limit=262144
+fi
+
+refuse() {
+    echo "mica-log-env: $*; the log stays in RAM and nothing is forwarded" >&2
+    printf 'LOG_PERSISTENT=no\nLOG_MAX_KIB=%s\nLOG_REMOTE=\nLOG_REMOTE_PROTOCOL=udp\n' $((limit / 4 > 32768 ? 32768 : limit / 4))
+    exit 1
+}
+
+# read_file <path>: its assignments, over the ones before.
+read_file() {
+    [ -r "$1" ] || refuse "$1 is not readable"
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in '' | '#'*) continue ;; esac
+        key=${line%%=*} value=${line#*=}
+        [ "$key" != "$line" ] || refuse "$1: '$line' is not KEY=VALUE"
+        case "$value" in \"*\") value=${value#\"} value=${value%\"} ;; esac
+        case "$value" in *[!A-Za-z0-9.:\[\]]*) refuse "$1: $key has a character other than letters, digits, '.', ':', '[' and ']'" ;; esac
+        case "$key" in
+        LOG_PERSISTENT | LOG_MAX_KIB | LOG_REMOTE | LOG_REMOTE_PROTOCOL) eval "$key=\$value" ;;
+        *) refuse "$1: $key is not a log setting" ;;
+        esac
+    done <"$1"
+}
+
+[ ! -e "$defaults" ] || read_file "$defaults"
+for file in "$dropins"/*.env; do
+    [ ! -e "$file" ] || read_file "$file"
+done
+[ ! -e "$settings" ] || read_file "$settings"
+
+case "$LOG_PERSISTENT" in yes | no) ;; *) refuse "LOG_PERSISTENT is '$LOG_PERSISTENT', not yes or no" ;; esac
+case "$LOG_MAX_KIB" in
+'') LOG_MAX_KIB=$((limit / 4 > 32768 ? 32768 : limit / 4)) ;;
+*[!0-9]* | 0*) refuse "LOG_MAX_KIB is '$LOG_MAX_KIB', not a number of KiB" ;;
+*)
+    [ "${#LOG_MAX_KIB}" -le 7 ] && [ "$LOG_MAX_KIB" -ge 1024 ] && [ "$LOG_MAX_KIB" -le $((limit / 2)) ] ||
+        refuse "LOG_MAX_KIB is $LOG_MAX_KIB, outside 1024..$((limit / 2)) (half of DATA/var's limit)"
+    ;;
+esac
+case "$LOG_REMOTE_PROTOCOL" in '') LOG_REMOTE_PROTOCOL=udp ;; udp | tcp) ;; *) refuse "LOG_REMOTE_PROTOCOL is '$LOG_REMOTE_PROTOCOL', not udp or tcp" ;; esac
+if [ -n "$LOG_REMOTE" ]; then
+    port=${LOG_REMOTE##*:} address=${LOG_REMOTE%:*}
+    bad="LOG_REMOTE is '$LOG_REMOTE', neither <IPv4>:<port> nor [<IPv6>]:<port>"
+    case "$port" in '' | *[!0-9]* | 0*) refuse "$bad" ;; esac
+    [ "${#port}" -le 5 ] && [ "$port" -le 65535 ] || refuse "$bad"
+    case "$address" in
+    \[*:*\])
+        inner=${address#[} inner=${inner%]}
+        case "$inner" in *[!0-9a-fA-F:]*) refuse "$bad" ;; esac
+        ;;
+    *[!0-9.]* | '') refuse "$bad" ;;
+    *)
+        set -f; IFS=. ; set -- $address; IFS='
+'; set +f
+        [ "$#" = 4 ] || refuse "$bad"
+        for octet; do
+            case "$octet" in '' | *[!0-9]*) refuse "$bad" ;; esac
+            [ "${#octet}" -le 3 ] && [ "$octet" -le 255 ] || refuse "$bad"
+        done
+        ;;
+    esac
+fi
+
+printf 'LOG_PERSISTENT=%s\nLOG_MAX_KIB=%s\nLOG_REMOTE=%s\nLOG_REMOTE_PROTOCOL=%s\n' \
+    "$LOG_PERSISTENT" "$LOG_MAX_KIB" "$LOG_REMOTE" "$LOG_REMOTE_PROTOCOL"

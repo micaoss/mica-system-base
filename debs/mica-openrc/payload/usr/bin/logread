@@ -1,1 +1,55 @@
-busybox
+#!/bin/sh
+# logread for mica-syslogd, whichever way it keeps the log: busybox logread while
+# syslogd has its RAM ring (SysV shared memory key 0x414e4547), the files on DATA
+# otherwise (/var/log/messages.2 .. .0, then messages).
+#   logread        the whole log
+#   logread -f     the whole log, then what comes (-F as -f)
+#   logread -b 0   this boot's part: from the last mica-boot marker mica-syslogd logs
+#   logread -b -1  the previous boot's part: from the marker before it to the last
+set -eu
+log=${MICA_LOG_DIR:-/var/log}
+shm=${MICA_SYSVIPC_SHM:-/proc/sysvipc/shm}
+
+usage() {
+    echo "usage: logread [-f | -b 0 | -b -1]" >&2
+    exit 2
+}
+
+follow= boot=
+while getopts fFb: option; do
+    case "$option" in
+    f | F) follow=1 ;;
+    b) boot=$OPTARG ;;
+    *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+[ "$#" = 0 ] || usage
+case "$boot" in '' | 0 | -1) ;; *) usage ;; esac
+[ -z "$follow" ] || [ -z "$boot" ] || usage
+
+ring() {
+    [ -r "$shm" ] && awk '$1 == 1095648583 { found = 1 } END { exit !found }' "$shm"
+}
+
+files() {
+    for name in messages.2 messages.1 messages.0 messages; do
+        [ ! -f "$log/$name" ] || cat "$log/$name"
+    done
+}
+
+if [ -n "$follow" ]; then
+    if ring; then exec busybox logread -f; fi
+    files
+    exec tail -n 0 -F "$log/messages"
+fi
+if [ -z "$boot" ]; then
+    if ring; then exec busybox logread; fi
+    files
+    exit 0
+fi
+{ if ring; then busybox logread; else files; fi; } |
+    awk -v want="$boot" '
+        / mica-boot: boot / { previous = current; current = "" }
+        { current = current $0 ORS }
+        END { printf "%s", (want == "-1" ? previous : current) }'

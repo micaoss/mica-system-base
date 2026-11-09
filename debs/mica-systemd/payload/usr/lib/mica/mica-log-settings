@@ -1,0 +1,64 @@
+#!/bin/sh
+# mica-log-settings.service: the log settings (mica-log-env; an invalid file keeps the
+# journal in RAM and forwards nothing) applied to journald and systemd-netlogd. Run at
+# boot before journald flushes to /var, and again whenever micad has saved new settings.
+#   LOG_PERSISTENT  yes: /var/log/journal exists, so journald (Storage=auto) keeps the
+#                   journal there; no: the journal is taken back to RAM and the
+#                   directory removed.
+#   LOG_MAX_KIB     SystemMaxUse, with an eighth of it as SystemMaxFileSize, in
+#                   /run/systemd/journald.conf.d/50-mica.conf -- none for the image's
+#                   8 MiB; journald restarts when the cap changes.
+#   LOG_REMOTE      systemd-netlogd's collector, RFC 5424 over LOG_REMOTE_PROTOCOL, in
+#                   /run/systemd/netlogd.conf.d/50-mica.conf, which the forwarder's
+#                   drop-in requires; none stops it.
+set -eu
+journald=${MICA_JOURNALD_DROPINS:-/run/systemd/journald.conf.d}/50-mica.conf
+netlogd=${MICA_NETLOGD_DROPINS:-/run/systemd/netlogd.conf.d}/50-mica.conf
+journal=${MICA_JOURNAL_DIR:-/var/log/journal}
+
+settings=$(/usr/lib/mica/mica-log-env) || :
+eval "$settings"
+
+# put <file> <content>: the content written when it differs (none: the file removed);
+# true when the file changed.
+put() {
+    if [ -z "$2" ]; then
+        [ -e "$1" ] || return 1
+        rm -f "$1"
+        return 0
+    fi
+    if [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; then return 1; fi
+    mkdir -p "${1%/*}"
+    printf '%s\n' "$2" >"$1.new"
+    mv "$1.new" "$1"
+}
+
+active() {
+    systemctl -q is-active "$1" 2>/dev/null
+}
+
+cap=
+[ "$LOG_MAX_KIB" = 8192 ] ||
+    cap=$(printf '[Journal]\nSystemMaxUse=%sK\nSystemMaxFileSize=%sK' "$LOG_MAX_KIB" $((LOG_MAX_KIB / 8)))
+if put "$journald" "$cap" && active systemd-journald.service; then
+    systemctl restart systemd-journald.service
+fi
+
+if [ "$LOG_PERSISTENT" = yes ]; then
+    [ -d "$journal" ] || install -d -m 2755 -g systemd-journal "$journal"
+    if active systemd-journald.service; then journalctl --flush; fi
+elif [ -e "$journal" ]; then
+    if active systemd-journald.service; then journalctl --relinquish-var; fi
+    rm -rf "$journal"
+fi
+
+remote=
+[ -z "$LOG_REMOTE" ] ||
+    remote=$(printf '[Network]\nAddress=%s\nProtocol=%s\nLogFormat=rfc5424' "$LOG_REMOTE" "$LOG_REMOTE_PROTOCOL")
+if put "$netlogd" "$remote"; then
+    if [ -n "$remote" ]; then
+        systemctl --no-block restart systemd-netlogd.service
+    elif active systemd-netlogd.service; then
+        systemctl --no-block stop systemd-netlogd.service
+    fi
+fi

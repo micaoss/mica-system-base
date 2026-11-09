@@ -1,16 +1,16 @@
 Package: mica-storage-ubi
-Version: 13.8+deb13u7-mica3
-Source-Date-Epoch: 1794033281
+Version: 13.8+deb13u7-mica4
+Source-Date-Epoch: 1794341201
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
 Priority: optional
 Provides: e2fsprogs, fdisk
 Conflicts: e2fsprogs, fdisk
-Description: Mica OS storage in UBI on raw NAND: no ext4 or partition tools
+Description: Mica OS storage in UBI on raw NAND: no ext4 or partition tools, log in RAM
  A board that keeps its system in UBI volumes on raw NAND has DATA on UBIFS and
  no partition table: there is no ext4 file system for e2fsck or resize2fs and no
- partition for sfdisk to grow. This package carries no files; it provides
+ partition for sfdisk to grow. This package provides
  e2fsprogs, which mica-system depends on for an ext4 DATA, and fdisk, which
  mica-openrc depends on to grow DATA's partition, so a root for such a board
  installs neither.
@@ -20,3 +20,7 @@ Description: Mica OS storage in UBI on raw NAND: no ext4 or partition tools
  number and grows only those marked x-systemd.growfs, and a UBI board does none
  of that. A product that wants e2fsprogs or fdisk itself installs them in place
  of this package.
+ .
+ Its one file, /usr/lib/mica/log/log.d/10-ubi.env, keeps the system log in RAM by
+ default (LOG_PERSISTENT=no): raw NAND wears with every write, and its DATA is
+ small. micad's log settings may still turn it on.

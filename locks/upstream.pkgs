@@ -15,6 +15,7 @@ udev
 systemd-resolved
 systemd-timesyncd
 systemd-repart
+systemd-netlogd
 # OpenRC: mica-openrc's Debian half.
 openrc
 fdisk

@@ -1,0 +1,18 @@
+[Unit]
+Description=Apply the log settings: the journal on DATA and its forwarding
+Documentation=file:/usr/lib/mica/mica-log-settings
+# Once /var and /var/lib/mica are bound, and before journald flushes its RAM journal
+# to /var/log/journal.
+DefaultDependencies=no
+After=systemd-journald.service var.mount var-lib-mica.mount
+Requires=var.mount var-lib-mica.mount
+Before=systemd-journal-flush.service sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/mica/mica-log-settings
+
+[Install]
+WantedBy=sysinit.target

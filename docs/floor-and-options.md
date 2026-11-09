@@ -80,7 +80,7 @@ Every product installs exactly one.
 | Binds and seeds | mount units: `/mica`, `/mica/containers`, `/srv`, STATE's hostname, `/var`, `/var/lib/mica`, `/root`, `/home` | `mica-mounts`, in the same order, then the `tmpfiles.d` entries |
 | Network | networkd, DHCP by default; resolved; `systemd-networkd-wait-online` masked, so nothing waits for a link and `network-online.target` comes with `network.target` | `/etc/network/interfaces` (a link to `/var/lib/mica/network/interfaces`, which micad writes) applied by busybox `ifup -a`; until it exists, DHCP on every `eth*` with busybox `udhcpc`; DNS in `/run/mica/resolv.conf` |
 | Time | timesyncd, on the NTP servers micad saves in `/var/lib/mica/time/timesyncd.conf` (linked as `/etc/systemd/timesyncd.conf.d/60-mica-servers.conf`) | busybox `ntpd` (`mica-ntpd`) on the `ntp_servers` micad saves in `/var/lib/mica/time/ntpd.conf`, Debian's pool until then |
-| Log | journald, volatile | busybox `syslogd` and `klogd` in RAM, read with `logread` |
+| Log | journald, `Storage=auto`: on DATA while `/var/log/journal` exists, which `mica-log-settings` makes or removes from the log settings; forwarded by `systemd-netlogd` | busybox `syslogd` and `klogd`, on DATA (`/var/log/messages` and three rotations) or in RAM from the log settings, forwarded over UDP; read with `logread` |
 | Watchdog | systemd's hardware watchdog | busybox `watchdog`, 90 s |
 | Health gate | `mica-health.service`, `mica-boot-failure` on failure, both writing to the journal, their verdict echoed to the console best effort (two seconds at most); `/etc/mica/health.conf` requires the init up and not in `maintenance` or `stopping`, and `micad` answering where the image carries it (`if-installed=micad`), with no wait for the boot or the network to settle | `mica-health`, last, the same, in the foreground: its lines reach the console |
 | Resource limits | no service keeps `CAP_SYS_RESOURCE` (DATA's project quotas hold) | the same, `/etc/rc.conf.d/mica.conf` |
@@ -145,6 +145,46 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   stanza's `udhcpc_opts` and `mica-wifi-client` pass `-O mtu`, and mica-udhcpc runs
   `ip link set dev <interface> mtu <mtu>` on `bound` and `renew` before the address (a value
   the link refuses is logged). A lease without an MTU leaves the link as it is.
+
+**Log.** Both inits apply the same log settings, which `/usr/lib/mica/mica-log-env`
+(mica-system) reads in order, a later file's keys winning: the image's
+`/usr/lib/mica/log/log.env` (`LOG_PERSISTENT=yes`), a package's defaults in
+`/usr/lib/mica/log/log.d/*.env` (mica-storage-ubi's `10-ubi.env`, `LOG_PERSISTENT=no`: raw NAND
+keeps the log in RAM), then micad's `/var/lib/mica/log/log.env` on STATE. Each line is a
+comment, empty or `KEY=VALUE` (the value optionally in double quotes); nothing is run.
+
+| Key | Values | Default |
+|---|---|---|
+| `LOG_PERSISTENT` | `yes`: the log on DATA; `no`: in RAM only | `yes` (`no` with mica-storage-ubi) |
+| `LOG_MAX_KIB` | the cap of the log on DATA, 1024 KiB to half of project 101's limit | a quarter of project 101's limit (an eighth of DATA's capacity, clamped to 32–256 MiB), at most 32 MiB: 8 MiB on the smallest DATA |
+| `LOG_REMOTE` | a syslog collector, `<IPv4>:<port>` or `[<IPv6>]:<port>`; empty: none | none |
+| `LOG_REMOTE_PROTOCOL` | `udp` or `tcp` (systemd only) | `udp` |
+
+Anything else -- an unknown key, a bad value, an unreadable file -- is refused with its reason
+on stderr, and the log stays in RAM with nothing forwarded.
+
+- systemd: `/etc/systemd/journald.conf.d/00-mica.conf` sets `Storage=auto`, `SystemMaxUse=8M`,
+  `SystemMaxFileSize=1M` and `MaxLevelStore=info` (no debug messages stored).
+  `mica-log-settings.service` runs after `/var` and `/var/lib/mica` are bound and before
+  `systemd-journal-flush.service`, and again whenever micad restarts it: it makes
+  `/var/log/journal` (`LOG_PERSISTENT=yes`) or, with `journalctl --relinquish-var`, removes
+  it; renders another cap into `/run/systemd/journald.conf.d/50-mica.conf` (`SystemMaxUse`
+  and an eighth of it as `SystemMaxFileSize`) and restarts journald when the cap changes; and
+  renders the collector into `/run/systemd/netlogd.conf.d/50-mica.conf` (RFC 5424 over
+  `LOG_REMOTE_PROTOCOL`), which `systemd-netlogd.service` requires (its drop-in
+  `10-mica.conf`), starting or stopping the forwarder.
+- OpenRC: `mica-syslogd` starts after `mica-mounts`, with `mica-syslogd-args`' arguments.
+  busybox syslogd keeps either its RAM ring (`-C1024`) or a file, never both: on DATA it writes
+  `/var/log/messages` with three rotations, a quarter of the cap each, without debug messages
+  (`-O /var/log/messages -s <LOG_MAX_KIB/4> -b 3 -l 7`). A collector adds `-R <address>:<port>
+  -L`: each message is sent as the local program wrote it, over UDP, without the device's
+  name; `LOG_REMOTE_PROTOCOL=tcp` forwards nothing. Each start logs a boot marker
+  (`mica-boot: boot <boot_id>`). `/usr/bin/logread` reads the ring while it exists and the
+  files otherwise; `logread -f` follows, and `logread -b 0` and `logread -b -1` print this
+  boot's and the previous boot's part, split at the markers.
+- Forwarding sends the log as it is written, unencrypted and unredacted, on both inits:
+  configure a collector only across a VPN or WireGuard tunnel, and never log a secret at its
+  source.
 
 **Accounts.** micad runs each of the user's apps under an account of its own. The image's
 `/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)

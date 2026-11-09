@@ -28,7 +28,7 @@ Building and publishing run on [mica-build-tools](https://github.com/micaoss/mic
 | `mica-ssh` | all | SSH: dropbear, started by micad |
 | `mica-openssh` | amd64, arm64, armhf | SSH: OpenSSH's sshd, started by micad, in place of `mica-ssh` |
 | `mica-sudo` | all | privilege: Debian's sudo for the login admins of `mica-admins`, as micad's switch rules it in `/run/mica/sudoers.d` |
-| `mica-storage-ubi` | armhf | stands in for e2fsprogs and fdisk where DATA is UBIFS |
+| `mica-storage-ubi` | armhf | stands in for e2fsprogs and fdisk where DATA is UBIFS, and keeps the log in RAM there by default |
 | `mica-wifi` | amd64, arm64 | a minimal `wpa_supplicant` |
 | `mica-wifi-ap` | amd64, arm64 | a minimal `hostapd` |
 | `mica-bluetooth` | all | the Bluetooth HCI attach and the pairing keys on STATE |

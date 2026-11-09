@@ -32,7 +32,7 @@ export function basePackages(arch: Arch): string[] {
 export const INITS = {
   systemd: {
     packages: ['mica-systemd'],
-    roots: ['systemd', 'systemd-sysv', 'udev', 'systemd-resolved', 'systemd-timesyncd', 'systemd-repart'],
+    roots: ['systemd', 'systemd-sysv', 'udev', 'systemd-resolved', 'systemd-timesyncd', 'systemd-repart', 'systemd-netlogd'],
   },
   openrc: {
     packages: ['mica-openrc', 'mica-mdev'],

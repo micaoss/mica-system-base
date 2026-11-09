@@ -1,11 +1,11 @@
 Package: mica-systemd
-Version: 257.13-mica14
-Source-Date-Epoch: 1794175559
+Version: 257.13-mica15
+Source-Date-Epoch: 1794341201
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
 Priority: optional
-Depends: mica-system, systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, udev
+Depends: mica-system, systemd, systemd-sysv, systemd-resolved, systemd-repart, systemd-timesyncd, systemd-netlogd, udev
 Provides: mica-init-system
 Conflicts: mica-openrc
 Description: Mica OS on systemd
@@ -14,8 +14,9 @@ Description: Mica OS on systemd
  the DATA layout, the bind mounts of /mica, /mica/containers, /srv, /home,
  /root, /var, /var/lib/mica, /etc/hostname and /usr/local/lib/systemd/system,
  the seed and reconcile services, the health gate and the boot-failure handler,
- the offline provisioning import -- with the default DHCP network, volatile
- journald storage, the network time policy and the NTP servers micad saves
+ the offline provisioning import -- with the default DHCP network, the log
+ settings (mica-log-settings: the journal on DATA or in RAM, capped, and forwarded
+ by systemd-netlogd), the network time policy and the NTP servers micad saves
  on DATA (/var/lib/mica/time/timesyncd.conf, linked as a timesyncd drop-in), the
  hardware watchdog and the drop
  of CAP_SYS_RESOURCE that keeps services inside DATA's project quotas;

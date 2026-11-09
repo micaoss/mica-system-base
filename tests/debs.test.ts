@@ -229,7 +229,9 @@ test('mica-storage-ubi stands in for e2fsprogs and fdisk on armhf only', () => {
   expect(control).not.toMatch(/^Depends:/m)
   expect(readFileSync(join(REPO, 'debs/mica-system/control'), 'utf8')).toMatch(/^Depends: .*\be2fsprogs\b/m)
   expect(readFileSync(join(REPO, 'debs/mica-openrc/control'), 'utf8')).toMatch(/^Depends: .*\bfdisk\b/m)
-  expect(existsSync(join(REPO, 'debs/mica-storage-ubi/payload'))).toBe(false)
+  // Its one file: the log in RAM by default on raw NAND (mica-log-env reads it).
+  expect(readFileSync(join(REPO, 'debs/mica-storage-ubi/payload/usr/lib/mica/log/log.d/10-ubi.env'), 'utf8')).toMatch(/^LOG_PERSISTENT=no$/m)
+  expect(readdirSync(join(REPO, 'debs/mica-storage-ubi/payload/usr/lib/mica/log/log.d'))).toEqual(['10-ubi.env'])
 })
 
 // Each producer's mica-inputs declares what its Dockerfile builds from: its
@@ -405,7 +407,7 @@ describe('the mica-systemd payload', () => {
   // The systemd half: the init, and mica-system under it.
   test('depends on mica-system and the systemd stack, and provides the init', () => {
     const control = readFileSync(join(REPO, 'debs/mica-systemd/control'), 'utf8')
-    expect(/^Depends: (.*)$/m.exec(control)?.[1]?.split(', ')).toEqual(['mica-system', 'systemd', 'systemd-sysv', 'systemd-resolved', 'systemd-repart', 'systemd-timesyncd', 'udev'])
+    expect(/^Depends: (.*)$/m.exec(control)?.[1]?.split(', ')).toEqual(['mica-system', 'systemd', 'systemd-sysv', 'systemd-resolved', 'systemd-repart', 'systemd-timesyncd', 'systemd-netlogd', 'udev'])
     expect(control).toMatch(/^Provides: mica-init-system$/m)
     expect(existsSync(join(payload, 'usr/lib/mica/mica-init'))).toBe(true)
   })
@@ -439,8 +441,9 @@ describe('the mica-openrc payload', () => {
     expect(readlinkSync(join(payload, 'etc/resolv.conf'))).toBe('../run/mica/resolv.conf')
     // What systemd's tmpfiles give the other root: /etc/mtab, which mount and e2fsck read.
     expect(readlinkSync(join(payload, 'etc/mtab'))).toBe('../proc/self/mounts')
-    // The RAM log mica-syslogd keeps, read by micad.
-    expect(readlinkSync(join(payload, 'usr/bin/logread'))).toBe('busybox')
+    // The log mica-syslogd keeps, read by micad: logread is a script reading the RAM ring
+    // or the files on DATA (tests/payload/logs.test.ts).
+    expect(readFileSync(join(payload, 'usr/bin/logread'), 'utf8')).toMatch(/^#!\/bin\/sh\n/)
     // The network is /etc/network/interfaces on DATA, applied by busybox's ifupdown.
     expect(readlinkSync(join(payload, 'etc/network/interfaces'))).toBe('../../var/lib/mica/network/interfaces')
     for (const tool of ['ifup', 'ifdown', 'ip', 'udhcpc'])

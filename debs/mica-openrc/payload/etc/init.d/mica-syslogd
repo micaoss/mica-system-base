@@ -1,13 +1,29 @@
 #!/sbin/openrc-run
-# The system log in RAM, read with `logread`: the counterpart of mica-systemd's
-# volatile journal. Nothing is written to DATA.
+# The system log: busybox syslogd with the log settings (mica-syslogd-args) -- in a
+# RAM ring, or on DATA in /var/log/messages and its rotations, and forwarded to a
+# collector when one is set. Read with `logread`. Each start logs a boot marker
+# (mica-boot), which `logread -b` splits the log at.
 
-description="System log in a RAM ring buffer"
+description="System log"
 command=/usr/bin/busybox
-command_args="syslogd -n -C1024"
 supervisor=supervise-daemon
 
 depend() {
     need mica-kernfs
+    after mica-mounts
     provide logger
+}
+
+start_pre() {
+    checkpath -d -m 0755 /var/log &&
+        command_args=$(/usr/lib/mica/mica-syslogd-args)
+}
+
+start_post() {
+    i=0
+    while [ ! -S /dev/log ] && [ "$i" -lt 50 ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    busybox logger -t mica-boot "boot $(cat /proc/sys/kernel/random/boot_id)"
 }

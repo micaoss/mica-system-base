@@ -1,6 +1,6 @@
 Package: mica-openrc
-Version: 0.56-mica16
-Source-Date-Epoch: 1794175559
+Version: 0.56-mica17
+Source-Date-Epoch: 1794341201
 Architecture: @ARCH@
 Maintainer: Mica OS <hi@micaos.dev>
 Section: admin
@@ -19,7 +19,8 @@ Description: Mica OS on OpenRC
  /etc/network/interfaces (busybox ifupdown and udhcpc, DNS under /run/mica;
  the file on DATA, where micad writes it, DHCP on every wired interface until
  it has), network time (busybox ntpd on the servers micad saves in
- /var/lib/mica/time/ntpd.conf), the system log in RAM (busybox syslogd and klogd), the hardware
+ /var/lib/mica/time/ntpd.conf), the system log (busybox syslogd and klogd, with the
+ log settings: in RAM or on DATA in /var/log/messages, and forwarded over UDP), the hardware
  watchdog, the daily update of a device without micad (mica-update) and, last,
  the health gate; /usr/lib/mica/mica-init for OpenRC; and
  mica-grow-data, which grows DATA with sfdisk. Devices come from mica-mdev.
@@ -33,8 +34,9 @@ Description: Mica OS on OpenRC
  console of the kernel command line and, where a display exists, on tty2, the
  login VT; tty1, where the boot logo lands, stays idle.
  .
- ifup, ifdown, ip and udhcpc are busybox's, linked in /usr/sbin, and logread,
- which reads the RAM log, in /usr/bin; the packages that ship them otherwise
+ ifup, ifdown, ip and udhcpc are busybox's, linked in /usr/sbin; /usr/bin/logread
+ reads the log, from busybox's RAM ring or from the files on DATA, a whole boot at
+ a time with -b; the packages that ship them otherwise
  conflict with this one. /etc/mtab links to /proc/self/mounts, as systemd's
  tmpfiles make it on the other init. mica-kernfs mounts securityfs only where
  the kernel has it, and DATA is checked only when mica-deploy's runkit has not

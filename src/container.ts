@@ -641,6 +641,7 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     'booted) printf \'%064d\\n\' 0 ;;',
     '# The bounding set of a supervised daemon, for the test to read off the console.',
     'confirm)',
+    '  if [ -e /var/lib/mica/boot-test-second ]; then exec /usr/local/bin/boot-test-logs; fi',
     '  for p in /proc/[0-9]*; do [ "$(cat $p/comm 2>/dev/null)" = dbus-daemon ] && sed -n "s/^CapBnd:/boot-test: dbus-daemon CapBnd:/p" $p/status >/dev/console; done',
     '  { ip -4 addr show dev eth0; cat /etc/resolv.conf /etc/hosts; } | sed "s/^/boot-test: /" >/dev/console',
     '# The app account DATA came with, bound at boot by mica-accounts build, and resolved by uid.',
@@ -667,12 +668,46 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '# Then the host\'s power button ends the run: mica-acpid powers off.',
     '  (i=0; while [ ! -e /run/boot-test-ssh-done ] && [ $i -lt 180 ]; do sleep 1; i=$((i + 1)); done',
     '   logread | grep mica-sshd | sed \'s/^/boot-test: sshd log: /\' >/dev/console',
+    '   /usr/local/bin/boot-test-logs first',
     '   rc-service mica-getty restart; sleep 5',
     '   rc-service mica-acpid status >/dev/null 2>&1 && echo \'boot-test: waiting for the power button\' >/dev/console) >/dev/null 2>&1 & ;;',
     '*) exit 1 ;;',
     'esac',
     '',
   ].join('\n'),
+  // The log checks. The first boot logs a marker in the image's settings (the log on
+  // DATA); the second finds it in the previous boot, then sets the smallest cap and a
+  // collector on the host (10.0.2.2, QEMU's user network), floods the log past the cap
+  // and powers off.
+  'usr/local/bin/boot-test-logs': String.raw`#!/bin/sh
+syslogd() {
+  for p in /proc/[0-9]*; do
+    line=$(cat "$p/cmdline" 2>/dev/null | tr '\0' ' ')
+    case "$line" in *supervise-daemon*) ;; *'syslogd -n '*) echo "boot-test: syslogd: $line" ;; esac
+  done
+}
+if [ "$#" = 1 ]; then
+  syslogd >/dev/console
+  busybox logger -t boot-test first-boot-marker
+  touch /var/lib/mica/boot-test-second
+  exit 0
+fi
+{
+  echo "boot-test: previous boot markers: $(logread -b -1 | grep -c first-boot-marker)"
+  echo "boot-test: this boot markers: $(logread -b 0 | grep -c first-boot-marker)"
+  mkdir -p /var/lib/mica/log
+  printf 'LOG_MAX_KIB=8192\nLOG_REMOTE=10.0.2.2:5514\n' >/var/lib/mica/log/log.env
+  rc-service mica-syslogd restart >/dev/null 2>&1
+  syslogd
+  busybox logger -t boot-test forwarded-marker
+  seq 1 120000 | sed 's/$/ flood padding padding padding padding padding padding padding padding/' | busybox logger -t flood
+  sleep 2
+  sync
+  echo "boot-test: log files: $(cd /var/log && ls messages* | tr '\n' ' ')"
+  echo "boot-test: log KiB: $(du -ck /var/log/messages* | tail -n 1 | cut -f 1)"
+} >/dev/console 2>&1
+openrc-shutdown --poweroff now
+`,
   // The console option's login, for mica-getty to start agetty on ttyS0; nobody logs in.
   'usr/bin/login': '#!/bin/sh\nexit 1\n',
 }
@@ -720,7 +755,7 @@ cp agent.pub root/usr/local/share/boot-test/agent.pub
 mkdir -p root/usr/share/factory/etc
 cp -a root/etc/shadow root/usr/share/factory/etc/shadow
 ln -sfn /run/mica/shadow root/etc/shadow
-chmod 0755 root/usr/local/bin/mica-deploy root/usr/bin/login
+chmod 0755 root/usr/local/bin/mica-deploy root/usr/local/bin/boot-test-logs root/usr/bin/login
 mke2fs -q -t ext4 -L root -d root root.img 768M
 # DATA as a device that already has an app account on STATE, for the boot to bind.
 mkdir -p data/state/accounts
@@ -799,6 +834,14 @@ $ssh root@127.0.0.1 'ls -lL /var/lib/wtmpdb/wtmp.db 2>&1 | sed "s/^/ssh-wtmpdb: 
 for i in $(seq 120); do grep -q 'boot-test: waiting for the power button' serial.log 2>/dev/null && break; kill -0 $qemu 2>/dev/null || break; sleep 1; done
 echo system_powerdown >monitor.in
 wait $qemu
+# The second boot on the same DATA, with a syslog collector on the host's port 5514.
+socat -u UDP-RECV:5514,bind=127.0.0.1 OPEN:remote.log,creat,append &
+collector=$!
+timeout 600 qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m 1024 -smp 2 \\
+  -display none -no-reboot -serial file:serial2.log -nic user,model=virtio-net-pci \\
+  -kernel "kernel/boot/vmlinuz-$version" -initrd initrd.img -append 'console=ttyS0 panic=-1' \\
+  -drive file=root.img,if=virtio,format=raw,readonly=on -drive file=data.img,if=virtio,format=raw
+kill $collector
 `
 
 // The expectations of the boot test's serial log.
@@ -851,7 +894,7 @@ async function bootTest(argv: string[]): Promise<number> {
   // environment image.
   const { mirror, suite } = sources()
   const base = `${environment().image}:amd64`
-  const tools = 'qemu-system-x86 e2fsprogs openssh-client'
+  const tools = 'qemu-system-x86 e2fsprogs openssh-client socat'
   const tag = `ai-agent/mica-system-base-qemu:${new Bun.CryptoHasher('sha256').update(capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', base]).stdout + mirror + tools).digest('hex').slice(0, 16)}`
   const work = scratch('boot-test')
   try {
@@ -909,8 +952,11 @@ async function bootTest(argv: string[]): Promise<number> {
     const code = attached([...args, tag, 'bash', '-c', BOOT_TEST_SCRIPT])
     const log = existsSync(join(work, 'serial.log')) ? readFileSync(join(work, 'serial.log'), 'utf8') : ''
     const ssh = existsSync(join(work, 'ssh.log')) ? readFileSync(join(work, 'ssh.log'), 'utf8') : ''
+    const second = existsSync(join(work, 'serial2.log')) ? readFileSync(join(work, 'serial2.log'), 'utf8') : ''
+    const remote = existsSync(join(work, 'remote.log')) ? readFileSync(join(work, 'remote.log'), 'utf8') : ''
     writeFileSync(join(REPO, '_out/boot-test.log'), log)
     writeFileSync(join(REPO, '_out/boot-test-ssh.log'), ssh)
+    writeFileSync(join(REPO, '_out/boot-test-2.log'), second)
     if (code !== 0)
       fail(`the boot test ended with ${code} (a timeout is 124); the serial log is in _out/boot-test.log`)
     const missing = BOOT_TEST_EXPECT.filter(line => !log.includes(line))
@@ -952,6 +998,22 @@ async function bootTest(argv: string[]): Promise<number> {
     const bounding = /boot-test: dbus-daemon CapBnd:\s*([0-9a-f]+)/.exec(log)?.[1]
     if (!bounding || (BigInt(`0x${bounding}`) >> 24n) & 1n)
       fail(`dbus-daemon's bounding set is ${bounding ?? 'unreported'}; a daemon keeps CAP_SYS_RESOURCE (_out/boot-test.log)`)
+    // The log: on DATA by default, a quarter of an eighth of DATA as its cap (512 MiB of
+    // DATA: about 16 MiB, so the files about 4 MiB each); the previous boot's marker found
+    // by logread -b -1 alone; with the smallest cap, 8 MiB, a flood past it keeps the files
+    // within it, and a collector over UDP gets the lines.
+    const first = /^boot-test: syslogd: \S*busybox syslogd -n -O \/var\/log\/messages -s (\d+) -b 3 -l 7 $/m.exec(log)?.[1]
+    if (!first || Number(first) < 3500 || Number(first) > 4096)
+      fail(`the first boot's syslogd does not keep the log on DATA with a cap near 16 MiB: ${first ?? 'no syslogd line'} (_out/boot-test.log)`)
+    for (const line of ['boot-test: previous boot markers: 1', 'boot-test: this boot markers: 0', 'syslogd -n -O /var/log/messages -s 2048 -b 3 -l 7 -R 10.0.2.2:5514 -L ', 'boot-test: log files: messages messages.0 messages.1 messages.2 ', 'mica-health: no failed units', 'Unbinding DATA']) {
+      if (!second.includes(line))
+        fail(`the second boot's serial log lacks: ${line} (_out/boot-test-2.log)`)
+    }
+    const kib = Number(/^boot-test: log KiB: (\d+)/m.exec(second)?.[1] ?? Number.NaN)
+    if (!(kib > 6144 && kib <= 8192 + 64))
+      fail(`the log files take ${kib} KiB with an 8192 KiB cap (_out/boot-test-2.log)`)
+    if (!remote.includes('boot-test: forwarded-marker'))
+      fail('the collector on the host received no forwarded line')
     console.log('RESULT: PASS (the x64 OpenRC root boots, confirms its deployment and shuts down)')
     return 0
   }

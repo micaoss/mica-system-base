@@ -5,7 +5,8 @@
     { "name": "messagebus", "uid": 996, "gid": 996, "gecos": "System Message Bus", "home": "/nonexistent", "shell": "/usr/sbin/nologin" },
     { "name": "systemd-resolve", "uid": 990, "gid": 990, "gecos": "systemd Resolver", "home": "/", "shell": "/usr/sbin/nologin" },
     { "name": "tcpdump", "uid": 986, "gid": 986, "gecos": "", "home": "/nonexistent", "shell": "/usr/sbin/nologin" },
-    { "name": "iperf3", "uid": 985, "gid": 985, "gecos": "", "home": "/nonexistent", "shell": "/usr/sbin/nologin" }
+    { "name": "iperf3", "uid": 985, "gid": 985, "gecos": "", "home": "/nonexistent", "shell": "/usr/sbin/nologin" },
+    { "name": "systemd-journal-netlog", "uid": 981, "gid": 999, "gecos": "systemd Journal Forwarder", "home": "/", "shell": "/usr/sbin/nologin" }
   ],
   "groups": [
     { "name": "systemd-journal", "gid": 999 },

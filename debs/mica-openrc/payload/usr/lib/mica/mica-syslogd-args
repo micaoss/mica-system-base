@@ -1,0 +1,27 @@
+#!/bin/sh
+# busybox syslogd's arguments for mica-syslogd, from the log settings (mica-log-env;
+# an invalid file keeps the log in RAM and forwards nothing). busybox writes either its
+# RAM ring (-C, which logread reads) or a file, never both:
+#   in RAM:   syslogd -n -C1024
+#   on DATA:  syslogd -n -O /var/log/messages -s <LOG_MAX_KIB/4> -b 3 -l 7
+#             (messages and messages.0-2, LOG_MAX_KIB together; no debug messages)
+# and, with LOG_REMOTE, -R <address>:<port> -L: each message as it came, over UDP, kept
+# locally too. busybox forwards over UDP only: LOG_REMOTE_PROTOCOL=tcp forwards nothing.
+set -eu
+log=${MICA_LOG_DIR:-/var/log}
+settings=$(/usr/lib/mica/mica-log-env) || :
+eval "$settings"
+args="syslogd -n"
+if [ "$LOG_PERSISTENT" = yes ]; then
+    args="$args -O $log/messages -s $((LOG_MAX_KIB / 4)) -b 3 -l 7"
+else
+    args="$args -C1024"
+fi
+if [ -n "$LOG_REMOTE" ]; then
+    if [ "$LOG_REMOTE_PROTOCOL" = udp ]; then
+        args="$args -R $LOG_REMOTE -L"
+    else
+        echo "mica-syslogd-args: busybox syslogd forwards over UDP only; LOG_REMOTE_PROTOCOL=$LOG_REMOTE_PROTOCOL forwards nothing" >&2
+    fi
+fi
+echo "$args"
