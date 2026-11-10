@@ -202,6 +202,42 @@ test('each broken promise of the systemd root is refused by name', () => {
   expect(() => assertSystemd(notSystemd, 'amd64')).toThrow('/usr/sbin/init is not systemd')
 })
 
+// Debian's and systemd's tmpfiles entries for /etc, as the pinned packages ship them,
+// and mica-systemd's same-named files that replace them on the read-only root.
+const UPSTREAM_TMPFILES: Record<string, string> = {
+  'debian.conf': 'L /run/shm - - - - /dev/shm\nd /run/lock 1777 root root - -\nL+ /etc/mtab - - - - ../proc/self/mounts\n',
+  'credstore.conf': 'd /etc/credstore 0700 root root\nz /run/credstore 0700 root root\n',
+  '20-systemd-shell-extra.conf': 'L$ /etc/profile.d/70-systemd-shell-extra.sh - - - - /usr/lib/systemd/profile.d/70-systemd-shell-extra.sh\n',
+  '20-systemd-ssh-generator.conf': 'L$ /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf - - - - /usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf\nd /run/sshd 0755\n',
+  // Left alone on the read-only root: DATA's /var, the resolver's link, removals and
+  // entries from credentials.
+  'systemd.conf': '# comment\nd /var/lib/systemd 0755 - - -\nL! /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf\n',
+  'legacy.conf': 'r! /forcefsck\n',
+  'provision.conf': 'f^ /etc/motd.d/50-provision.conf - - - - login.motd\n',
+}
+const OVERRIDES = join(import.meta.dir, '../debs/mica-systemd/payload/etc/tmpfiles.d')
+
+test('a systemd root whose tmpfiles entries would write the read-only root is refused', () => {
+  const upstream = (name: string): string => {
+    const path = systemdRoot(name)
+    mkdirSync(join(path, 'usr/lib/tmpfiles.d'), { recursive: true })
+    for (const [file, text] of Object.entries(UPSTREAM_TMPFILES))
+      writeFileSync(join(path, 'usr/lib/tmpfiles.d', file), text)
+    return path
+  }
+  const bare = upstream('tmpfiles-upstream')
+  expect(() => assertSystemd(bare, 'amd64')).toThrow('systemd-tmpfiles would write the read-only root at every boot: L$ /etc/profile.d/70-systemd-shell-extra.sh (20-systemd-shell-extra.conf), L$ /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf (20-systemd-ssh-generator.conf), d /etc/credstore (credstore.conf), L+ /etc/mtab (debian.conf)')
+  // mica-systemd's files, as shipped, replace each of them.
+  const replaced = upstream('tmpfiles-replaced')
+  mkdirSync(join(replaced, 'etc/tmpfiles.d'), { recursive: true })
+  for (const file of ['debian.conf', 'credstore.conf', '20-systemd-shell-extra.conf', '20-systemd-ssh-generator.conf'])
+    writeFileSync(join(replaced, 'etc/tmpfiles.d', file), readFileSync(join(OVERRIDES, file), 'utf8'))
+  expect(() => assertSystemd(replaced, 'amd64')).not.toThrow()
+  // A new entry for /etc, from any file, is refused by its file's name.
+  writeFileSync(join(replaced, 'usr/lib/tmpfiles.d', 'new.conf'), 'd /etc/new 0755 root root -\n')
+  expect(() => assertSystemd(replaced, 'amd64')).toThrow('d /etc/new (new.conf)')
+})
+
 test('each broken promise of the floor is refused by name', () => {
   const key = root('host-key')
   mkdirSync(join(key, 'etc/dropbear'))

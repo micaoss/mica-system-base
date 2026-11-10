@@ -270,6 +270,41 @@ export function assertFloor(root: string, arch: Arch): void {
 
 // A root composed from the floor with mica-systemd: the floor's promises, systemd
 // as its init, and the units it governs.
+// Where systemd-tmpfiles may write on a device: the RAM file systems and DATA's binds.
+// The rest of the root is read-only, and a product's composition keeps only the paths
+// a consumer claims, so an entry there fails at every boot.
+const TMPFILES_WRITABLE = /^\/(?:run|tmp|dev|proc|sys|var|root|home|srv|mica|mnt)(?:\/|$)/
+// Entries for the read-only root that are satisfied as composed: the resolver's link,
+// which the composition keeps.
+const TMPFILES_READ_ONLY = new Set(['/etc/resolv.conf'])
+
+// The effective tmpfiles entries -- a file in /etc/tmpfiles.d replacing the
+// /usr/lib/tmpfiles.d one of the same name -- that would create or change something
+// on the read-only root. Removals (r, R), ignores (x, X) and entries from credentials
+// (^) leave it alone.
+export function readOnlyTmpfiles(root: string): string[] {
+  const files = new Map<string, string>()
+  for (const directory of ['usr/lib/tmpfiles.d', 'etc/tmpfiles.d']) {
+    const full = join(root, directory)
+    if (!existsSync(full))
+      continue
+    for (const name of readdirSync(full)) {
+      if (name.endsWith('.conf'))
+        files.set(name, join(full, name))
+    }
+  }
+  const found: string[] = []
+  for (const [name, file] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      const [type, path] = line.trim().split(/\s+/)
+      if (!type || !path || type.startsWith('#') || /[rRxX^]/.test(type) || TMPFILES_WRITABLE.test(path) || TMPFILES_READ_ONLY.has(path))
+        continue
+      found.push(`${type} ${path} (${name})`)
+    }
+  }
+  return found
+}
+
 export function assertSystemd(root: string, arch: Arch): void {
   assertCommon(root, arch)
   if (!/(?:^|\/)systemd$/.test(linkTarget(join(root, 'usr/sbin/init')) ?? ''))
@@ -307,7 +342,10 @@ export function assertSystemd(root: string, arch: Arch): void {
     if (!existsSync(dropIn) || !/^ConditionPathExists=\/usr\/bin\/login$/m.test(readFileSync(dropIn, 'utf8')))
       fail(`${unit}.service in the floor does not wait for /usr/bin/login`)
   }
-  console.log('rootfs: the systemd root -- systemd the init, nftables never enabled, nothing waiting for a link, no getty without login')
+  const readOnly = readOnlyTmpfiles(root)
+  if (readOnly.length)
+    fail(`systemd-tmpfiles would write the read-only root at every boot: ${readOnly.join(', ')}; replace the file in mica-systemd's /etc/tmpfiles.d`)
+  console.log('rootfs: the systemd root -- systemd the init, nftables never enabled, nothing waiting for a link, no getty without login, no tmpfiles entry for the read-only root')
 }
 
 // mica-openrc's services, by runlevel, as its payload links them, and OpenRC's cgroups.
