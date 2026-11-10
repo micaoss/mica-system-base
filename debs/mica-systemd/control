@@ -20,7 +20,9 @@ Description: Mica OS on systemd
  hardware watchdog and the drop
  of CAP_SYS_RESOURCE that keeps services inside DATA's project quotas;
  /usr/lib/mica/mica-init for systemd; and mica-grow-data, which grows DATA with
- systemd-repart.
+ systemd-repart. Same-named files in /etc/tmpfiles.d keep Debian's and
+ systemd's tmpfiles entries for /etc (mtab, locale, vconsole, credstore, the
+ shell extra and ssh_config.d) off the read-only root.
  .
  Enablement is payload: the wants-links and /dev/null masks this package ships
  are the whole of it, and no maintainer script enables a unit. The preset
