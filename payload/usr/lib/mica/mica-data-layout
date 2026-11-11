@@ -59,7 +59,6 @@ ensure_dir "$CONTAINER_ROOT/networks" 0755
 ensure_dir "$CONTAINER_ROOT/tmp" 0700
 ensure_dir "$SYSTEM_ROOT/home" 0755
 ensure_dir "$SYSTEM_ROOT/root" 0700
-ensure_dir "$SYSTEM_ROOT/apps" 0755
 ensure_dir "$SYSTEM_ROOT/updates" 0755
 ensure_dir "$SYSTEM_ROOT/updates/downloads" 0755
 ensure_dir "$SYSTEM_ROOT/updates/verified" 0755

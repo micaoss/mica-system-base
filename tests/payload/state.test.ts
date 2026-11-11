@@ -44,8 +44,9 @@ describe('mica-data-layout', () => {
     expect(existsSync(join(data, 'mica/containers/networks'))).toBe(false)
     for (const name of ['ui', 'config', 'containers', 'home', 'root', 'diagnostics'])
       expect(lstatSync(join(data, 'mica', name)).isDirectory()).toBe(true)
-    for (const name of ['updates/downloads', 'updates/verified', 'updates/staging', 'apps'])
+    for (const name of ['updates/downloads', 'updates/verified', 'updates/staging'])
       expect(existsSync(join(data, 'mica', name))).toBe(true)
+    expect(existsSync(join(data, 'mica/apps'))).toBe(false)
     expect(lstatSync(join(data, 'srv')).isDirectory()).toBe(true)
     const modes: [string, string][] = [['mica', '755'], ['srv', '755'], ['mica/ui', '755'], ['containers', '711'], ['mica/home', '755'], ['mica/root', '700'], ['mica/config', '700'], ['mica/diagnostics', '700']]
     for (const [path, want] of modes)
@@ -59,6 +60,16 @@ describe('mica-data-layout', () => {
     expect(readFileSync(join(data, 'mica/ui/value'), 'utf8')).toBe('keep\n')
     expect(readFileSync(join(data, 'srv/value'), 'utf8')).toBe('user\n')
     expect(tree(data)).toBe(before)
+  })
+
+  test('an existing mica/apps is left as it is', () => {
+    const data = newCase('earlier-apps')
+    mkdirSync(join(data, 'mica/apps/web'), { recursive: true })
+    chmodSync(join(data, 'mica/apps'), 0o750)
+    writeFileSync(join(data, 'mica/apps/web/value'), 'kept\n')
+    expect(layout(data)).toBe(0)
+    expect(mode(join(data, 'mica/apps'))).toBe('750')
+    expect(readFileSync(join(data, 'mica/apps/web/value'), 'utf8')).toBe('kept\n')
   })
 
   // Following a link at a namespace root would redirect privileged or user
