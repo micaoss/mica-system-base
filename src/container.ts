@@ -617,7 +617,7 @@ async function debs(argv: string[]): Promise<number> {
 
 // The OpenRC root of x64 booted under QEMU with the Debian kernel the lock pins for
 // this test (source.test-kernel): a read-only root disk made from
-// _out/rootfs/amd64-openrc, a fresh DATA disk with project quotas and an app
+// _out/rootfs/amd64-openrc, a fresh DATA disk with project quotas and a service
 // account on STATE, and an initramfs that loads the modules this kernel keeps out
 // of its image -- virtio_blk, the quota format DATA's project quotas need, the ACPI
 // power button and evdev -- and hands over to openrc-init. A stand-in mica-deploy
@@ -644,9 +644,9 @@ const BOOT_TEST_OVERLAY: Record<string, string> = {
     '  if [ -e /var/lib/mica/boot-test-second ]; then exec /usr/local/bin/boot-test-logs; fi',
     '  for p in /proc/[0-9]*; do [ "$(cat $p/comm 2>/dev/null)" = dbus-daemon ] && sed -n "s/^CapBnd:/boot-test: dbus-daemon CapBnd:/p" $p/status >/dev/console; done',
     '  { ip -4 addr show dev eth0; cat /etc/resolv.conf /etc/hosts; } | sed "s/^/boot-test: /" >/dev/console',
-    '# The app account DATA came with, bound at boot by mica-accounts build, and resolved by uid.',
+    '# The service account DATA came with, bound at boot by mica-accounts build, and resolved by uid.',
     '  : >/run/boot-test-uid && chown 30001 /run/boot-test-uid && echo "boot-test: uid 30001 is $(stat -c %U /run/boot-test-uid)" >/dev/console',
-    '# An app account, added live as micad adds one, and resolved by name.',
+    '# A service account, added live, and resolved by name.',
     '  /usr/lib/mica/mica-accounts add boottest 30000 && id boottest | sed "s/^/boot-test: /" >/dev/console',
     '# micad\'s device code, written as micad writes it: the prompt mica-getty started before',
     '# the gate (after *) shows nothing of it; the prompt it starts again shows it.',
@@ -757,14 +757,14 @@ cp -a root/etc/shadow root/usr/share/factory/etc/shadow
 ln -sfn /run/mica/shadow root/etc/shadow
 chmod 0755 root/usr/local/bin/mica-deploy root/usr/local/bin/boot-test-logs root/usr/bin/login
 mke2fs -q -t ext4 -L root -d root root.img 768M
-# DATA as a device that already has an app account on STATE, for the boot to bind.
+# DATA as a device that already has a service account on STATE, for the boot to bind.
 mkdir -p data/state/accounts
 # A device from before the RSA host key: STATE holds only the ed25519 one, which
 # mica-sshd keeps, adding the RSA key beside it.
 mkdir -p -m 0700 data/state/ssh
 ssh-keygen -q -t ed25519 -N '' -C '' -f seeded
 cp seeded data/state/ssh/ssh_host_ed25519_key
-printf 'bootseed:x:30001:30001:mica app bootseed:/nonexistent:/usr/sbin/nologin\\n' >data/state/accounts/passwd
+printf 'bootseed:x:30001:30001:mica service bootseed:/nonexistent:/usr/sbin/nologin\\n' >data/state/accounts/passwd
 printf 'bootseed:x:30001:\\n' >data/state/accounts/group
 mke2fs -q -t ext4 -L data -O quota,project -E quotatype=prjquota -d data data.img 512M
 accel=tcg; [ -c /dev/kvm ] && accel=kvm
@@ -855,7 +855,7 @@ const BOOT_TEST_EXPECT = [
   // /etc/hosts, written to /run/mica/hosts at boot: localhost and the hostname.
   'boot-test: 127.0.0.1\tlocalhost',
   `boot-test: 127.0.1.1\t${HOSTNAME}`,
-  // mica-accounts: the app account on STATE bound at boot, and one added live, over
+  // mica-accounts: the service account on STATE bound at boot, and one added live, over
   // /etc/passwd and /etc/group.
   'boot-test: uid 30001 is bootseed',
   'boot-test: uid=30000(boottest) gid=30000(boottest)',

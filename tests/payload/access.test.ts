@@ -79,13 +79,13 @@ describe('mica-shadow-reconcile', () => {
     expect(wellFormed(c)).toBe(true)
   })
 
-  // A login account of mica-accounts add-login logs in with its keys alone; an app
+  // A login account of mica-accounts add-login logs in with its keys alone; a service
   // account, in the range above, stays locked.
   test('a login account (uid 20000..29999) is appended without a password, every other one locked', () => {
-    const c = newCase('appends-login-account', '', `${PASSWD_BOTH}alice:x:20000:20000:mica login alice:/home/alice:/bin/sh\napp-web:x:30000:30000:mica app app-web:/nonexistent:/usr/sbin/nologin\nold:x:2000:2000::/nonexistent:/usr/sbin/nologin\n`)
+    const c = newCase('appends-login-account', '', `${PASSWD_BOTH}alice:x:20000:20000:mica login alice:/home/alice:/bin/sh\nsvc-web:x:30000:30000:mica service svc-web:/nonexistent:/usr/sbin/nologin\nold:x:2000:2000::/nonexistent:/usr/sbin/nologin\n`)
     expect(reconcile(c)).toBe(0)
     expect(hashOf(c, 'alice')).toBe('*')
-    expect(hashOf(c, 'app-web')).toBe('!')
+    expect(hashOf(c, 'svc-web')).toBe('!')
     expect(hashOf(c, 'old')).toBe('!')
     expect(wellFormed(c)).toBe(true)
   })

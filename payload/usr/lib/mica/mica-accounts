@@ -1,5 +1,5 @@
 #!/bin/sh
-# The accounts of the user's apps, which micad runs each under its own uid, and the
+# The service accounts the user's own units run as, each with its own uid, and the
 # login accounts a provisioning agent (mica-gce-agent) keeps for the people who log
 # in with SSH keys. The root is read-only, so /etc/passwd and /etc/group get built
 # copies bound over them: the image's accounts, then the accounts kept on STATE
@@ -7,22 +7,22 @@
 # place, every system account and login works, and only the kept names are unknown.
 #
 #   mica-accounts build                     rebuild and rebind (at boot, once STATE is bound)
-#   mica-accounts add <name> <uid> [<gid>]  an app account; gid defaults to uid
+#   mica-accounts add <name> <uid> [<gid>]  a service account; gid defaults to uid
 #   mica-accounts remove <name>             drop it; an unknown name is no error
-#   mica-accounts list                      the app accounts: <name> TAB <uid> TAB <gid>
+#   mica-accounts list                      the service accounts: <name> TAB <uid> TAB <gid>
 #   mica-accounts add-login <name> [--admin]
 #                                           a login account, made or kept, an admin with --admin
 #                                           and no longer one without; prints its uid
 #   mica-accounts remove-login <name>       drop it, keeping its home; an unknown name is no error
 #   mica-accounts list-login                the login accounts: <name> TAB <uid> TAB yes|no (admin)
 #
-# A name is [a-z_][a-z0-9_-]{0,31}. An app account's uid and gid are in
+# A name is [a-z_][a-z0-9_-]{0,31}. A service account's uid and gid are in
 # 30000..39999 and taken by no other account. A login account's uid is in
 # 20000..29999, chosen here: the owner of an existing /home/<name> when that uid is
 # free, else the lowest free one; its group is its own, with the same id; its
 # shell is /bin/sh, its home /home/<name> (on DATA), made 0700 when missing; it has
 # no password ('*' in the shadow), so only its keys log it in. A login name is
-# none of the image's accounts or groups, nor root, mica, sshd or mica-app-*. An
+# none of the image's accounts or groups, nor root, mica or sshd. An
 # admin is a member of the image's group mica-admins: add-login with --admin makes
 # one, without it takes that away. A privilege option (mica-sudo) and micad's switch
 # decide what the group may do. The admins are kept on STATE too (admins, one name
@@ -96,7 +96,7 @@ save_image() {
 }
 
 # The STATE lines that are well formed, in range and clash with nothing before
-# them; each other line is reported and skipped. An app account's ids are in
+# them; each other line is reported and skipped. A service account's ids are in
 # FIRST..LAST; a login account's in LOGIN_FIRST..LOGIN_LAST, its group its own, its
 # home /home/<name> and its shell /bin/sh.
 valid_passwd() { # <image passwd> <state passwd>
@@ -104,11 +104,11 @@ valid_passwd() { # <image passwd> <state passwd>
     awk -F: -v first="$FIRST" -v last="$LAST" -v lfirst="$LOGIN_FIRST" -v llast="$LOGIN_LAST" '
         FNR == NR { names[$1] = 1; ids[$3] = 1; next }
         {
-            app = $3 + 0 >= first && $3 + 0 <= last && $4 + 0 >= first && $4 + 0 <= last
+            service = $3 + 0 >= first && $3 + 0 <= last && $4 + 0 >= first && $4 + 0 <= last
             login = $3 + 0 >= lfirst && $3 + 0 <= llast && $4 == $3 && $6 == "/home/" $1 && $7 == "/bin/sh" &&
-                $1 !~ /^(root|mica|sshd|mica-app-.*)$/
+                $1 !~ /^(root|mica|sshd)$/
             ok = NF == 7 && $1 ~ /^[a-z_][a-z0-9_-]*$/ && length($1) <= 32 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ &&
-                (app || login) && !($1 in names) && !($3 in ids)
+                (service || login) && !($1 in names) && !($3 in ids)
             if (!ok) { print "mica-accounts: skipping passwd line " FNR " of STATE: " $0 > "/dev/stderr"; next }
             names[$1] = 1; ids[$3] = 1; print
         }' "$1" "$2"
@@ -155,7 +155,7 @@ login_uid() {
     [ "$1" -ge "$LOGIN_FIRST" ] && [ "$1" -le "$LOGIN_LAST" ]
 }
 
-# An entry in the RAM shadow for every kept account that has none: an app
+# An entry in the RAM shadow for every kept account that has none: a service
 # account's locked ('!'), a login account's without a password ('*'), which a
 # locked one of a login account becomes.
 shadow_entries() {
@@ -220,10 +220,10 @@ add() { # <name> <uid> <gid>
     fi
     ! taken "$RUN/image.passwd" 1 "$1" '' && ! taken "$RUN/image.group" 1 "$1" '' || die "$1 is an account of the image"
     ! is_login "$1" || die "$1 is a login account"
-    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || die "$1 is an app account with other ids"
+    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || die "$1 is a service account with other ids"
     ! taken "$RUN/image.passwd" 3 "$2" '' && ! taken "$STATE/passwd" 3 "$2" "$1" || die "uid $2 is taken"
     ! taken "$RUN/image.group" 3 "$3" '' && ! taken "$STATE/group" 3 "$3" "$1" || die "gid $3 is taken"
-    printf '%s:x:%s:%s:mica app %s:/nonexistent:/usr/sbin/nologin\n' "$1" "$2" "$3" "$1" | rewrite "$STATE/passwd" "$1"
+    printf '%s:x:%s:%s:mica service %s:/nonexistent:/usr/sbin/nologin\n' "$1" "$2" "$3" "$1" | rewrite "$STATE/passwd" "$1"
     printf '%s:x:%s:\n' "$1" "$3" | rewrite "$STATE/group" "$1"
     sync
     build
@@ -273,7 +273,7 @@ set_admin() { # <name> on|off
 add_login() { # <name> [--admin]
     valid_name "$1" || die "$1 is not an account name"
     case "$1" in
-    root | mica | sshd | mica-app-*) die "$1 is not a login name" ;;
+    root | mica | sshd) die "$1 is not a login name" ;;
     esac
     save_image
     ! taken "$RUN/image.passwd" 1 "$1" '' && ! taken "$RUN/image.group" 1 "$1" '' || die "$1 is an account of the image"
@@ -281,7 +281,7 @@ add_login() { # <name> [--admin]
     if is_login "$1"; then
         uid=$(field "$STATE/passwd" "$1" 3)
     else
-        [ -z "$(field "$STATE/passwd" "$1" 1)" ] && [ -z "$(field "$STATE/group" "$1" 1)" ] || die "$1 is an app account"
+        [ -z "$(field "$STATE/passwd" "$1" 1)" ] && [ -z "$(field "$STATE/group" "$1" 1)" ] || die "$1 is a service account"
         [ ! -L "$home" ] || die "$home is a symbolic link"
         # A home kept from before is its owner's again, and a uid that owns a kept
         # home is no one else's.
@@ -311,7 +311,7 @@ add_login() { # <name> [--admin]
 remove_login() { # <name>
     valid_name "$1" || die "$1 is not an account name"
     save_image
-    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || is_login "$1" || die "$1 is an app account"
+    [ -z "$(field "$STATE/passwd" "$1" 1)" ] || is_login "$1" || die "$1 is a service account"
     [ ! -f "$STATE/admins" ] || set_admin "$1" off
     drop "$1"
 }

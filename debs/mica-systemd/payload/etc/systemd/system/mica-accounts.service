@@ -1,7 +1,7 @@
 [Unit]
-Description=Bind the image's accounts and the app accounts over /etc/passwd and /etc/group
+Description=Bind the image's accounts and the kept accounts over /etc/passwd and /etc/group
 Documentation=file:/usr/lib/mica/mica-accounts
-# Once STATE is bound, before micad starts the apps under their accounts. The early
+# Once STATE is bound, before the services that run under those accounts. The early
 # boot (udev, journald, D-Bus) reads the image's files, which stay in place until then.
 DefaultDependencies=no
 Requires=mica-seed-state.service

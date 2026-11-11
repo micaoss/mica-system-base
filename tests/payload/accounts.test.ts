@@ -1,4 +1,4 @@
-// mica-accounts: the app accounts micad keeps on STATE and the login accounts of a
+// mica-accounts: the service accounts micad keeps on STATE and the login accounts of a
 // provisioning agent, bound with the image's over /etc/passwd and /etc/group;
 // against a fixture /etc, STATE, /home, RAM shadow and mount table, with mount and
 // umount faked to edit that table. Its place in each init's boot.
@@ -37,10 +37,10 @@ function newCase(name: string): Case {
 const accounts = (c: Case, ...args: string[]): { code: number, out: string } => exec(['sh', join(MICA, 'mica-accounts'), ...args], c.env)
 const read = (path: string): string => readFileSync(path, 'utf8')
 const calls = (c: Case): string[] => read(c.calls).split('\n').filter(Boolean)
-const APP = 'app-web:x:30000:30000:mica app app-web:/nonexistent:/usr/sbin/nologin\n'
+const SERVICE = 'svc-web:x:30000:30000:mica service svc-web:/nonexistent:/usr/sbin/nologin\n'
 
 describe('mica-accounts build', () => {
-  test('with no app account, binds the image\'s own files, saved once', () => {
+  test('with no service account, binds the image\'s own files, saved once', () => {
     const c = newCase('build-empty')
     expect(accounts(c, 'build')).toEqual({ code: 0, out: '' })
     expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD)
@@ -55,8 +55,8 @@ describe('mica-accounts build', () => {
   test('a rebuild rebinds, from the saved image copy and not the bound file', () => {
     const c = newCase('build-again')
     accounts(c, 'build')
-    // What a reader sees once bound: the image's lines and an app's.
-    writeFileSync(join(c.etc, 'passwd'), IMAGE_PASSWD + APP)
+    // What a reader sees once bound: the image's lines and a service's.
+    writeFileSync(join(c.etc, 'passwd'), IMAGE_PASSWD + SERVICE)
     writeFileSync(c.calls, '')
     expect(accounts(c, 'build').code).toBe(0)
     expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD)
@@ -70,87 +70,98 @@ describe('mica-accounts build', () => {
     const c = newCase('build-corrupt')
     mkdirSync(c.state)
     writeFileSync(join(c.state, 'passwd'), [
-      'app-web:x:30000:30000:mica app app-web:/nonexistent:/usr/sbin/nologin',
+      'svc-web:x:30000:30000:mica service svc-web:/nonexistent:/usr/sbin/nologin',
       'short:x:30001',
-      'low:x:1001:1001:mica app low:/nonexistent:/usr/sbin/nologin',
-      'mica:x:30002:30002:mica app mica:/nonexistent:/usr/sbin/nologin',
-      'twin:x:30000:30000:mica app twin:/nonexistent:/usr/sbin/nologin',
-      'Bad:x:30003:30003:mica app Bad:/nonexistent:/usr/sbin/nologin',
+      'low:x:1001:1001:mica service low:/nonexistent:/usr/sbin/nologin',
+      'mica:x:30002:30002:mica service mica:/nonexistent:/usr/sbin/nologin',
+      'twin:x:30000:30000:mica service twin:/nonexistent:/usr/sbin/nologin',
+      'Bad:x:30003:30003:mica service Bad:/nonexistent:/usr/sbin/nologin',
       '',
     ].join('\n'))
-    writeFileSync(join(c.state, 'group'), 'app-web:x:30000:\nmica:x:30002:\n')
+    writeFileSync(join(c.state, 'group'), 'svc-web:x:30000:\nmica:x:30002:\n')
     const ran = accounts(c, 'build')
     expect(ran.code).toBe(0)
     expect(ran.out.split('\n').filter(line => line.startsWith('mica-accounts: skipping passwd line'))).toHaveLength(5)
     expect(ran.out).toContain('mica-accounts: skipping group line 2 of STATE: mica:x:30002:')
-    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + APP)
-    expect(read(join(c.run, 'group'))).toBe(`${IMAGE_GROUP}app-web:x:30000:\n`)
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + SERVICE)
+    expect(read(join(c.run, 'group'))).toBe(`${IMAGE_GROUP}svc-web:x:30000:\n`)
   })
 
-  test('an image file without a final newline still gets one before the app lines', () => {
+  test('a service account kept with the GECOS of an earlier release still binds', () => {
+    const c = newCase('earlier-gecos')
+    mkdirSync(c.state)
+    const earlier = 'web:x:30000:30000:mica app web:/nonexistent:/usr/sbin/nologin\n'
+    writeFileSync(join(c.state, 'passwd'), earlier)
+    writeFileSync(join(c.state, 'group'), 'web:x:30000:\n')
+    expect(accounts(c, 'build').code).toBe(0)
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + earlier)
+    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'web\t30000\t30000\n' })
+  })
+
+  test('an image file without a final newline still gets one before the service lines', () => {
     const c = newCase('build-newline')
     writeFileSync(join(c.etc, 'passwd'), IMAGE_PASSWD.trimEnd())
     mkdirSync(c.state)
-    writeFileSync(join(c.state, 'passwd'), APP)
+    writeFileSync(join(c.state, 'passwd'), SERVICE)
     accounts(c, 'build')
-    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + APP)
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + SERVICE)
   })
 })
 
 describe('mica-accounts add, remove and list', () => {
   test('add writes the account to STATE, binds it, and gives it a locked shadow entry', () => {
     const c = newCase('add')
-    expect(accounts(c, 'add', 'app-web', '30000')).toEqual({ code: 0, out: '' })
-    expect(read(join(c.state, 'passwd'))).toBe(APP)
-    expect(read(join(c.state, 'group'))).toBe('app-web:x:30000:\n')
-    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + APP)
-    expect(read(join(c.run, 'group'))).toBe(`${IMAGE_GROUP}app-web:x:30000:\n`)
+    expect(accounts(c, 'add', 'svc-web', '30000')).toEqual({ code: 0, out: '' })
+    expect(read(join(c.state, 'passwd'))).toBe(SERVICE)
+    expect(read(join(c.state, 'group'))).toBe('svc-web:x:30000:\n')
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + SERVICE)
+    expect(read(join(c.run, 'group'))).toBe(`${IMAGE_GROUP}svc-web:x:30000:\n`)
     // The transient root password is kept.
-    expect(read(c.shadow)).toBe(`${SHADOW}app-web:!:20000:0:99999:7:::\n`)
+    expect(read(c.shadow)).toBe(`${SHADOW}svc-web:!:20000:0:99999:7:::\n`)
     expect(calls(c)).toContain(`mount --bind ${c.run}/passwd ${c.etc}/passwd`)
-    expect(accounts(c, 'add', 'app-db', '30001', '30005').code).toBe(0)
-    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'app-web\t30000\t30000\napp-db\t30001\t30005\n' })
+    expect(accounts(c, 'add', 'svc-db', '30001', '30005').code).toBe(0)
+    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'svc-web\t30000\t30000\nsvc-db\t30001\t30005\n' })
   })
 
   test('the same account again is no error; other ids, a taken name or id, or the range are refused', () => {
     const c = newCase('add-refused')
-    accounts(c, 'add', 'app-web', '30000')
-    expect(accounts(c, 'add', 'app-web', '30000', '30000')).toEqual({ code: 0, out: '' })
+    accounts(c, 'add', 'svc-web', '30000')
+    expect(accounts(c, 'add', 'svc-web', '30000', '30000')).toEqual({ code: 0, out: '' })
     const refused = (args: string[], message: string): void => {
       expect(accounts(c, 'add', ...args)).toEqual({ code: 1, out: `mica-accounts: ${message}\n` })
     }
-    refused(['app-web', '30001'], 'app-web is an app account with other ids')
+    refused(['svc-web', '30001'], 'svc-web is a service account with other ids')
     refused(['mica', '30002'], 'mica is an account of the image')
-    refused(['app-two', '30000'], 'uid 30000 is taken')
-    refused(['app-two', '30002', '30000'], 'gid 30000 is taken')
-    refused(['app-two', '1001'], 'uid 1001 is outside 30000..39999')
-    refused(['app-two', '40000'], 'uid 40000 is outside 30000..39999')
-    refused(['app-two', '30002', '29999'], 'gid 29999 is outside 30000..39999')
-    refused(['App', '30002'], 'App is not an account name')
+    refused(['svc-two', '30000'], 'uid 30000 is taken')
+    refused(['svc-two', '30002', '30000'], 'gid 30000 is taken')
+    refused(['svc-two', '1001'], 'uid 1001 is outside 30000..39999')
+    refused(['svc-two', '40000'], 'uid 40000 is outside 30000..39999')
+    refused(['svc-two', '30002', '29999'], 'gid 29999 is outside 30000..39999')
+    refused(['Svc', '30002'], 'Svc is not an account name')
     refused(['a'.repeat(33), '30002'], `${'a'.repeat(33)} is not an account name`)
-    refused(['-app', '30002'], '-app is not an account name')
-    expect(read(join(c.state, 'passwd'))).toBe(APP)
+    refused(['-svc', '30002'], '-svc is not an account name')
+    expect(read(join(c.state, 'passwd'))).toBe(SERVICE)
   })
 
   test('remove drops the account and its shadow entry; an unknown name is no error', () => {
     const c = newCase('remove')
-    accounts(c, 'add', 'app-web', '30000')
-    accounts(c, 'add', 'app-db', '30001')
-    expect(accounts(c, 'remove', 'app-web')).toEqual({ code: 0, out: '' })
-    expect(read(join(c.state, 'passwd'))).not.toContain('app-web')
-    expect(read(join(c.state, 'group'))).toBe('app-db:x:30001:\n')
-    expect(read(join(c.run, 'passwd'))).toBe(`${IMAGE_PASSWD}app-db:x:30001:30001:mica app app-db:/nonexistent:/usr/sbin/nologin\n`)
-    expect(read(c.shadow)).toBe(`${SHADOW}app-db:!:20000:0:99999:7:::\n`)
-    expect(accounts(c, 'remove', 'app-web')).toEqual({ code: 0, out: '' })
+    accounts(c, 'add', 'svc-web', '30000')
+    accounts(c, 'add', 'svc-db', '30001')
+    expect(accounts(c, 'remove', 'svc-web')).toEqual({ code: 0, out: '' })
+    expect(read(join(c.state, 'passwd'))).not.toContain('svc-web')
+    expect(read(join(c.state, 'group'))).toBe('svc-db:x:30001:\n')
+    expect(read(join(c.run, 'passwd'))).toBe(`${IMAGE_PASSWD}svc-db:x:30001:30001:mica service svc-db:/nonexistent:/usr/sbin/nologin\n`)
+    expect(read(c.shadow)).toBe(`${SHADOW}svc-db:!:20000:0:99999:7:::\n`)
+    expect(accounts(c, 'remove', 'svc-web')).toEqual({ code: 0, out: '' })
     // An image account is never removed, from STATE or the shadow.
     expect(accounts(c, 'remove', 'mica').code).toBe(0)
     expect(read(c.shadow)).toContain('mica:!:')
-    expect(accounts(c, 'list').out).toBe('app-db\t30001\t30001\n')
+    expect(accounts(c, 'list').out).toBe('svc-db\t30001\t30001\n')
   })
 
   test('bad arguments are a usage error', () => {
     const c = newCase('usage')
-    for (const args of [[], ['add', 'app'], ['add', 'app', '30000', '30000', 'x'], ['remove'], ['list', 'x'], ['build', 'x'], ['create', 'app', '30000']])
+    for (const args of [[], ['add', 'svc'], ['add', 'svc', '30000', '30000', 'x'], ['remove'], ['list', 'x'], ['build', 'x'], ['create', 'svc', '30000']])
       expect(accounts(c, ...args).code).toBe(2)
     expect(existsSync(c.state)).toBe(false)
   })
@@ -166,19 +177,19 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login
 
   test('add-login chooses the lowest free uid, binds the account and its group, makes its home and lets its keys in', () => {
     const c = newCase('login')
-    accounts(c, 'add', 'app-web', '30000')
+    accounts(c, 'add', 'svc-web', '30000')
     expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
     expect(accounts(c, 'add-login', 'bob')).toEqual({ code: 0, out: '20001\n' })
-    expect(read(join(c.state, 'passwd'))).toBe(APP + LOGIN('alice', 20000) + LOGIN('bob', 20001))
-    expect(read(join(c.state, 'group'))).toBe('app-web:x:30000:\nalice:x:20000:\nbob:x:20001:\n')
-    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + APP + LOGIN('alice', 20000) + LOGIN('bob', 20001))
+    expect(read(join(c.state, 'passwd'))).toBe(SERVICE + LOGIN('alice', 20000) + LOGIN('bob', 20001))
+    expect(read(join(c.state, 'group'))).toBe('svc-web:x:30000:\nalice:x:20000:\nbob:x:20001:\n')
+    expect(read(join(c.run, 'passwd'))).toBe(IMAGE_PASSWD + SERVICE + LOGIN('alice', 20000) + LOGIN('bob', 20001))
     expect(owner(join(c.homes, 'alice'))).toBe('20000:20000 700')
     // No password: '*' lets a key log in, '!' would lock even that.
-    expect(read(c.shadow)).toBe(`${SHADOW}app-web:!:20000:0:99999:7:::\nalice:*:20000:0:99999:7:::\nbob:*:20000:0:99999:7:::\n`)
+    expect(read(c.shadow)).toBe(`${SHADOW}svc-web:!:20000:0:99999:7:::\nalice:*:20000:0:99999:7:::\nbob:*:20000:0:99999:7:::\n`)
     // Again is no error and the same uid; the classes list apart.
     expect(accounts(c, 'add-login', 'alice')).toEqual({ code: 0, out: '20000\n' })
     expect(accounts(c, 'list-login')).toEqual({ code: 0, out: 'alice\t20000\tno\nbob\t20001\tno\n' })
-    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'app-web\t30000\t30000\n' })
+    expect(accounts(c, 'list')).toEqual({ code: 0, out: 'svc-web\t30000\t30000\n' })
   })
 
   test('a locked entry of a login account loses its lock at the next build', () => {
@@ -206,23 +217,23 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login
     expect(accounts(c, 'add-login', 'dave')).toEqual({ code: 1, out: `mica-accounts: ${c.homes}/dave is owned by uid 20001, which is not free for dave\n` })
   })
 
-  test('refuses root, mica, sshd, mica-app-*, the image\'s names and the app accounts; the classes stay apart', () => {
+  test('refuses root, mica, sshd, the image\'s names and the service accounts; the classes stay apart', () => {
     const c = newCase('login-refused')
-    accounts(c, 'add', 'app-web', '30000')
+    accounts(c, 'add', 'svc-web', '30000')
     accounts(c, 'add-login', 'alice')
     const refused = (args: string[], message: string): void => {
       expect(accounts(c, ...args)).toEqual({ code: 1, out: `mica-accounts: ${message}\n` })
     }
-    for (const name of ['root', 'mica', 'sshd', 'mica-app-web'])
+    for (const name of ['root', 'mica', 'sshd'])
       refused(['add-login', name], `${name} is not a login name`)
     refused(['add-login', 'messagebus'], 'messagebus is an account of the image')
-    refused(['add-login', 'app-web'], 'app-web is an app account')
+    refused(['add-login', 'svc-web'], 'svc-web is a service account')
     refused(['add-login', 'Alice'], 'Alice is not an account name')
     refused(['add', 'alice', '30001'], 'alice is a login account')
-    refused(['add', 'app-two', '20001'], 'uid 20001 is outside 30000..39999')
+    refused(['add', 'svc-two', '20001'], 'uid 20001 is outside 30000..39999')
     refused(['remove', 'alice'], 'alice is a login account')
-    refused(['remove-login', 'app-web'], 'app-web is an app account')
-    expect(read(join(c.state, 'passwd'))).toBe(APP + LOGIN('alice', 20000))
+    refused(['remove-login', 'svc-web'], 'svc-web is a service account')
+    expect(read(join(c.state, 'passwd'))).toBe(SERVICE + LOGIN('alice', 20000))
   })
 
   // The image's mica-admins group takes the admins as members; the privilege option
@@ -249,8 +260,8 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login
     expect(admins()).toBe('mica-admins:x:982:')
     expect(read(join(c.state, 'admins'))).toBe('')
     // A name in admins that is no login account makes no member.
-    accounts(c, 'add', 'app-web', '30000')
-    writeFileSync(join(c.state, 'admins'), 'app-web\nmica\nghost\n')
+    accounts(c, 'add', 'svc-web', '30000')
+    writeFileSync(join(c.state, 'admins'), 'svc-web\nmica\nghost\n')
     accounts(c, 'build')
     expect(admins()).toBe('mica-admins:x:982:')
     for (const args of [['add-login', 'carol', '--root'], ['add-login', 'carol', '--admin', 'x'], ['set-login-admin', 'alice']])
@@ -265,7 +276,7 @@ describe.skipIf(process.getuid?.() !== 0)('mica-accounts add-login, remove-login
       'bob:x:20001:20002:mica login bob:/home/bob:/bin/sh',
       'carl:x:20003:20003:mica login carl:/root:/bin/sh',
       'dora:x:20004:20004:mica login dora:/home/dora:/bin/bash',
-      'mica-app-x:x:20005:20005:mica login mica-app-x:/home/mica-app-x:/bin/sh',
+      'sshd:x:20005:20005:mica login sshd:/home/sshd:/bin/sh',
       '',
     ].join('\n'))
     const ran = accounts(c, 'build')

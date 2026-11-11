@@ -18,7 +18,7 @@ On amd64 the floor is 72 packages and 51 MB (11.8 MB with xz).
 | System policy | **mica-system**: the lifecycle helpers under `/usr/lib/mica`, the DATA layout and its mountpoints, the operator account, the interactive shell profile. Beside busybox the helpers call e2fsck and resize2fs (e2fsprogs) and findmnt (util-linux). They ask the init only through `/usr/lib/mica/mica-init`, which the init package provides, and reach micad with `dbus-send`. |
 | System bus | dbus, whichever init runs it, with adduser to create its account. |
 | Trust | **mica-ca-trust**, the TLS anchors of the update transport. |
-| Accounts | `root` and `mica` (uid and gid 1000), both locked, both on `/bin/sh`. The system IDs of `config/ids.json` are fixed. The apps' accounts, 30000..39999, are micad's, through `mica-accounts` (below). |
+| Accounts | `root` and `mica` (uid and gid 1000), both locked, both on `/bin/sh`. The system IDs of `config/ids.json` are fixed. Service accounts, 30000..39999, for the user's own units, through `mica-accounts` (below). |
 | Compose toolchain | dpkg, tar, perl-base, debconf, passwd and init-system-helpers, so a composer can install into the root with dpkg. They are not device content; the composer purges the package manager at pack. |
 | Not carried | an init; gconv modules, i18n data, time zones beyond UTC (`/etc/localtime` is absent), man pages, documentation beyond copyright files; OpenSSH, curl, iptables; Debian's `quota` (DATA's project quotas are set by mica-deploy's runkit, on the boards that want them). |
 
@@ -186,27 +186,28 @@ on stderr, and the log stays in RAM with nothing forwarded.
   configure a collector only across a VPN or WireGuard tunnel, and never log a secret at its
   source.
 
-**Accounts.** micad runs each of the user's apps under an account of its own. The image's
+**Accounts.** A user's own unit runs under a service account: a uid and group of its own,
+with no login. The image's
 `/etc/passwd` and `/etc/group` stay in place; `/usr/lib/mica/mica-accounts build` (mica-system)
 binds built copies over them, `/run/mica/accounts/{passwd,group}`: the image's lines, then the
-app accounts kept on STATE, `DATA/state/accounts/{passwd,group}`. It runs once STATE is bound
-and before micad: `mica-accounts.service` under systemd (after `mica-seed-state.service`,
+service and login accounts kept on STATE, `DATA/state/accounts/{passwd,group}`. It runs once
+STATE is bound and before micad: `mica-accounts.service` under systemd (after `mica-seed-state.service`,
 before `local-fs.target`, `micad.service` and `mica-shadow-reconcile.service`), `mica-mounts`
 under OpenRC (after the hostname). The early boot -- udev or mdev, journald, D-Bus -- reads the
 image's files. Without a build, or when it fails, the image's files are what everyone reads:
-root, mica and every system account work, and only the app names are unknown.
+root, mica and every system account work, and only the kept names are unknown.
 
-micad calls it, and never edits the files:
+micad calls it as root, and never edits the files:
 
-- `mica-accounts add <name> <uid> [<gid>]` adds an app account, `gid` defaulting to `uid`. The
-  name is `[a-z_][a-z0-9_-]{0,31}`, uid and gid are in `30000..39999`, and neither the name nor
-  an id may belong to the image or another app account. STATE then holds
-  `<name>:x:<uid>:<gid>:mica app <name>:/nonexistent:/usr/sbin/nologin` in `passwd` and
+- `mica-accounts add <name> <uid> [<gid>]` adds a service account, `gid` defaulting to `uid`.
+  The name is `[a-z_][a-z0-9_-]{0,31}`, uid and gid are in `30000..39999`, and neither the name
+  nor an id may belong to the image or another kept account. STATE then holds
+  `<name>:x:<uid>:<gid>:mica service <name>:/nonexistent:/usr/sbin/nologin` in `passwd` and
   `<name>:x:<gid>:` in `group`; `/etc/passwd` and `/etc/group` are rebound, and
   `/run/mica/shadow` gains a locked entry. The same account again succeeds and changes nothing.
 - `mica-accounts remove <name>` drops it from STATE and the shadow and rebinds; an unknown
   name succeeds.
-- `mica-accounts list` prints the app accounts, one a line: `<name>` TAB `<uid>` TAB `<gid>`.
+- `mica-accounts list` prints the service accounts, one a line: `<name>` TAB `<uid>` TAB `<gid>`.
 - `mica-accounts build` rebinds from STATE as it is, after micad's reset has cleared it.
 
 A provisioning agent (mica-gce-agent) keeps the login accounts of the people who log in with
@@ -218,7 +219,7 @@ SSH keys, on the same STATE files:
   The group is its own, with the same id; STATE holds
   `<name>:x:<uid>:<uid>:mica login <name>:/home/<name>:/bin/sh`. `/home/<name>` (DATA) is made
   0700 when missing, and the shadow entry is `*`: no password, so only its keys log it in. root,
-  mica, sshd, `mica-app-*`, the image's account and group names and the app accounts' names are
+  mica, sshd, the image's account and group names and the service accounts' names are
   refused. The same account again prints the same uid.
 - With `--admin` the account is an admin, made or kept, and without it no longer one: a member
   of the image's group `mica-admins` (gid 982, `config/ids.json`), visible in the bound
@@ -230,17 +231,17 @@ SSH keys, on the same STATE files:
 - `mica-accounts list-login` prints them, one a line: `<name>` TAB `<uid>` TAB `yes` or `no`
   (admin).
 
-`add` and `remove` refuse a login account, and `add-login` and `remove-login` an app account.
+`add` and `remove` refuse a login account, and `add-login` and `remove-login` a service account.
 
 Each exits 0 on success; a refusal or a failure exits 1 with one `mica-accounts: ...` line on
 stderr, and bad arguments exit 2 with the usage line. A malformed, out-of-range or clashing
 STATE line is skipped with a `mica-accounts: skipping ...` line, never fatal. A rebind
 unmounts and binds again: for that moment a reader sees the image's accounts, never half a
 file. glibc's `files` lookup and the static busybox read the files on each lookup, so `ls`,
-`ps` and `id` name an app account as soon as it is added.
+`ps` and `id` name a service account as soon as it is added.
 
-**Device access groups.** An app runs unprivileged and reaches devices through a group, which
-micad gives its account:
+**Device access groups.** A service runs unprivileged and reaches devices through a group,
+which its unit adds to the service account:
 
 | Group | gid | Nodes, mode 0660 |
 | --- | --- | --- |
@@ -253,6 +254,33 @@ The gids are pinned in `config/ids.json` (`dialout` is base-passwd's) and exist 
 Under systemd, mica-systemd's `/usr/lib/udev/rules.d/60-mica-devices.rules` gives the nodes to
 `gpio`, `i2c` and `spi`, and udev's `50-udev-default.rules` gives the serial ports to
 `dialout`; under OpenRC, mica-mdev's `/etc/mdev.conf` does both.
+
+A user's unit on a USB serial port, running as the service account `logger` (30010), added with
+`mica-accounts add logger 30010`:
+
+- systemd:
+
+  ```ini
+  [Service]
+  ExecStart=/usr/local/bin/logger-daemon /dev/ttyUSB0
+  User=logger
+  Group=logger
+  SupplementaryGroups=dialout
+  DeviceAllow=char-ttyUSB rw
+  ```
+
+- OpenRC:
+
+  ```sh
+  #!/sbin/openrc-run
+  command=/usr/local/bin/logger-daemon
+  command_args=/dev/ttyUSB0
+  # The service account, with dialout as its group for the serial port.
+  command_user=logger:dialout
+  supervisor=supervise-daemon
+  # A capability, when the service needs one, e.g. a low port:
+  # capabilities=^cap_net_bind_service
+  ```
 
 **Runlevel membership is payload.** mica-openrc's postinst removes the runlevel links no
 package owns -- what openrc imported from the SysV links, such as Debian's `dbus` -- and keeps
