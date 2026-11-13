@@ -9,7 +9,7 @@ RequiresMountsFor=/mica
 What=/mica/root
 Where=/root
 Type=none
-Options=bind
+Options=bind,nosuid,nodev
 
 [Install]
 WantedBy=local-fs.target

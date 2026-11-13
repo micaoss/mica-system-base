@@ -1,0 +1,45 @@
+#!/bin/sh
+# The user's .mount, .automount and .swap units, loaded in the boot's first
+# transaction: before local-fs.target and every engine, without waiting for
+# mica-load-extensions. DATA is mounted before PID 1, so they are read from DATA's
+# unit directory itself, of which /usr/local/lib/systemd/system is a bind
+# (mica-unit). Runs at every daemon start and reload.
+#
+# A unit mounting where a user may (/usr/lib/mica/mica-mountpoint) is copied with
+# its .wants/ and .requires/ links into the normal directory, which outranks
+# /usr/local/lib; srv.mount into the early one, which outranks /etc, so it replaces
+# the default bind of /srv. Any other is masked there, so the later reload does not
+# load it from /usr/local/lib either, and logged to the kernel log.
+set -u
+
+SOURCE=${MICA_USER_UNITS:-/mnt/data/state/systemd-units}
+MOUNTPOINT=${MICA_MOUNTPOINT:-/usr/lib/mica/mica-mountpoint}
+KMSG=${MICA_KMSG:-/dev/kmsg}
+normal=${1:?usage: mica-user-mounts-generator <normal> <early> <late>}
+early=${2:?usage: mica-user-mounts-generator <normal> <early> <late>}
+
+log() {
+    echo "<4>mica-user-mounts-generator: $*" >>"$KMSG" 2>/dev/null || echo "mica-user-mounts-generator: $*" >&2
+}
+
+[ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || exit 0
+for path in "$SOURCE"/*.mount "$SOURCE"/*.automount "$SOURCE"/*.swap; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    name=${path##*/}
+    if ! refusal=$("$MOUNTPOINT" unit "$path"); then
+        log "${refusal:-$name is refused}"
+        ln -sfn /dev/null "$normal/$name"
+        continue
+    fi
+    dir=$normal
+    [ "$name" != srv.mount ] || dir=$early
+    cp "$path" "$dir/$name"
+    for link in "$SOURCE"/*.wants/"$name" "$SOURCE"/*.requires/"$name"; do
+        [ -L "$link" ] || continue
+        sub=${link%/*}
+        sub=${sub##*/}
+        mkdir -p "$dir/$sub"
+        ln -sfn "$dir/$name" "$dir/$sub/$name"
+    done
+done
+exit 0

@@ -48,6 +48,8 @@ describe('mica-data-layout', () => {
       expect(existsSync(join(data, 'mica', name))).toBe(true)
     expect(existsSync(join(data, 'mica/apps'))).toBe(false)
     expect(lstatSync(join(data, 'srv')).isDirectory()).toBe(true)
+    // /var/mnt, where a user mounts a disk of their own.
+    expect(lstatSync(join(data, 'var/mnt')).isDirectory()).toBe(true)
     const modes: [string, string][] = [['mica', '755'], ['srv', '755'], ['mica/ui', '755'], ['containers', '711'], ['mica/home', '755'], ['mica/root', '700'], ['mica/config', '700'], ['mica/diagnostics', '700']]
     for (const [path, want] of modes)
       expect([path, mode(join(data, path))]).toEqual([path, want])

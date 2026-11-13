@@ -11,7 +11,7 @@ What=/mnt/data/mica
 Where=/mica
 Type=none
 # Keep logical child mounts out of the physical reset backing tree.
-Options=bind,private
+Options=bind,private,nosuid,nodev
 
 [Install]
 WantedBy=local-fs.target

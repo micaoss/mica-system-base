@@ -1,0 +1,79 @@
+#!/sbin/openrc-run
+# The user's own mounts and swap: /usr/local/etc/fstab on DATA state, fstab(5)
+# syntax. Every line is checked first (mica-unit fstab check, the same rule): one
+# target or swap outside where a user may mount refuses the whole file. Then each
+# line is mounted, or its swap turned on, in file order: noauto lines are skipped,
+# a missing target directory is created, and a failure is fatal unless the line
+# says nofail. At stop, the lines come down in reverse. A line for /srv replaces
+# the default bind of /srv, which mica-mounts then skips. The engines need this
+# service, and check their own root with mica-require-mount.
+
+description="Mount the user's disks and swap from /usr/local/etc/fstab"
+
+FSTAB=${MICA_FSTAB:-/usr/local/etc/fstab}
+MOUNTPOINT=${MICA_MOUNTPOINT:-/usr/lib/mica/mica-mountpoint}
+# What start mounted, for stop.
+LINES=${MICA_FSTAB_LINES:-/run/mica-fstab.lines}
+
+depend() {
+    need mica-mounts
+    before mica-local mica-units
+}
+
+# Each line of the fstab that is not a comment, as "<source> <target> <type> <options>".
+lines() {
+    awk '$1 !~ /^#/ && NF >= 3 { print $1, $2, $3, (NF >= 4 ? $4 : "defaults") }' "$FSTAB"
+}
+
+has_option() {
+    case ",$1," in *",$2,"*) return 0 ;; esac
+    return 1
+}
+
+start() {
+    [ -f "$FSTAB" ] || return 0
+    ebegin "Checking $FSTAB"
+    refusals=$("$MOUNTPOINT" fstab "$FSTAB")
+    if ! eend $? "$refusals"; then
+        return 1
+    fi
+    failed=0
+    lines >"$LINES"
+    while read -r source target type options; do
+        has_option "$options" noauto && continue
+        if [ "$type" = swap ]; then
+            ebegin "Turning on swap $source"
+            swapon "$source"
+        else
+            ebegin "Mounting $source on $target"
+            if mountinfo -q "$target"; then
+                true
+            else
+                mkdir -p "$target" && mount -t "$type" -o "$options" "$source" "$target"
+            fi
+        fi
+        if ! eend $?; then
+            if has_option "$options" nofail; then
+                ewarn "$source: not mounted, and nofail"
+            else
+                failed=1
+            fi
+        fi
+    done <"$LINES"
+    return "$failed"
+}
+
+stop() {
+    [ -f "$LINES" ] || return 0
+    ebegin "Unmounting the user's disks and swap"
+    awk '{ line[NR] = $0 } END { for (i = NR; i > 0; i--) print line[i] }' "$LINES" |
+        while read -r source target type _; do
+            if [ "$type" = swap ]; then
+                swapoff "$source" 2>/dev/null
+            elif mountinfo -q "$target"; then
+                umount -n "$target"
+            fi
+        done
+    rm -f "$LINES"
+    eend 0
+}

@@ -4,6 +4,9 @@
 # reboot and update, and micad's reset clears it. `systemctl enable` cannot do this:
 # it links into /etc/systemd/system, on the read-only root. At boot,
 # mica-load-extensions reloads systemd once the bind is up and starts what is enabled.
+# A .mount, .automount or .swap unit must mount where a user may
+# (/usr/lib/mica/mica-mountpoint); mica-user-mounts-generator loads those early in
+# the boot, and the user's srv.mount replaces the default bind of /srv.
 #
 #   mica-unit install <file>...          copy units in (a name the root ships is refused)
 #   mica-unit enable [--now] <unit>      link it as its [Install] says, here
@@ -16,6 +19,7 @@ set -eu
 
 DIR=${MICA_UNIT_DIR:-/usr/local/lib/systemd/system}
 SHIPPED=${MICA_UNIT_SHIPPED:-/etc/systemd/system /usr/lib/systemd/system /lib/systemd/system}
+MOUNTPOINT=${MICA_MOUNTPOINT:-/usr/lib/mica/mica-mountpoint}
 
 die() {
     echo "mica-unit: $*" >&2
@@ -31,16 +35,28 @@ usage() {
 unit_name() {
     case "$1" in
     */* | '') die "$1 is not a unit name" ;;
-    *.service | *.socket | *.timer | *.path | *.target | *.mount) echo "$1" ;;
+    *.service | *.socket | *.timer | *.path | *.target | *.mount | *.automount | *.swap) echo "$1" ;;
     *.*) die "$1 is not a unit name" ;;
     *) echo "$1.service" ;;
     esac
 }
 
+# srv.mount is the one the user's replaces.
 not_shipped() {
+    [ "$1" != srv.mount ] || return 0
     for dir in $SHIPPED; do
         [ ! -e "$dir/$1" ] && [ ! -L "$dir/$1" ] || die "$1 is shipped by the root; a user unit cannot replace it"
     done
+}
+
+# A mount, automount or swap unit's path, where a user may mount, and its name.
+mountpoint_allowed() {
+    case "$1" in
+    *.mount | *.automount | *.swap)
+        refusal=$("$MOUNTPOINT" unit "$2") || die "${refusal:-$1 is refused}"
+        ;;
+    esac
+    return 0
 }
 
 # The file a unit is read from: name@instance.suffix from name@.suffix.
@@ -79,6 +95,7 @@ install_units() {
         name=${file##*/}
         [ "$(unit_name "$name")" = "$name" ] || die "$name is not a unit name"
         not_shipped "$name"
+        mountpoint_allowed "$name" "$file"
     done
     for file in "$@"; do
         install -m 0644 "$file" "$DIR/${file##*/}"
@@ -91,6 +108,7 @@ enable_unit() {
     file=$(unit_file "$name")
     [ -f "$DIR/$file" ] || die "$name is not installed in $DIR"
     not_shipped "$name"
+    mountpoint_allowed "$name" "$DIR/$file"
     wanted=$(install_values "$DIR/$file" WantedBy)
     required=$(install_values "$DIR/$file" RequiredBy)
     aliases=$(install_values "$DIR/$file" Alias)

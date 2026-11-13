@@ -1,0 +1,188 @@
+#!/bin/sh
+# Where a user may mount their own disks and swap, for both inits: mica-unit, the
+# systemd generator mica-user-mounts-generator and OpenRC's mica-fstab all check
+# here. Everything not allowed is refused, and a path is taken only as written:
+# absolute, with no empty, "." or ".." component, no trailing "/" and no blank or
+# backslash. One is never rewritten into an allowed one.
+#
+#   mica-mountpoint where <path>    a mount's target: /srv and anything under it,
+#                                   /var/mnt/<name>..., /home/<user>..., or exactly
+#                                   /mica/containers/storage or /mica/containers/docker
+#   mica-mountpoint swap <source>   a swap: /dev/disk/by-{uuid,label,partuuid,partlabel,id}/<name>,
+#                                   UUID=, LABEL=, PARTUUID=, PARTLABEL=, or a file under
+#                                   /srv/<name>, /var/mnt/<name> or /home/<user>
+#   mica-mountpoint escape <path>   the unit name of <path> without its suffix, as
+#                                   systemd-escape --path gives it
+#   mica-mountpoint unit <file>     a .mount, .automount or .swap file: its Where= (or
+#                                   What=) allowed and its name that path's
+#   mica-mountpoint fstab <file>    every line of an fstab
+#
+# where and swap answer by their exit status alone. unit and fstab print each
+# refusal on stdout, "refused mountpoint <path>" or what else is wrong, and exit 1.
+set -eu
+
+usage() {
+    echo "usage: mica-mountpoint where <path> | swap <source> | escape <path> | unit <file> | fstab <file>" >&2
+    exit 2
+}
+
+normal() {
+    case "$1" in
+    / | /*//* | */ | */./* | */. | */../* | */.. | *[[:space:]\\]*) return 1 ;;
+    /*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+where_allowed() {
+    normal "$1" || return 1
+    case "$1" in
+    /srv | /srv/*) return 0 ;;
+    /var/mnt/?* | /home/?*) return 0 ;;
+    /mica/containers/storage | /mica/containers/docker) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+swap_allowed() {
+    case "$1" in
+    UUID=?* | LABEL=?* | PARTUUID=?* | PARTLABEL=?*)
+        case "$1" in *[[:space:]/\\]*) return 1 ;; esac
+        return 0
+        ;;
+    /dev/disk/by-uuid/?* | /dev/disk/by-label/?* | /dev/disk/by-partuuid/?* | /dev/disk/by-partlabel/?* | /dev/disk/by-id/?*)
+        normal "$1" || return 1
+        case "${1#/dev/disk/by-*/}" in */*) return 1 ;; esac
+        return 0
+        ;;
+    /srv/?* | /var/mnt/?* | /home/?*) normal "$1" ;;
+    *) return 1 ;;
+    esac
+}
+
+# systemd's path escaping: "/" is "-", a leading "." and every byte other than
+# [A-Za-z0-9:_.] is \xNN.
+escape() {
+    [ "$1" != / ] || {
+        echo -
+        return 0
+    }
+    printf '%s\n' "${1#/}" | LC_ALL=C awk '
+        BEGIN { for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            out = ""
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "/") out = out "-"
+                else if (c ~ /[A-Za-z0-9:_]/ || (c == "." && i > 1)) out = out c
+                else out = out sprintf("\\x%02x", ord[c])
+            }
+            print out
+        }'
+}
+
+# The last <key>= of [<section>] in <file>, blanks around it trimmed.
+value() {
+    awk -v want="[$2]" -v key="$3" '
+        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+        section == want {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (index(line, key) != 1) next
+            rest = substr(line, length(key) + 1)
+            if (rest !~ /^[[:space:]]*=/) next
+            found = rest
+            sub(/^[[:space:]]*=[[:space:]]*/, "", found)
+            sub(/[[:space:]]+$/, "", found)
+        }
+        END { print found }' "$1"
+}
+
+unit() {
+    [ -f "$1" ] || {
+        echo "$1 is not a file"
+        return 1
+    }
+    name=${1##*/}
+    case "$name" in
+    *.mount) section=Mount key=Where suffix=mount ;;
+    *.automount) section=Automount key=Where suffix=automount ;;
+    *.swap) section=Swap key=What suffix=swap ;;
+    *)
+        echo "$name is not a mount, automount or swap unit"
+        return 1
+        ;;
+    esac
+    path=$(value "$1" "$section" "$key")
+    [ -n "$path" ] || {
+        echo "$name has no $key= in [$section]"
+        return 1
+    }
+    if [ "$suffix" = swap ]; then
+        swap_allowed "$path" || {
+            echo "refused mountpoint $path"
+            return 1
+        }
+    else
+        where_allowed "$path" || {
+            echo "refused mountpoint $path"
+            return 1
+        }
+    fi
+    case "$path" in
+    /*) [ "$(escape "$path").$suffix" = "$name" ] || {
+        echo "$name is not a unit name for $path"
+        return 1
+    } ;;
+    *)
+        echo "$name: a swap unit needs What= as a path, /dev/disk/by-*/<name> or a file"
+        return 1
+        ;;
+    esac
+}
+
+# fstab(5): <source> <target> <type> [<options> [<dump> [<pass>]]], # comments.
+fstab() {
+    [ -f "$1" ] || {
+        echo "$1 is not a file"
+        return 1
+    }
+    bad=0
+    n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1))
+        # shellcheck disable=SC2086
+        set -f
+        set -- $line
+        set +f
+        case "${1:-#}" in '#'*) continue ;; esac
+        if [ "$#" -lt 3 ] || [ "$#" -gt 6 ]; then
+            echo "line $n is not an fstab line: $line"
+            bad=1
+        elif [ "$3" = swap ]; then
+            swap_allowed "$1" || {
+                echo "line $n: refused mountpoint $1"
+                bad=1
+            }
+        else
+            where_allowed "$2" || {
+                echo "line $n: refused mountpoint $2"
+                bad=1
+            }
+        fi
+    done <"$1"
+    return "$bad"
+}
+
+[ "$#" = 2 ] || usage
+case "$1" in
+where) where_allowed "$2" ;;
+swap) swap_allowed "$2" ;;
+escape)
+    normal "$2" || [ "$2" = / ] || exit 1
+    escape "$2"
+    ;;
+unit) unit "$2" ;;
+fstab) fstab "$2" ;;
+*) usage ;;
+esac

@@ -38,6 +38,8 @@ ensure_dir "$DATA_ROOT/meta" 0700
 ensure_dir "$DATA_ROOT/cache" 0755
 ensure_dir "$DATA_ROOT/tmp" 1777
 ensure_dir "$DATA_ROOT/var" 0755
+# /var/mnt, where a user mounts a disk of their own.
+ensure_dir "$DATA_ROOT/var/mnt" 0755
 ensure_dir "$SYSTEM_ROOT" 0755
 ensure_dir "$USER_ROOT" 0755
 ensure_dir "$CONTAINER_ROOT" 0711

@@ -77,7 +77,7 @@ Every product installs exactly one.
 | PID 1 | systemd | `openrc-init` |
 | Devices | udev | busybox `mdev -d`; `/etc/mdev.conf` gives udev's owners and modes; no `/dev/*/by-*` names |
 | DATA | grown with `systemd-repart` (`mica-grow-data`), checked and mounted from `/etc/fstab`, laid out | grown with `sfdisk` (`mica-grow-data`), checked (`fsck -M`: not the DATA the runkit mounted), mounted from `/etc/fstab`, `x-systemd.growfs` honoured, laid out |
-| Binds and seeds | mount units: `/mica`, `/mica/containers`, `/srv`, STATE's hostname, `/var`, `/var/lib/mica`, `/root`, `/home` | `mica-mounts`, in the same order, then the `tmpfiles.d` entries |
+| Binds and seeds | mount units: `/mica`, `/mica/containers`, `/srv`, STATE's hostname, `/var`, `/var/lib/mica`, `/root`, `/home`, every one `nosuid,nodev`; `/mica`, `/mica/containers`, `/srv` and `/var` also `private` | `mica-mounts`, in the same order and with the same options, then the `tmpfiles.d` entries |
 | Network | networkd, DHCP by default; resolved; `systemd-networkd-wait-online` masked, so nothing waits for a link and `network-online.target` comes with `network.target` | `/etc/network/interfaces` (a link to `/var/lib/mica/network/interfaces`, which micad writes) applied by busybox `ifup -a`; until it exists, DHCP on every `eth*` with busybox `udhcpc`; DNS in `/run/mica/resolv.conf` |
 | Time | timesyncd, on the NTP servers micad saves in `/var/lib/mica/time/timesyncd.conf` (linked as `/etc/systemd/timesyncd.conf.d/60-mica-servers.conf`) | busybox `ntpd` (`mica-ntpd`) on the `ntp_servers` micad saves in `/var/lib/mica/time/ntpd.conf`, Debian's pool until then |
 | Log | journald, `Storage=auto`: on DATA while `/var/log/journal` exists, which `mica-log-settings` makes or removes from the log settings; forwarded by `systemd-netlogd` | busybox `syslogd` and `klogd`, on DATA (`/var/log/messages` and three rotations) or in RAM from the log settings, forwarded over UDP; read with `logread` |
@@ -324,7 +324,8 @@ DATA state instead: it survives reboot and every update, and micad's reset clear
 
 `mica-unit install <file>...`, `enable [--now] <unit>`, `disable [--now] <unit>`, `remove <unit>`
 and `list` are the same under both. A name the root ships (in `/etc` or `/usr/lib`, or
-`/etc/init.d`) is refused, so a user service can never replace or mask one of Mica's. For
+`/etc/init.d`) is refused, so a user service can never replace or mask one of Mica's; the one
+exception is `srv.mount`, below. For
 example, a Tailscale node agent with its binaries in `/srv/tailscaled`:
 
 ```sh
@@ -340,7 +341,9 @@ mica-unit enable --now tailscaled
 
 A user service starts after micad (and after the D-Bus micad answers on), never needing it: it
 starts even when micad does not. It cannot be ordered before micad or into the early boot; the
-units on DATA are loaded only once DATA is bound.
+units on DATA are loaded only once DATA is bound. The user's mounts are the exception, below.
+`mica-units.service`, which starts the services micad turned on, orders after
+`mica-load-extensions`, so the user's own units are loaded before those start.
 
 micad declares user services too: the settings `services.units`, `micad unit` on the device,
 `/api/v1/units` and the console (mica-core `docs/mica-core.md` section 3.10). It applies them
@@ -354,6 +357,63 @@ on this contract of `mica-unit`, under both inits:
 - `enable`, `disable` and `remove <name>` exit 0 on success; a refusal exits 1 with a
   `mica-unit: ...` line on stderr, bad arguments exit 2 with the usage line on stderr, and a
   failing `systemctl` or `rc-service` passes on its own exit status and message.
+
+## The user's own mounts
+
+A user mounts their own disks, and turns on swap, where a user may mount; everywhere else is
+the system's. `mica-unit` (from a unit's `Where=`, or `What=` of a swap), the systemd generator
+and OpenRC's `mica-fstab` check the same list, `/usr/lib/mica/mica-mountpoint` (mica-system):
+
+| | Allowed |
+| --- | --- |
+| A mount's target | `/srv` and anything under it; `/var/mnt/<name>` and under (`/var/mnt` is on DATA's var); `/home/<user>` and under; exactly `/mica/containers/storage` (podman's root) or `/mica/containers/docker` (docker's) |
+| A swap | `/dev/disk/by-uuid/`, `by-label/`, `by-partuuid/`, `by-partlabel/` or `by-id/<name>`; `UUID=`, `LABEL=`, `PARTUUID=`, `PARTLABEL=` in an fstab; or a file at an allowed target other than `/srv` and the engine roots |
+
+Everything else is refused, `mica-unit: refused mountpoint <path>` (exit 1), as is a path not
+written plainly: relative, with an empty, `.` or `..` component, a trailing `/`, a blank or a
+backslash. Such a path is never rewritten into an allowed one. A bare `/dev/sdX`,
+`/dev/mmcblkN` or `/dev/nvme*` names no disk for good and is refused. Mount options are the
+user's; `nosuid,nodev` is recommended.
+
+A mount at `/srv` itself replaces the default bind of DATA's `srv/`, which is then mounted
+nowhere and kept as it is; removing the user's mount brings it back at the next boot.
+
+| | systemd (mica-systemd) | OpenRC (mica-openrc) |
+| --- | --- | --- |
+| The user writes | `.mount`, `.automount` and `.swap` units, named as `systemd-escape --path` names their path, through `mica-unit` | `/usr/local/etc/fstab`, fstab(5) |
+| Checked | by `mica-unit install` and `enable` | by `mica-unit fstab check [<file>]`, and by `mica-fstab` before it mounts anything: one refused line refuses the file |
+| At boot | `mica-user-mounts-generator` reads the units on DATA itself (DATA is mounted before PID 1) at every daemon start and reload, and puts the allowed ones, with their `.wants/` and `.requires/` links, into the boot's first transaction, before `local-fs.target` and any engine; `srv.mount` into `generator.early`, where it replaces the root's. A refused one is masked, so the later reload does not load it either, and logged to the kernel log | `mica-fstab`, in `boot`, after `mica-mounts` and before `mica-local` and `mica-units`: each line in file order, `noauto` skipped, a missing target directory made; a failure is fatal unless the line says `nofail`; at stop, unmounted and swapped off in reverse. A line for `/srv` makes `mica-mounts` skip the default bind |
+| Device names | udev's `/dev/disk/by-*` | no `/dev/disk/by-*` (mdev): `UUID=` or `LABEL=` |
+
+For example, the whole of `/srv` on the user's disk:
+
+```ini
+# srv.mount
+[Unit]
+Description=/srv on my data disk
+[Mount]
+What=/dev/disk/by-uuid/1b2c...
+Where=/srv
+Type=ext4
+Options=nosuid,nodev,noatime
+[Install]
+WantedBy=local-fs.target
+```
+
+`mica-unit install srv.mount && mica-unit enable srv.mount`, then reboot. On OpenRC, the same
+line in `/usr/local/etc/fstab`:
+
+```
+UUID=1b2c... /srv ext4 nosuid,nodev,noatime 0 2
+```
+
+A container engine's root on a user disk is honoured, and an absent disk fails the engine
+instead of filling DATA. Under systemd the engine's unit requires the mount for its root.
+Under OpenRC the engine needs `mica-fstab`, and its `start_pre` runs
+`/usr/lib/mica/mica-require-mount <root>` (mica-openrc): when the fstab has a line for
+`<root>`, `nofail` or not, `<root>` must be mounted, or it exits 1 with
+`mica-require-mount: <root> is not mounted; <fstab> line <n>: <line>` on stderr; without
+such a line it exits 0.
 
 ## The options
 

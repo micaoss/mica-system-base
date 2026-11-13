@@ -1,0 +1,20 @@
+#!/bin/sh
+# mica-require-mount <path>: for an engine's start_pre. When the user's fstab
+# (/usr/local/etc/fstab, mica-fstab's) has a line for <path>, <path> must be
+# mounted, nofail or not: a disk that is absent or did not mount fails the start
+# instead of filling DATA. Without such a line there is nothing to wait for.
+set -eu
+
+FSTAB=${MICA_FSTAB:-/usr/local/etc/fstab}
+MOUNTINFO=${MICA_MOUNTINFO:-/proc/self/mountinfo}
+
+[ "$#" = 1 ] || {
+    echo "usage: mica-require-mount <path>" >&2
+    exit 2
+}
+[ -f "$FSTAB" ] || exit 0
+line=$(awk -v path="$1" '$1 !~ /^#/ && $2 == path { print NR ": " $0; exit }' "$FSTAB")
+[ -n "$line" ] || exit 0
+awk -v path="$1" '$5 == path { found = 1 } END { exit !found }' "$MOUNTINFO" && exit 0
+echo "mica-require-mount: $1 is not mounted; $FSTAB line $line" >&2
+exit 1

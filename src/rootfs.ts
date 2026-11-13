@@ -351,7 +351,7 @@ export function assertSystemd(root: string, arch: Arch): void {
 // mica-openrc's services, by runlevel, as its payload links them, and OpenRC's cgroups.
 const OPENRC_RUNLEVELS: Record<string, string[]> = {
   sysinit: ['cgroups', 'mica-kernfs', 'mica-mdev'],
-  boot: ['mica-acpid', 'mica-data-layout', 'mica-klogd', 'mica-mounts', 'mica-syslogd', 'mica-watchdog'],
+  boot: ['mica-acpid', 'mica-data-layout', 'mica-fstab', 'mica-klogd', 'mica-mounts', 'mica-syslogd', 'mica-watchdog'],
   default: ['mica-dbus', 'mica-getty', 'mica-health', 'mica-local', 'mica-network', 'mica-ntpd', 'mica-provisioning-import', 'mica-shadow-reconcile', 'mica-units', 'mica-update'],
 }
 

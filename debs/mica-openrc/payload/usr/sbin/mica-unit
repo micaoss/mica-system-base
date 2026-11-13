@@ -11,10 +11,14 @@
 #   mica-unit disable [--now] <script>     stop starting it at boot
 #   mica-unit remove <script>              stop it and delete it with its settings
 #   mica-unit list                         the scripts here, enabled or disabled
+#   mica-unit fstab check [<file>]         the user's mounts, /usr/local/etc/fstab, as
+#                                          mica-fstab applies it at boot: each target
+#                                          (or swap) where a user may mount
 set -eu
 
 DIR=${MICA_UNIT_DIR:-/usr/local/etc}
 SHIPPED=${MICA_UNIT_SHIPPED:-/etc/init.d}
+MOUNTPOINT=${MICA_MOUNTPOINT:-/usr/lib/mica/mica-mountpoint}
 
 die() {
     echo "mica-unit: $*" >&2
@@ -22,7 +26,7 @@ die() {
 }
 
 usage() {
-    echo "usage: mica-unit install [--conf] <file>... | enable [--now] <script> | disable [--now] <script> | remove <script> | list" >&2
+    echo "usage: mica-unit install [--conf] <file>... | enable [--now] <script> | disable [--now] <script> | remove <script> | list | fstab check [<file>]" >&2
     exit 2
 }
 
@@ -121,6 +125,14 @@ remove)
 list)
     [ "$#" = 0 ] && [ -z "$now$conf" ] || usage
     list_scripts
+    ;;
+fstab)
+    [ "${1:-}" = check ] && [ "$#" -le 2 ] && [ -z "$now$conf" ] || usage
+    file=${2:-$DIR/fstab}
+    if ! refusals=$("$MOUNTPOINT" fstab "$file"); then
+        printf '%s\n' "${refusals:-$file is refused}" | sed 's/^/mica-unit: /' >&2
+        exit 1
+    fi
     ;;
 *)
     usage

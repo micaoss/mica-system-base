@@ -10,7 +10,8 @@ Conflicts=shutdown.target
 What=/mnt/data/srv
 Where=/srv
 Type=none
-Options=bind
+# Private: a user mount beneath /srv stays out of DATA's tree.
+Options=bind,private,nosuid,nodev
 
 [Install]
 WantedBy=local-fs.target

@@ -1,6 +1,7 @@
 #!/sbin/openrc-run
 # The binds of DATA and the seeds they wait for, in the order mica-systemd's units
-# give them: /mica, /mica/containers, /srv; STATE's hostname, applied and written to
+# give them: /mica, /mica/containers, /srv (unless the user's fstab mounts /srv, which
+# mica-fstab then does); STATE's hostname, applied and written to
 # /run/mica/hosts (mica-hosts, mica-hosts.service's under systemd); the image's and
 # the service and login accounts over /etc/passwd and /etc/group (mica-accounts); the user's services
 # (/usr/local/etc, mica-unit's); the var tree, then /var/lib/mica on it; /root and
@@ -43,14 +44,26 @@ tmpfiles() {
     done
 }
 
+# A line for /srv in the user's fstab, read on DATA: /usr/local/etc is bound below.
+user_srv() {
+    [ -f /mnt/data/state/openrc-local/fstab ] &&
+        awk '$1 !~ /^#/ && $2 == "/srv" { found = 1 } END { exit !found }' /mnt/data/state/openrc-local/fstab
+}
+
 start() {
-    ebegin "Binding /mica, /mica/containers and /srv"
-    bind /mnt/data/mica /mica &&
+    ebegin "Binding /mica and /mica/containers"
+    bind /mnt/data/mica /mica nosuid,nodev &&
         mount --make-private /mica &&
         bind /mnt/data/containers /mica/containers nosuid,nodev &&
-        mount --make-private /mica/containers &&
-        bind /mnt/data/srv /srv
+        mount --make-private /mica/containers
     eend $? || return 1
+    if user_srv; then
+        einfo "/srv is the user's, from /usr/local/etc/fstab"
+    else
+        ebegin "Binding /srv"
+        bind /mnt/data/srv /srv nosuid,nodev && mount --make-private /srv
+        eend $? || return 1
+    fi
     seed mica-seed-state || return 1
     ebegin "Binding STATE's hostname"
     bind /mnt/data/state/hostname /etc/hostname && hostname -F /etc/hostname &&
@@ -70,12 +83,12 @@ start() {
     ebegin "Binding /var and /var/lib/mica"
     bind /mnt/data/var /var nosuid,nodev &&
         mount --make-private /var &&
-        bind /mnt/data/state/mica /var/lib/mica
+        bind /mnt/data/state/mica /var/lib/mica nosuid,nodev
     eend $? || return 1
     seed mica-seed-root || return 1
     seed mica-seed-home || return 1
     ebegin "Binding /root and /home"
-    bind /mica/root /root && bind /mica/home /home
+    bind /mica/root /root nosuid,nodev && bind /mica/home /home nosuid,nodev
     eend $? || return 1
     ebegin "Applying /etc/tmpfiles.d"
     tmpfiles

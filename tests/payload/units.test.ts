@@ -101,6 +101,8 @@ describe('the boot units', () => {
     const unit = readFileSync(join(system, 'mica-units.service'), 'utf8')
     expect(unit).toMatch(/^ExecStart=\/usr\/lib\/mica\/mica-units$/m)
     expect(unit).toMatch(/^After=.*\bvar-lib-mica\.mount\b/m)
+    // The user's own units, which the services it starts may rely on, are loaded first.
+    expect(unit).toMatch(/^After=.*\bmica-load-extensions\.service\b/m)
     expect(readlinkSync(join(system, 'multi-user.target.wants/mica-units.service'))).toBe('/etc/systemd/system/mica-units.service')
   })
 

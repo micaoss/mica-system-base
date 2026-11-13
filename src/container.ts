@@ -882,47 +882,204 @@ function optionRows(root: string): Row[] {
   return selectRuntime(REPO, 'amd64', { kind: 'all' }).filter(row => !installed.has(row.name) && row.consumers.some(consumer => depends.includes(consumer)))
 }
 
+// qemu, mke2fs and the ssh client, from the snapshot the lock is resolved from, on the
+// environment image; built into `work` when the tag is missing.
+function qemuImage(work: string): string {
+  const { mirror, suite } = sources()
+  const base = `${environment().image}:amd64`
+  const tools = 'qemu-system-x86 e2fsprogs openssh-client socat'
+  const tag = `ai-agent/mica-system-base-qemu:${new Bun.CryptoHasher('sha256').update(capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', base]).stdout + mirror + tools).digest('hex').slice(0, 16)}`
+  if (capture(['docker', 'image', 'inspect', tag]).code !== 0) {
+    writeFileSync(join(work, 'Dockerfile'), [
+      'ARG BASE',
+      'FROM ${BASE}',
+      'ARG MIRROR',
+      'ARG SUITE',
+      'RUN echo "deb [check-valid-until=no] ${MIRROR} ${SUITE} main" >/tmp/snapshot.list && \\',
+      '    apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- update -qq && \\',
+      '    DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- \\',
+      `        install -y -qq --no-install-recommends ${tools} >/dev/null && \\`,
+      '    rm -rf /var/lib/apt/lists/* /tmp/snapshot.list',
+      '',
+    ].join('\n'))
+    if (attached(['docker', 'build', '--label', 'ai-agent=true', '-t', tag, '--build-arg', `BASE=${base}`, '--build-arg', `MIRROR=${mirror}`, '--build-arg', `SUITE=${suite}`, work]) !== 0)
+      fail('building the boot test image failed')
+  }
+  return tag
+}
+
+// The Debian kernel the lock pins for the boot tests, as work/kernel.deb: from the
+// source cache when it holds it; otherwise fetched into this run's own directory,
+// since the cache belongs to the containers that fill it.
+async function testKernel(work: string): Promise<void> {
+  const kernel = selectSource(REPO, 'test-kernel')
+  try {
+    copyFileSync(reposLookup(join(REPO, 'repos'), kernel.sha256), join(work, 'kernel.deb'))
+  }
+  catch {
+    await reposGet(join(work, 'repos'), kernel.sha256, kernel.url, join(work, 'kernel.deb'))
+  }
+}
+
+// The systemd root of x64 booted under QEMU, for the user's mounts: an initramfs
+// mounts DATA at /mnt/data before PID 1, as the runkit does, and hands over to
+// systemd. DATA's unit directory holds three user units: srv.mount, on a disk of the
+// user's (labelled usersrv), and var-mnt-scratch.mount, both allowed, and
+// mnt-usb.mount, refused. mica-user-mounts-generator must load srv.mount early in
+// place of the root's bind, the other allowed one in its normal directory, and mask
+// the refused one; a test unit prints the mounts and the units' states to the
+// console and powers off. The serial log is kept in _out/boot-test-systemd.log.
+const SYSTEMD_BOOT_TEST_OVERLAY: Record<string, string> = {
+  'etc/systemd/system/boot-test.service': [
+    '[Unit]',
+    'Description=Report the mounts for the boot test, then power off',
+    'After=multi-user.target',
+    '',
+    '[Service]',
+    'Type=oneshot',
+    'ExecStart=/usr/local/bin/boot-test-mounts',
+    '',
+  ].join('\n'),
+  'usr/local/bin/boot-test-mounts': String.raw`#!/bin/sh
+{
+  for target in /srv /var/mnt/scratch /mica /home /root /var/lib/mica /var; do
+    awk -v t="$target" '$5 == t { for (i = 7; $i != "-"; i++) ; line = "boot-test: mount " t " " $(i + 2) " " $6 } END { if (line) print line }' /proc/self/mountinfo
+  done
+  for unit in srv.mount var-mnt-scratch.mount mnt-usb.mount; do
+    echo "boot-test: unit $unit $(systemctl show -P LoadState $unit) $(systemctl show -P ActiveState $unit) $(systemctl show -P FragmentPath $unit)"
+  done
+  echo "boot-test: marker $(cat /srv/marker 2>&1)"
+  dmesg | grep -o 'mica-user-mounts-generator: .*' | sed 's/^/boot-test: kmsg /'
+  echo 'boot-test: done'
+} >/dev/console 2>&1
+systemctl --no-block poweroff
+`,
+}
+
+const SYSTEMD_BOOT_TEST_UNITS: Record<string, string> = {
+  'srv.mount': '[Unit]\nDescription=/srv on the user\'s disk\n[Mount]\nWhat=/dev/disk/by-label/usersrv\nWhere=/srv\nType=ext4\nOptions=nosuid,nodev,noatime\n[Install]\nWantedBy=local-fs.target\n',
+  'var-mnt-scratch.mount': '[Unit]\nDescription=A scratch tmpfs of the user\'s\n[Mount]\nWhat=tmpfs\nWhere=/var/mnt/scratch\nType=tmpfs\nOptions=nosuid,nodev,size=8M\n[Install]\nWantedBy=local-fs.target\n',
+  'mnt-usb.mount': '[Unit]\nDescription=A mount outside the user\'s trees\n[Mount]\nWhat=tmpfs\nWhere=/mnt/usb\nType=tmpfs\n[Install]\nWantedBy=local-fs.target\n',
+}
+
+const SYSTEMD_BOOT_TEST_INIT = [
+  '#!/bin/busybox sh',
+  'B=/bin/busybox',
+  '$B mkdir -p /proc /sys /dev /newroot',
+  '$B mount -t proc proc /proc',
+  '$B mount -t sysfs sysfs /sys',
+  '$B mount -t devtmpfs devtmpfs /dev',
+  '$B insmod /virtio_blk.ko',
+  'for i in $($B seq 50); do [ -b /dev/vdc ] && break; $B sleep 0.1; done',
+  '$B mount -o ro /dev/vda /newroot',
+  // DATA, as the runkit mounts it before PID 1.
+  '$B mount -o noatime /dev/vdb /newroot/mnt/data',
+  '$B umount /proc /sys /dev',
+  'exec $B switch_root /newroot /lib/systemd/systemd',
+  '',
+].join('\n')
+
+const SYSTEMD_BOOT_TEST_SCRIPT = `set -eu
+cd /work
+dpkg-deb -x kernel.deb kernel
+version=$(ls kernel/usr/lib/modules)
+mkdir -p initrd/bin
+cp /rootfs/usr/bin/busybox initrd/bin/busybox
+xz -dc "kernel/usr/lib/modules/$version/kernel/drivers/block/virtio_blk.ko.xz" >initrd/virtio_blk.ko
+install -m 0755 init initrd/init
+(cd initrd && find . | /rootfs/usr/bin/busybox cpio -o -H newc 2>/dev/null) | gzip -9 >initrd.img
+cp -a /rootfs root
+cp -a overlay/. root/
+chmod 0755 root/usr/local/bin/boot-test-mounts
+ln -s /etc/systemd/system/boot-test.service root/etc/systemd/system/multi-user.target.wants/boot-test.service
+# No deployment to confirm here.
+ln -sfn /dev/null root/etc/systemd/system/mica-health.service
+mke2fs -q -t ext4 -L root -d root root.img 768M
+mkdir -p data/state/systemd-units/local-fs.target.wants
+cp units/* data/state/systemd-units/
+for unit in units/*; do ln -s "../\${unit##*/}" "data/state/systemd-units/local-fs.target.wants/\${unit##*/}"; done
+mke2fs -q -t ext4 -L data -d data data.img 256M
+mkdir user && echo user-disk >user/marker
+mke2fs -q -t ext4 -L usersrv -d user user.img 32M
+accel=tcg; [ -c /dev/kvm ] && accel=kvm
+timeout 300 qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m 1024 -smp 2 \\
+  -display none -no-reboot -serial file:serial.log -nic none \\
+  -kernel "kernel/boot/vmlinuz-$version" -initrd initrd.img -append 'console=ttyS0 panic=-1' \\
+  -drive file=root.img,if=virtio,format=raw,readonly=on -drive file=data.img,if=virtio,format=raw \\
+  -drive file=user.img,if=virtio,format=raw
+`
+
+// The serial log's lines: the user's srv.mount in place of the root's bind, from the
+// generator's early directory and on the user's disk; the other allowed one from its
+// normal directory; the refused one masked and logged; the binds of DATA nosuid,nodev.
+const SYSTEMD_BOOT_TEST_EXPECT = [
+  /^boot-test: mount \/srv \/dev\/vdc rw,nosuid,nodev,noatime$/m,
+  /^boot-test: mount \/var\/mnt\/scratch tmpfs rw,nosuid,nodev,/m,
+  /^boot-test: mount \/mica \/dev\/vdb rw,nosuid,nodev\b/m,
+  /^boot-test: mount \/home \/dev\/vdb rw,nosuid,nodev\b/m,
+  /^boot-test: mount \/root \/dev\/vdb rw,nosuid,nodev\b/m,
+  /^boot-test: mount \/var\/lib\/mica \/dev\/vdb rw,nosuid,nodev\b/m,
+  /^boot-test: mount \/var \/dev\/vdb rw,nosuid,nodev\b/m,
+  /^boot-test: unit srv\.mount loaded active \/run\/systemd\/generator\.early\/srv\.mount$/m,
+  /^boot-test: unit var-mnt-scratch\.mount loaded active \/run\/systemd\/generator\/var-mnt-scratch\.mount$/m,
+  /^boot-test: unit mnt-usb\.mount masked inactive \/run\/systemd\/generator\/mnt-usb\.mount$/m,
+  /^boot-test: marker user-disk$/m,
+  /^boot-test: kmsg mica-user-mounts-generator: refused mountpoint \/mnt\/usb\r?$/m,
+  /^boot-test: done$/m,
+]
+
+async function systemdBootTest(): Promise<number> {
+  if (hostArch() !== 'amd64')
+    fail('the boot test runs on an x64 host')
+  const root = join(REPO, '_out/rootfs/amd64-systemd')
+  if (!existsSync(join(root, 'usr/lib/systemd/system-generators/mica-user-mounts-generator')))
+    fail(`${root} is not a systemd root with mica-systemd; compose it with: bun src/container.ts rootfs --arch amd64 --init systemd`)
+  const work = scratch('boot-test-systemd')
+  try {
+    const tag = qemuImage(work)
+    await testKernel(work)
+    for (const [path, content] of Object.entries(SYSTEMD_BOOT_TEST_OVERLAY)) {
+      mkdirSync(dirname(join(work, 'overlay', path)), { recursive: true })
+      writeFileSync(join(work, 'overlay', path), content)
+    }
+    mkdirSync(join(work, 'units'))
+    for (const [name, content] of Object.entries(SYSTEMD_BOOT_TEST_UNITS))
+      writeFileSync(join(work, 'units', name), content)
+    writeFileSync(join(work, 'init'), SYSTEMD_BOOT_TEST_INIT)
+    const args = ['docker', 'run', '--rm', '--label', 'ai-agent=true', '--network', 'none',
+      '-v', `${hostPath(work)}:/work`, '-v', `${hostPath(root)}:/rootfs:ro`]
+    if (existsSync('/dev/kvm'))
+      args.push('--device', '/dev/kvm')
+    const code = attached([...args, tag, 'bash', '-c', SYSTEMD_BOOT_TEST_SCRIPT])
+    const log = existsSync(join(work, 'serial.log')) ? readFileSync(join(work, 'serial.log'), 'utf8') : ''
+    writeFileSync(join(REPO, '_out/boot-test-systemd.log'), log)
+    if (code !== 0)
+      fail(`the systemd boot test ended with ${code} (a timeout is 124); the serial log is in _out/boot-test-systemd.log`)
+    const missing = SYSTEMD_BOOT_TEST_EXPECT.filter(line => !line.test(log))
+    if (missing.length)
+      fail(`the serial log lacks: ${missing.map(line => line.source).join('; ')} (_out/boot-test-systemd.log)`)
+    console.log('RESULT: PASS (the x64 systemd root loads the user\'s mounts early: srv.mount in place of the bind, the refused one masked)')
+    return 0
+  }
+  finally {
+    removeTree(work)
+  }
+}
+
 async function bootTest(argv: string[]): Promise<number> {
+  if (argv.join(' ') === '--init systemd')
+    return systemdBootTest()
   if (argv.join(' ') !== '--init openrc')
-    fail('usage: bun src/container.ts boot-test --init openrc')
+    fail('usage: bun src/container.ts boot-test --init openrc|systemd')
   if (hostArch() !== 'amd64')
     fail('the boot test runs on an x64 host')
   const root = join(REPO, '_out/rootfs/amd64-openrc')
   if (!existsSync(join(root, 'usr/sbin/openrc-init')))
     fail(`${root} is not an OpenRC root; compose it with: bun src/container.ts rootfs --arch amd64 --init openrc`)
-  // qemu, mke2fs and the ssh client, from the snapshot the lock is resolved from, on the
-  // environment image.
-  const { mirror, suite } = sources()
-  const base = `${environment().image}:amd64`
-  const tools = 'qemu-system-x86 e2fsprogs openssh-client socat'
-  const tag = `ai-agent/mica-system-base-qemu:${new Bun.CryptoHasher('sha256').update(capture(['docker', 'image', 'inspect', '--format', '{{.Id}}', base]).stdout + mirror + tools).digest('hex').slice(0, 16)}`
   const work = scratch('boot-test')
   try {
-    if (capture(['docker', 'image', 'inspect', tag]).code !== 0) {
-      writeFileSync(join(work, 'Dockerfile'), [
-        'ARG BASE',
-        'FROM ${BASE}',
-        'ARG MIRROR',
-        'ARG SUITE',
-        'RUN echo "deb [check-valid-until=no] ${MIRROR} ${SUITE} main" >/tmp/snapshot.list && \\',
-        '    apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- update -qq && \\',
-        '    DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::SourceList=/tmp/snapshot.list -o Dir::Etc::SourceParts=- \\',
-        `        install -y -qq --no-install-recommends ${tools} >/dev/null && \\`,
-        '    rm -rf /var/lib/apt/lists/* /tmp/snapshot.list',
-        '',
-      ].join('\n'))
-      if (attached(['docker', 'build', '--label', 'ai-agent=true', '-t', tag, '--build-arg', `BASE=${base}`, '--build-arg', `MIRROR=${mirror}`, '--build-arg', `SUITE=${suite}`, work]) !== 0)
-        fail('building the boot test image failed')
-    }
-    // From the source cache when it holds the kernel; otherwise fetched into this run's
-    // own directory, since the cache belongs to the containers that fill it.
-    const kernel = selectSource(REPO, 'test-kernel')
-    try {
-      copyFileSync(reposLookup(join(REPO, 'repos'), kernel.sha256), join(work, 'kernel.deb'))
-    }
-    catch {
-      await reposGet(join(work, 'repos'), kernel.sha256, kernel.url, join(work, 'kernel.deb'))
-    }
+    const tag = qemuImage(work)
+    await testKernel(work)
     // The options as built, and the pinned rows they depend on that the root lacks.
     mkdirSync(join(work, 'ssh'))
     for (const name of BOOT_TEST_OPTIONS) {
