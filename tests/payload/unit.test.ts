@@ -38,7 +38,7 @@ function lstatExists(path: string): boolean {
 }
 
 describe('mica-unit for systemd', () => {
-  const script = join(SYSTEMD_PAYLOAD, 'usr/sbin/mica-unit')
+  const script = join(SYSTEMD_PAYLOAD, 'usr/lib/mica/mica-unit')
   const unit = (c: Case, ...args: string[]): { code: number, out: string } =>
     exec(['sh', script, ...args], { PATH: `${c.bin}:${SYSTEM_PATH}`, CALLS: c.calls, MICA_UNIT_DIR: c.units, MICA_UNIT_SHIPPED: c.shipped })
   const source = (c: Case, name: string, text: string): string => {
@@ -114,6 +114,15 @@ describe('mica-unit for systemd', () => {
   })
 })
 
+// The tool behind the operator's `mica unit` (core's /usr/bin/mica), off PATH under
+// both inits.
+test('mica-unit lives in /usr/lib/mica, not on PATH', () => {
+  for (const payload of [SYSTEMD_PAYLOAD, OPENRC_PAYLOAD]) {
+    expect(statSync(join(payload, 'usr/lib/mica/mica-unit')).mode & 0o111).toBe(0o111)
+    expect(existsSync(join(payload, 'usr/sbin/mica-unit'))).toBe(false)
+  }
+})
+
 // At boot the units on DATA are loaded once their bind is up, after micad, as
 // before, but never needing it: a user service starts even when micad does not.
 test('mica-load-extensions orders after micad without requiring it', () => {
@@ -126,7 +135,7 @@ test('mica-load-extensions orders after micad without requiring it', () => {
 const SCRIPT = '#!/sbin/openrc-run\ncommand=/srv/tailscaled/tailscaled\ncommand_background=yes\npidfile=/run/tailscaled.pid\n'
 
 describe('mica-unit for OpenRC', () => {
-  const script = join(OPENRC_PAYLOAD, 'usr/sbin/mica-unit')
+  const script = join(OPENRC_PAYLOAD, 'usr/lib/mica/mica-unit')
   const unit = (c: Case, ...args: string[]): { code: number, out: string } =>
     exec(['sh', script, ...args], { PATH: `${c.bin}:${SYSTEM_PATH}`, CALLS: c.calls, MICA_UNIT_DIR: c.units, MICA_UNIT_SHIPPED: c.shipped })
   const source = (c: Case, name: string, text: string): string => {

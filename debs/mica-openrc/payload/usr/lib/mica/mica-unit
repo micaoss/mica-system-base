@@ -4,6 +4,8 @@
 # the script's settings in its conf.d. /etc/runlevels is on the read-only root, so
 # enabled/ is the runlevel here: mica-local, in the default runlevel, starts every
 # script linked there at boot. Everything survives reboot and update.
+# The operator runs it as `mica unit` (core's /usr/bin/mica); micad calls it by this
+# path, off PATH.
 #
 #   mica-unit install <script>...          openrc-run scripts into init.d (a name the root ships is refused)
 #   mica-unit install --conf <file>...     their settings into conf.d, named <script>[.conf]

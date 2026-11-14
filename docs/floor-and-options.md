@@ -313,8 +313,9 @@ provisioning; every other setting is bluetoothd's default.
 ## The user's own services
 
 The root is read-only, so `systemctl enable` (which links into `/etc/systemd/system`) and
-`/etc/runlevels` cannot hold a service a user adds. `mica-unit`, in either init, keeps it on
-DATA state instead: it survives reboot and every update, and micad's reset clears it.
+`/etc/runlevels` cannot hold a service a user adds. `mica unit` (core's `/usr/bin/mica`, backed
+by Base's `/usr/lib/mica/mica-unit`, off `PATH`), in either init, keeps it on DATA state
+instead: it survives reboot and every update, and micad's reset clears it.
 
 | | systemd (mica-systemd) | OpenRC (mica-openrc) |
 | --- | --- | --- |
@@ -322,7 +323,7 @@ DATA state instead: it survives reboot and every update, and micad's reset clear
 | Enabled by | links there, as the unit's `[Install]` says (`WantedBy=`, `RequiredBy=`, `Alias=`) | a link in `enabled/` |
 | At boot | `mica-load-extensions` reloads systemd once the bind is up and starts `multi-user.target` again | `mica-local`, in `default`, starts every enabled script |
 
-`mica-unit install <file>...`, `enable [--now] <unit>`, `disable [--now] <unit>`, `remove <unit>`
+`mica unit install <file>...`, `enable [--now] <unit>`, `disable [--now] <unit>`, `remove <unit>`
 and `list` are the same under both. A name the root ships (in `/etc` or `/usr/lib`, or
 `/etc/init.d`) is refused, so a user service can never replace or mask one of Mica's; the one
 exception is `srv.mount`, below. For
@@ -330,13 +331,13 @@ example, a Tailscale node agent with its binaries in `/srv/tailscaled`:
 
 ```sh
 # systemd: a unit with [Install] WantedBy=multi-user.target
-mica-unit install /srv/tailscaled/tailscaled.service
-mica-unit enable --now tailscaled
+mica unit install /srv/tailscaled/tailscaled.service
+mica unit enable --now tailscaled
 
 # OpenRC: an openrc-run script, and its settings for conf.d if it has any
-mica-unit install /srv/tailscaled/tailscaled
-mica-unit install --conf /srv/tailscaled/tailscaled.conf
-mica-unit enable --now tailscaled
+mica unit install /srv/tailscaled/tailscaled
+mica unit install --conf /srv/tailscaled/tailscaled.conf
+mica unit enable --now tailscaled
 ```
 
 A user service starts after micad (and after the D-Bus micad answers on), never needing it: it
@@ -345,11 +346,11 @@ units on DATA are loaded only once DATA is bound. The user's mounts are the exce
 `mica-units.service`, which starts the services micad turned on, orders after
 `mica-load-extensions`, so the user's own units are loaded before those start.
 
-micad declares user services too: the settings `services.units`, `micad unit` on the device,
-`/api/v1/units` and the console (mica-core `docs/mica-core.md` section 3.10). It applies them
-through `mica-unit`, into the same directories, and removes only the units it applied; a service
-installed with `mica-unit` by hand stays, and `mica-unit` remains for that hand use. micad relies
-on this contract of `mica-unit`, under both inits:
+micad declares user services too: the settings `services.units`, `/api/v1/units` and the
+console (mica-core `docs/mica-core.md` section 3.10). It applies them through
+`/usr/lib/mica/mica-unit`, into the same directories, and removes only the units it applied; a
+service installed by hand with `mica unit` stays. micad and `mica unit` rely on this contract of
+`/usr/lib/mica/mica-unit`, under both inits:
 
 - `list` prints one line per service, `<name>` TAB `enabled` or `disabled`.
 - `install <file>` names the service after the file's basename.
@@ -361,7 +362,7 @@ on this contract of `mica-unit`, under both inits:
 ## The user's own mounts
 
 A user mounts their own disks, and turns on swap, where a user may mount; everywhere else is
-the system's. `mica-unit` (from a unit's `Where=`, or `What=` of a swap), the systemd generator
+the system's. `mica unit` (from a unit's `Where=`, or `What=` of a swap), the systemd generator
 and OpenRC's `mica-fstab` check the same list, `/usr/lib/mica/mica-mountpoint` (mica-system):
 
 | | Allowed |
@@ -380,8 +381,8 @@ nowhere and kept as it is; removing the user's mount brings it back at the next 
 
 | | systemd (mica-systemd) | OpenRC (mica-openrc) |
 | --- | --- | --- |
-| The user writes | `.mount`, `.automount` and `.swap` units, named as `systemd-escape --path` names their path, through `mica-unit` | `/usr/local/etc/fstab`, fstab(5) |
-| Checked | by `mica-unit install` and `enable` | by `mica-unit fstab check [<file>]`, and by `mica-fstab` before it mounts anything: one refused line refuses the file |
+| The user writes | `.mount`, `.automount` and `.swap` units, named as `systemd-escape --path` names their path, through `mica unit` | `/usr/local/etc/fstab`, fstab(5) |
+| Checked | by `mica unit install` and `enable` | by `mica unit fstab check [<file>]`, and by `mica-fstab` before it mounts anything: one refused line refuses the file |
 | At boot | `mica-user-mounts-generator` reads the units on DATA itself (DATA is mounted before PID 1) at every daemon start and reload, and puts the allowed ones, with their `.wants/` and `.requires/` links, into the boot's first transaction, before `local-fs.target` and any engine; `srv.mount` into `generator.early`, where it replaces the root's. A refused one is masked, so the later reload does not load it either, and logged to the kernel log | `mica-fstab`, in `boot`, after `mica-mounts` and before `mica-local` and `mica-units`: each line in file order, `noauto` skipped, a missing target directory made; a failure is fatal unless the line says `nofail`; at stop, unmounted and swapped off in reverse. A line for `/srv` makes `mica-mounts` skip the default bind |
 | Device names | udev's `/dev/disk/by-*` | no `/dev/disk/by-*` (mdev): `UUID=` or `LABEL=` |
 
@@ -400,7 +401,7 @@ Options=nosuid,nodev,noatime
 WantedBy=local-fs.target
 ```
 
-`mica-unit install srv.mount && mica-unit enable srv.mount`, then reboot. On OpenRC, the same
+`mica unit install srv.mount && mica unit enable srv.mount`, then reboot. On OpenRC, the same
 line in `/usr/local/etc/fstab`:
 
 ```

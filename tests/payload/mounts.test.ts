@@ -138,7 +138,7 @@ function unitCase(name: string, tool: string): UnitCase {
 const SRV = '[Unit]\nDescription=/srv on my data disk\n[Mount]\nWhat=/dev/disk/by-uuid/1b2c\nWhere=/srv\nType=ext4\nOptions=nosuid,nodev,noatime\n[Install]\nWantedBy=local-fs.target\n'
 
 describe('mica-unit for systemd', () => {
-  const script = join(SYSTEMD_PAYLOAD, 'usr/sbin/mica-unit')
+  const script = join(SYSTEMD_PAYLOAD, 'usr/lib/mica/mica-unit')
   const unit = (c: UnitCase, ...args: string[]): { code: number, out: string } =>
     exec(['sh', script, ...args], { PATH: `${c.bin}:${SYSTEM_PATH}`, CALLS: c.calls, MICA_UNIT_DIR: c.units, MICA_UNIT_SHIPPED: c.shipped, MICA_MOUNTPOINT: MOUNTPOINT })
   const source = (c: UnitCase, name: string, text: string): string => {
@@ -220,7 +220,7 @@ describe('mica-user-mounts-generator', () => {
 })
 
 describe('mica-unit fstab check', () => {
-  const script = join(OPENRC_PAYLOAD, 'usr/sbin/mica-unit')
+  const script = join(OPENRC_PAYLOAD, 'usr/lib/mica/mica-unit')
 
   test('checks /usr/local/etc/fstab, or the file given, with the same rule', () => {
     const c = unitCase('openrc-fstab', 'rc-service')

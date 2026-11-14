@@ -4,6 +4,8 @@
 # reboot and update, and micad's reset clears it. `systemctl enable` cannot do this:
 # it links into /etc/systemd/system, on the read-only root. At boot,
 # mica-load-extensions reloads systemd once the bind is up and starts what is enabled.
+# The operator runs it as `mica unit` (core's /usr/bin/mica); micad calls it by this
+# path, off PATH.
 # A .mount, .automount or .swap unit must mount where a user may
 # (/usr/lib/mica/mica-mountpoint); mica-user-mounts-generator loads those early in
 # the boot, and the user's srv.mount replaces the default bind of /srv.
