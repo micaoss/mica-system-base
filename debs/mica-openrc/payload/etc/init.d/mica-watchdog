@@ -1,6 +1,9 @@
 #!/sbin/openrc-run
 # The hardware watchdog, fed every 30 s with a 90 s reboot timeout: mica-systemd's
 # RuntimeWatchdogSec=90s. A machine without /dev/watchdog runs without one.
+# In sysinit, once mdev has populated /dev: the runkit leaves the watchdog armed, so
+# the feeder runs before the boot runlevel's slow work -- DATA's grow, check and
+# resize in mica-data-layout -- and everything after it.
 
 description="Hardware watchdog"
 command=/usr/bin/busybox

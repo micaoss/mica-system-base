@@ -1119,6 +1119,12 @@ async function bootTest(argv: string[]): Promise<number> {
     const missing = BOOT_TEST_EXPECT.filter(line => !log.includes(line))
     if (missing.length)
       fail(`the serial log lacks: ${missing.join('; ')} (_out/boot-test.log)`)
+    // The watchdog's feeder starts before DATA's grow, check and resize: the runkit
+    // leaves the watchdog armed (QEMU here has none, and the feeder says so).
+    const fed = log.search(/No \/dev\/watchdog; running without a hardware watchdog|Starting mica-watchdog/)
+    const checked = log.indexOf('Checking the file systems of /etc/fstab')
+    if (fed < 0 || checked < 0 || fed > checked)
+      fail(`mica-watchdog did not start before DATA's check (_out/boot-test.log)`)
     // The login prompts agetty rendered, each from its /etc/issue banner: the first
     // has no device code, the last, after micad's file appeared, shows it.
     const prompts = log.split(`${HOSTNAME} login: `).slice(0, -1).map(text => text.slice(text.lastIndexOf('Mica OS Base ')))

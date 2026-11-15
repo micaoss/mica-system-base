@@ -2,7 +2,7 @@
 // rc-service, rc-status and openrc-shutdown; the power button's acpid action; mica-udhcpc against a fake ip, and the metric
 // mica-wifi-client hands it; mica-ntpd's
 // servers.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { exec, fake, sandbox, SYSTEM_PATH } from './harness.ts'
@@ -392,5 +392,14 @@ describe('the boot services of mica-openrc', () => {
   test('mica-data-layout checks only the file systems not yet mounted', () => {
     const text = readFileSync(join(INIT_D, 'mica-data-layout'), 'utf8').replaceAll('/usr/lib/mica/mica-data-layout', 'true')
     expect(start('mica-data-layout', 'fsck() { echo "fsck $*" >> "$CALLS"; }; mount() { :; }', text)).toContain('fsck -A -M -T -R -a')
+  })
+  // The runkit leaves the hardware watchdog armed: the feeder runs in sysinit, once
+  // mdev has populated /dev, so DATA's grow, check and resize in boot are fed.
+  test('mica-watchdog starts in sysinit, after mica-mdev (which provides dev)', () => {
+    const text = readFileSync(join(INIT_D, 'mica-watchdog'), 'utf8')
+    expect(/depend\(\) \{([^}]*)\}/.exec(text)?.[1]).toBe('\n    need dev\n')
+    const runlevels = resolve(INIT_D, '../runlevels')
+    expect(readlinkSync(join(runlevels, 'sysinit/mica-watchdog'))).toBe('/etc/init.d/mica-watchdog')
+    expect(existsSync(join(runlevels, 'boot/mica-watchdog'))).toBe(false)
   })
 })
