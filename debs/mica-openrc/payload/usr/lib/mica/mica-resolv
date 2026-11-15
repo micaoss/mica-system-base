@@ -4,10 +4,16 @@
 # told, that file alone makes it up and every interface's servers are ignored;
 # otherwise every interface's file does, as mica-udhcpc wrote them. Names starting
 # with a dot are never read, so a writer can stage a file there and rename it into
-# place. mica-udhcpc runs this after every lease change, micad after it writes or
-# removes the global file.
+# place. Each file is named for its interface (mica-udhcpc's $interface). When
+# micad has written /run/mica/resolv.order, one interface name a line, the active
+# uplink first and the down ones last, the files of those interfaces come first in
+# that order and the rest follow by name; a line that is no interface name, or names
+# one without a file, is skipped, and the file is read, never run. mica-udhcpc runs
+# this after every lease change, micad after it writes or removes the global file or
+# the order.
 set -eu
 resolvers=/run/mica/resolv.d
+order=/run/mica/resolv.order
 global=/var/lib/mica/dns/resolv.global
 conf=/run/mica/resolv.conf
 
@@ -15,6 +21,31 @@ mkdir -p "$resolvers"
 if [ -f "$global" ]; then
     cat "$global" >"$conf.$$"
 else
-    cat "$resolvers"/* 2>/dev/null >"$conf.$$" || : >"$conf.$$"
+    # The interfaces' files, newline-separated: the order's names, then the rest.
+    files=
+    add() {
+        case "
+$files
+" in *"
+$1
+"*) return 0 ;; esac
+        files="$files
+$1"
+    }
+    if [ -f "$order" ]; then
+        while IFS= read -r name || [ -n "$name" ]; do
+            case "$name" in
+            '' | .* | *[!A-Za-z0-9_.-]* | ????????????????*) continue ;;
+            esac
+            if [ -f "$resolvers/$name" ]; then add "$name"; fi
+        done <"$order"
+    fi
+    for path in "$resolvers"/*; do
+        if [ -f "$path" ]; then add "${path##*/}"; fi
+    done
+    : >"$conf.$$"
+    for name in $files; do
+        cat "$resolvers/$name" >>"$conf.$$"
+    done
 fi
 mv "$conf.$$" "$conf"

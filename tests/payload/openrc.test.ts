@@ -287,6 +287,38 @@ describe('mica-udhcpc', () => {
     expect(readdirSync(run).sort()).toEqual(['resolv.conf', 'resolv.d'])
   })
 
+  // micad's uplink order: /run/mica/resolv.order names interfaces, the active uplink
+  // first; their files lead, the rest follow by name as without it.
+  test('the order file puts the named interfaces first; the rest follow by name', () => {
+    const own = join(box.dir, 'order-run')
+    const resolvers = join(own, 'resolv.d')
+    const script = join(box.dir, 'mica-resolv-order')
+    writeFileSync(script, readFileSync(join(OPENRC, 'mica-resolv'), 'utf8').replaceAll('/run/mica', own).replaceAll('/var/lib/mica/dns', join(box.dir, 'order-dns')))
+    mkdirSync(resolvers, { recursive: true })
+    for (const name of ['eth0', 'eth1', 'wlan0', 'wwan0'])
+      writeFileSync(join(resolvers, name), `nameserver ${name}\n`)
+    const conf = (): string => {
+      expect(exec(['sh', script], { PATH: SYSTEM_PATH }).code).toBe(0)
+      return readFileSync(join(own, 'resolv.conf'), 'utf8')
+    }
+    const order = (text: string): void => writeFileSync(join(own, 'resolv.order'), text)
+    // No order file: by name.
+    expect(conf()).toBe('nameserver eth0\nnameserver eth1\nnameserver wlan0\nnameserver wwan0\n')
+    // The active uplink first, a down one last; the unnamed by name between.
+    order('wwan0\neth0\n')
+    expect(conf()).toBe('nameserver wwan0\nnameserver eth0\nnameserver eth1\nnameserver wlan0\n')
+    // A name without a file (an uplink with no lease yet), a name twice, and lines that
+    // are no interface name -- a path, a dot name, a command, blanks, two words -- are
+    // skipped; the file is never run. A last line without its newline still counts.
+    order('usb0\n../etc/passwd\n.global.new\n$(touch ' + join(own, 'ran') + ')\n  \nwlan0\nwlan0\neth1 x\neth1')
+    expect(conf()).toBe('nameserver wlan0\nnameserver eth1\nnameserver eth0\nnameserver wwan0\n')
+    expect(existsSync(join(own, 'ran'))).toBe(false)
+    // Global DNS is resolv.conf alone, whatever the order.
+    mkdirSync(join(box.dir, 'order-dns'), { recursive: true })
+    writeFileSync(join(box.dir, 'order-dns', 'resolv.global'), 'nameserver 9.9.9.9\n')
+    expect(conf()).toBe('nameserver 9.9.9.9\n')
+  })
+
   test('with no file at all, resolv.conf is empty', () => {
     const empty = join(box.dir, 'empty-run')
     const script = join(box.dir, 'mica-resolv-empty')
