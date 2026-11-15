@@ -402,4 +402,23 @@ describe('the boot services of mica-openrc', () => {
     expect(readlinkSync(join(runlevels, 'sysinit/mica-watchdog'))).toBe('/etc/init.d/mica-watchdog')
     expect(existsSync(join(runlevels, 'boot/mica-watchdog'))).toBe(false)
   })
+
+  // The runkit names the device it armed in /run/mica/watchdog.env; without it, or
+  // with anything but a /dev/watchdog<N> there, the feeder takes /dev/watchdog.
+  test('mica-watchdog feeds the device the runkit armed, or /dev/watchdog', () => {
+    const env = join(box.dir, 'watchdog.env')
+    const text = readFileSync(join(INIT_D, 'mica-watchdog'), 'utf8').replaceAll('/run/mica/watchdog.env', env)
+    const stubs = 'char_device() { case "$1" in /dev/watchdog | /dev/watchdog1) return 0 ;; esac; return 1; }; default_start() { echo "$command_args" >> "$CALLS"; }'
+    rmSync(env, { force: true })
+    expect(start('mica-watchdog', stubs, text)).toBe('watchdog -F -T 90 -t 30 /dev/watchdog\n')
+    writeFileSync(env, '# written by the runkit\nWATCHDOG_DEVICE=/dev/watchdog1\n')
+    expect(start('mica-watchdog', stubs, text)).toBe('watchdog -F -T 90 -t 30 /dev/watchdog1\n')
+    for (const device of ['/dev/sda', '/tmp/watchdog1', '/dev/watchdog1;reboot', '']) {
+      writeFileSync(env, `WATCHDOG_DEVICE=${device}\n`)
+      expect([device, start('mica-watchdog', stubs, text)]).toEqual([device, 'watchdog -F -T 90 -t 30 /dev/watchdog\n'])
+    }
+    // A device the runkit names but the root does not have: no feeder, as without any.
+    writeFileSync(env, 'WATCHDOG_DEVICE=/dev/watchdog2\n')
+    expect(start('mica-watchdog', stubs, text)).toBe('')
+  })
 })

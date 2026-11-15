@@ -1,23 +1,41 @@
 #!/sbin/openrc-run
 # The hardware watchdog, fed every 30 s with a 90 s reboot timeout: mica-systemd's
-# RuntimeWatchdogSec=90s. A machine without /dev/watchdog runs without one.
+# RuntimeWatchdogSec=90s. The device is the one the runkit armed, as it names it in
+# /run/mica/watchdog.env (WATCHDOG_DEVICE=/dev/watchdog<N>), else /dev/watchdog. A
+# machine without that device runs without a watchdog.
 # In sysinit, once mdev has populated /dev: the runkit leaves the watchdog armed, so
 # the feeder runs before the boot runlevel's slow work -- DATA's grow, check and
 # resize in mica-data-layout -- and everything after it.
 
 description="Hardware watchdog"
 command=/usr/bin/busybox
-command_args="watchdog -F -T 90 -t 30 /dev/watchdog"
 supervisor=supervise-daemon
 
 depend() {
     need dev
 }
 
+char_device() {
+    [ -c "$1" ]
+}
+
+# The runkit's WATCHDOG_DEVICE, when it names a /dev/watchdog<N>; else /dev/watchdog.
+device() {
+    named=
+    [ ! -r /run/mica/watchdog.env ] ||
+        named=$(sed -n 's/^WATCHDOG_DEVICE=//p' /run/mica/watchdog.env | tail -n 1)
+    case "$named" in
+    /dev/watchdog | /dev/watchdog[0-9] | /dev/watchdog[0-9][0-9]) echo "$named" ;;
+    *) echo /dev/watchdog ;;
+    esac
+}
+
 start() {
-    if [ ! -c /dev/watchdog ]; then
-        einfo "No /dev/watchdog; running without a hardware watchdog"
+    watchdog=$(device)
+    if ! char_device "$watchdog"; then
+        einfo "No $watchdog; running without a hardware watchdog"
         return 0
     fi
+    command_args="watchdog -F -T 90 -t 30 $watchdog"
     default_start
 }
