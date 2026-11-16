@@ -313,6 +313,22 @@ describe('mica-udhcpc', () => {
     order('usb0\n../etc/passwd\n.global.new\n$(touch ' + join(own, 'ran') + ')\n  \nwlan0\nwlan0\neth1 x\neth1')
     expect(conf()).toBe('nameserver wlan0\nnameserver eth1\nnameserver eth0\nnameserver wwan0\n')
     expect(existsSync(join(own, 'ran'))).toBe(false)
+    // micad's lines are resolv.d file names: per uplink 00-<interface>, its own declared
+    // servers, then <interface>, the lease's or the static stanza's.
+    writeFileSync(join(resolvers, '00-wwan0'), 'nameserver 00-wwan0\n')
+    writeFileSync(join(resolvers, '00-eth0'), 'nameserver 00-eth0\n')
+    order('00-wwan0\nwwan0\n00-eth0\neth0\n')
+    expect(conf()).toBe('nameserver 00-wwan0\nnameserver wwan0\nnameserver 00-eth0\nnameserver eth0\nnameserver eth1\nnameserver wlan0\n')
+    // A name of up to 18 bytes counts: 00- and the longest interface name, 15 bytes.
+    // A longer one is no resolv.d name and is skipped.
+    const long = `00-${'w'.repeat(15)}`
+    const longer = `${long}x`
+    writeFileSync(join(resolvers, long), `nameserver ${long}\n`)
+    writeFileSync(join(resolvers, longer), `nameserver ${longer}\n`)
+    order(`${longer}\n${long}\neth0\n`)
+    expect(conf()).toBe(`nameserver ${long}\nnameserver eth0\nnameserver 00-eth0\nnameserver 00-wwan0\nnameserver ${longer}\nnameserver eth1\nnameserver wlan0\nnameserver wwan0\n`)
+    rmSync(join(resolvers, long))
+    rmSync(join(resolvers, longer))
     // Global DNS is resolv.conf alone, whatever the order.
     mkdirSync(join(box.dir, 'order-dns'), { recursive: true })
     writeFileSync(join(box.dir, 'order-dns', 'resolv.global'), 'nameserver 9.9.9.9\n')

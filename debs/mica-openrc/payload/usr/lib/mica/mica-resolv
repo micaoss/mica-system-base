@@ -2,15 +2,16 @@
 # /run/mica/resolv.conf, where /etc/resolv.conf links, built from /run/mica/resolv.d.
 # When micad has saved /var/lib/mica/dns/resolv.global on DATA, the global DNS it is
 # told, that file alone makes it up and every interface's servers are ignored;
-# otherwise every interface's file does, as mica-udhcpc wrote them. Names starting
-# with a dot are never read, so a writer can stage a file there and rename it into
-# place. Each file is named for its interface (mica-udhcpc's $interface). When
-# micad has written /run/mica/resolv.order, one interface name a line, the active
-# uplink first and the down ones last, the files of those interfaces come first in
-# that order and the rest follow by name; a line that is no interface name, or names
-# one without a file, is skipped, and the file is read, never run. mica-udhcpc runs
-# this after every lease change, micad after it writes or removes the global file or
-# the order.
+# otherwise every file in resolv.d does: <interface>, a lease's (mica-udhcpc) or a
+# static uplink's (the ifupdown stanza micad renders), and 00-<interface>, an
+# uplink's own declared servers (micad). Names starting with a dot are never read, so
+# a writer can stage a file there and rename it into place. When micad has written
+# /run/mica/resolv.order, one resolv.d file name a line in its uplink order
+# (00-<interface> then <interface> per uplink, the active uplink first and the down
+# ones last), those files come first in that order and the rest follow by name; a
+# line that is no plain file name, or names no file, is skipped, and the order is
+# read, never run. mica-udhcpc runs this after every lease change, micad after it
+# writes or removes the global file or the order.
 set -eu
 resolvers=/run/mica/resolv.d
 order=/run/mica/resolv.order
@@ -35,7 +36,8 @@ $1"
     if [ -f "$order" ]; then
         while IFS= read -r name || [ -n "$name" ]; do
             case "$name" in
-            '' | .* | *[!A-Za-z0-9_.-]* | ????????????????*) continue ;;
+            # Up to 18 bytes: 00- and the longest interface name.
+            '' | .* | *[!A-Za-z0-9_.-]* | ???????????????????*) continue ;;
             esac
             if [ -f "$resolvers/$name" ]; then add "$name"; fi
         done <"$order"

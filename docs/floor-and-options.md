@@ -114,12 +114,14 @@ are `mica-kernfs`'s; securityfs is mounted only where the kernel has it.
   so no reader holds a stale copy and none starts before the first one is in place.
 - OpenRC: `/etc/resolv.conf` links to `/run/mica/resolv.conf`, which `/usr/lib/mica/mica-resolv`
   builds from `/run/mica/resolv.d`. When `/var/lib/mica/dns/resolv.global` exists on DATA,
-  it alone is `resolv.conf` and every interface's file is ignored; when it does not, the
-  interfaces' files (`resolv.d/<interface>`, mica-udhcpc's) make it up: first those
-  `/run/mica/resolv.order` names, one interface a line in micad's uplink order (the active
-  uplink first, the down ones last), then the rest by name. A line of the order that is no
-  interface name, or names an interface without a file, is skipped; without the order file
-  all go by name. A name starting with a dot in `resolv.d` is never read. micad writes the
+  it alone is `resolv.conf` and every file in `resolv.d` is ignored; when it does not, the
+  files of `resolv.d` make it up: `<interface>`, a lease's (mica-udhcpc) or a static
+  uplink's (the ifupdown stanza micad renders, written on up and removed on down), and
+  `00-<interface>`, an uplink's own declared servers (micad). First come the files
+  `/run/mica/resolv.order` names, one `resolv.d` file name a line in micad's uplink order
+  (`00-<interface>` then `<interface>` per uplink, the active uplink first, the down ones
+  last), then the rest by name. A line of the order that is no plain file name, or names
+  no file, is skipped; without the order file all go by name. A name starting with a dot in `resolv.d` is never read. micad writes the
   global file or removes it, and the order, and runs `mica-resolv`; mica-udhcpc runs it after
   every lease change. Under systemd the global DNS is resolved's.
 - systemd: `/run/systemd/network` and `/run/systemd/resolved.conf.d`, where micad writes
